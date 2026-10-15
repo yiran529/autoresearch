@@ -1,7 +1,7 @@
 # GreedyLoRE CORAL AutoResearch V1 设计
 
 **日期：** 2026-10-15
-**状态：** 已按用户 review 修订并批准
+**状态：** Workflow Simplification 待用户确认
 **上游 CORAL：** `Human-Agent-Society/CORAL@0123dfb939b35228cf2c1fde224cd0561e727408`
 **GreedyLoRE 来源：** `/home/wyr/greedy_lore@d2c38bc2062e06fdfd73185c508e7cc652933de6`
 **权威需求：** `/home/wyr/CORAL_AutoResearch_V1_Handoff_Refined.md`
@@ -22,14 +22,14 @@ Researcher 和 Engineer 独立工作，并用统一 grader 评估：
   step time。
 
 CORAL 继续负责 agent 生命周期、Git worktree、Attempt、grader daemon、共享
-状态与 Codex runtime。领域适配器只增加评测、Node 索引、显式 Analysis/Review、
-同 SHA 基础设施 retry 和必要的受控发布边界。
+状态与 Codex runtime。领域适配器只增加评测、Node 索引、显式 Analysis、低频
+Global Memory、同 SHA 基础设施 retry 和必要的受控发布边界。
 
 ## 2. 非目标
 
 - 不建立第二套 agent scheduler、Git/worktree pool、数据库或通用工作流引擎。
 - 不建立运行时 Best/Promotion、MCTS、Node 自动评分或分支配额。
-- 不把 CORAL `status=improved` 解释为 quality、semantic 或 Review 通过。
+- 不把 CORAL `status=improved` 解释为 quality、semantic 或科学结论。
 - 不在正式训练中插入 profiler、SVD oracle 或梯度诊断。
 - 不把单 seed 结果称为统计等效或普适收敛结论。
 - 不复制 `.git`、`.venv`、训练 outputs、旧日志、checkpoint、缓存或 C4 数据。
@@ -83,6 +83,7 @@ trusted writes 和粗粒度 SRT 保护。submission/artifact 校验、算法、�
     │       ├── nodes.py
     │       ├── evaluation.py
     │       ├── analysis.py
+    │       ├── memory.py
     │       ├── validation.py
     │       └── atomic.py
     ├── roles/
@@ -91,7 +92,7 @@ trusted writes 和粗粒度 SRT 保护。submission/artifact 校验、算法、�
     ├── prompts/
     │   ├── research_analysis.md
     │   ├── engineering_analysis.md
-    │   └── reviewer.md
+    │   └── global_memory_manager.md
     ├── references/
     │   ├── semantic_criteria.md
     │   ├── algorithm_ref.md
@@ -101,7 +102,6 @@ trusted writes 和粗粒度 SRT 保护。submission/artifact 校验、算法、�
     │   ├── evaluation.md
     │   ├── research_analysis.md
     │   ├── engineering_analysis.md
-    │   ├── review.md
     │   └── submission.yaml
     ├── taskdata/
     │   ├── eval_contract.yaml
@@ -280,7 +280,7 @@ aggregated = 0.0               otherwise
 
 Engineering Attempt 只运行 efficiency，`aggregated=efficiency_score`；quality
 写为 `inherited (provisional)`，并绑定 `quality_anchor` 指向该 Node 唯一已完成的
-Research SHA。Aggregate 只满足 CORAL 的排序接口，不构成 Node Selection、Review
+Research SHA。Aggregate 只满足 CORAL 的排序接口，不构成 Node Selection
 或科学结论。
 
 公开 named scores 至少包含：两项 quality loss/ratio/pass、两项 timing mean、
@@ -377,6 +377,8 @@ SRT 允许 Agent 直接写自己的 worktree、scratch、candidate repo `.git`�
 .coral/public/eval_logs/
 .coral/public/notes/tree.md
 .coral/public/notes/nodes/
+.coral/public/notes/research_summary.md
+.coral/public/notes/engineering_summary.md
 .coral/.git/
 .coral/private/
 ```
@@ -389,7 +391,7 @@ SRT 允许 Agent 直接写自己的 worktree、scratch、candidate repo `.git`�
 
 - `submit_attempt`：从固定 commit 自行读取并校验 `submission.yaml`，在同一锁内完成 Research 唯一性检查和 pending Attempt 写入；
 - `retry_attempt`：仅把同 SHA、terminal、`failure_class=infra` 且 contract 未改变的 Attempt 重新置为 pending；
-- `publish_artifact`：只接受 kind、Node/mode/version 和 bounded content，由 task validator 映射 canonical target 后原子发布；没有任意路径或命令字段。
+- `publish_artifact`：只接受 kind、Node/mode/version 和 bounded content，由 task validator 映射 canonical target 后原子发布；Analysis 和两份 Global Summary 均使用固定 canonical target，没有任意路径或命令字段。
 
 `coral eval` 仍在 Agent worktree 完成 Git add/commit 和 parent lookup，然后请求 `submit_attempt`；trusted handler 从受保护登记推导 Agent/worktree/island，验证 SHA 为该 worktree 当前提交，再执行 shared checkpoint、parent checkpoint provenance 和 pending write。Root bootstrap 使用固定 S0/N000/content 的独立受信任宿主入口，Agent 不能伪装。`autoresearch retry` 与 Node/Analysis CLI 使用后两个 operation。trusted validator 安装在 grader-private venv，服务端把所有 Agent payload 当作不可信输入。`metadata.grader_runs` 仅是同 SHA retry 所需的 append-only 最小历史，不扩展成独立运行管理系统。
 
@@ -413,47 +415,139 @@ fail closed，不退化为无 sandbox 模式。
 该开关只改变 heartbeat，不移除 manager、grader、worktree 或 agent restart
 reliability。Researcher/Engineer 的稳定角色来自各自 role file。
 
-## 12. Producer、Analyzer 与 Reviewer
+## 12. Producer、Analyzer 与按需 Subagent
 
-`task.yaml` 启动两个 Codex producer：一个 Researcher、一个 Engineer。两者同 island、独立 worktree、不同 role file；Node Selection 由角色根据 evidence 自主决定，不由 aggregate score 自动指定。
+`task.yaml` 启动两个长期 Codex producer：一个 Researcher、一个 Engineer。两者同
+island、独立 worktree、不同 role file；Node Selection 由角色根据 evidence 自主
+决定，不由 aggregate score 自动指定。Researcher 优先读取
+`research_summary.md`，Engineer 优先读取 `engineering_summary.md`；Summary
+只是导航信息，正式结论仍回溯到 Node Analysis、Evaluation 和固定 commit。
 
 `autoresearch analyze --node Nxxx --mode research|engineering` 是 task-local 轻量 CLI：
 
 1. 从 Node spec、`evaluation.md`、Attempts 和固定 commit 解析不可变 EvidenceBundle；
-2. 无有效 Analysis 时启动 fresh Analyzer session，校验后通过 `publish_artifact` 原子发布；
-3. 有 Analysis 而无对应 Review 时只启动独立 fresh Reviewer session；
-4. 两者都有效时幂等返回；`--revise` 才分配下一版本并保留旧版本。
+2. 若相同版本的有效 Analysis 已存在则幂等返回；
+3. 否则启动一次 fresh Analyzer `codex exec --ephemeral`，校验后通过
+   `publish_artifact` 原子发布；
+4. `--revise` 显式分配下一版本并保留旧版本。
 
-Analyzer/Reviewer 使用不同 scratch 和独立 `codex exec --ephemeral`，不复用 session、thread 或对话。宿主从本地 Git object 按 manifest 中的固定 SHA 物化 session-local code snapshots，并把 manifest 中已封存的 evidence 文件复制到 session-local evidence snapshot；不向 session 暴露实时 Agent checkout、可增长的共享 log root 或宿主 Artifact 绝对路径。Review decision 为 `pass|warning|fail`；`fail` 表示 Review 已完成但不表示通过，也不触发自动修订。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
+Analyzer 在独立 scratch 中运行。宿主从本地 Git object 按 manifest 中的固定 SHA
+物化 session-local code snapshots，并复制封存的 evidence snapshot；不向 session
+暴露实时 Agent checkout、可增长的共享 log root 或宿主 Artifact 绝对路径。
+Research Analysis 使用不含 Engineering rows 的 Research-only evaluation snapshot。
+Engineering Analysis 不要求已有 Engineering Attempt；它在开始时固定该 Node 当时
+已有的全部 Engineering Attempts（允许空列表）及正式 run/log/comparability 引用。
+后续 Attempt、后补日志或目录新增文件不会悄然改变已发布版本。Analyzer 不能修改
+候选代码、历史 Artifact 或 raw evaluation，`analyze` 也不重跑正式训练。
 
-Research Analysis 使用不含 Engineering rows 的 Research-only evaluation snapshot。Engineering Analysis 不要求已有 Engineering Attempt；它在开始时固定该 Node 当时已有的全部 Engineering Attempts（允许空列表）及各自正式 run/log/comparability 引用，并与 Review 共享同一个 evidence manifest hash；后续 Attempt、后补日志或目录新增文件不会悄然改变已发布版本。没有时只绑定唯一 Research SHA、Research evaluation 和现有 profiling/evidence，不得声称未测量的提升。Analyzer/Reviewer 不能修改候选代码、历史 Artifact 或 raw evaluation，analyze 也不重跑正式训练。完成/恢复状态只由校验通过的版本化 Artifact 推导，不保存额外 workflow state。
+Research Analysis 一经有效发布即可创建 Child，不等待 Engineering Analysis。
+Child spec 固定引用创建时选择的 Parent Research Analysis 版本，不包含审批状态或
+额外审核引用。
 
-## 13. Node artifact 与重建
+Researcher、Engineer 和两种 Analyzer 的 Prompt 允许在遇到实质性不确定性时按需
+调用 Subagent，例如复杂数学推导验证、异常实验解释或语义差异定位。简单修改和
+常规结果不要求 Subagent；每个调用必须有明确、有限的任务和输出。Subagent 继承
+父 Agent 的 Sandbox 与写权限，不能绕过 Grader、Evaluation、Artifact 发布规则，
+也不产生固定工作流阶段、专用管理器或额外 Artifact。
 
-权威共享路径保持 handoff 约定：
+## 13. Global Memory Manager
+
+Global Memory Manager 是 task-local、低频、非阻塞的跨 Node 记忆整理器。它不由
+Analysis 发布事件触发，不使用 CORAL heartbeat，也不常驻。run 部署时添加一条
+run-scoped Cron：
+
+```cron
+*/30 * * * * cd <stable-run-worktree> && <absolute-autoresearch> consolidate-memory --if-due
+```
+
+Cron 使用包含有效 `.coral_dir` / `.coral_island` breadcrumb 的稳定 worktree 和
+绝对 CLI 路径。实现不在测试或普通安装阶段擅自修改用户 crontab；由 run bootstrap
+显式安装、列出和移除这一条带唯一 run 标识的记录。
+
+### 13.1 CLI 粗粒度触发
+
+`autoresearch consolidate-memory --if-due`：
+
+1. 在 `.coral/public/memory-consolidation.lock` 尝试取得 run-scoped 非阻塞 `flock`；已有实例时正常退出；该文件只用于同步，不记录 workflow 状态；
+2. 仅枚举已发布的 `nodes/Nxxx/research_analysis_vN.md` 文件名；
+3. 仅解析已有两份 Summary frontmatter 的 `processed_analyses` 引用集合；
+4. 以“尚未同时出现在两份成功 Summary 中的 Research Analysis 引用”为候选，
+   按 Node ID 去重；涉及至少 3 个不同 Node 时才启动 Manager，否则正常退出。
+
+这是文件引用集合比较，不读取 Analysis 正文，不构建 EvidenceBundle、不计算
+evidence/content hash，也不在 Python 中实现知识差异判断。某个 Node 的修订版本是
+新的引用，因此可作为该 Node 的一次新变化计数；同一 Node 的多个未处理版本仍只
+计一个 Node。Engineering Analysis 不参与阈值计数。
+
+### 13.2 Manager 输入与职责
+
+满足阈值后，CLI 启动一次独立、ephemeral Codex Memory Manager session。Manager
+在自己的 Scratch 中读取：
+
+- 当前 Research Tree；
+- 已有 `research_summary.md` 和 `engineering_summary.md`；
+- 已发布的 Research / Engineering Analysis；
+- 对应 Node 的 `evaluation.md`；
+- 仅在需要核对结论时读取相应原始 Evaluation Logs。
+
+Manager 自己根据 Summary frontmatter 中的 `processed_analyses` 识别新增或修订
+Analysis，并负责信息筛选、跨 Node 总结、语义去重、冲突分析和不确定性表达。
+Research Summary 记录算法发现、质量问题、失败经验与未解决假设；Engineering
+Summary 记录性能瓶颈、有效优化、算法结构限制与潜在研究机会。重要结论保留来源
+Node/Analysis、适用范围和不确定性。
+
+两份输出都包含完整的 `processed_analyses` 列表，覆盖本次成功处理的所有
+Research / Engineering Analysis 引用。Reference Toolkit
+（`algorithm_ref.md`、`system_ref.md`、`semantic_criteria.md`）保持静态，
+不是 Manager 的输出目标。
+
+### 13.3 校验、发布与恢复
+
+Python CLI 只校验：
+
+- 两份输出是带合法 frontmatter 的非空 Markdown；
+- `processed_analyses` 是规范 Analysis 相对路径列表；
+- 所有列出的引用文件真实存在；
+- 输出只能发布到 `research_summary.md` 和 `engineering_summary.md`。
+
+CLI 不判断总结内容、语义重复或冲突处理质量。两份 Summary 通过现有 Trusted
+Publisher 逐份原子写入；命令仅在两份均发布后报告成功。若 session、校验或发布
+失败，保留原始 Analysis/Evaluation/Reference，退出并等待下一次 Cron。若只完成
+一份写入，下次检查使用两份 Summary 已处理引用的交集，因此不会把不完整更新视为
+成功。相同证据集合再次运行时，Manager 根据完整 `processed_analyses` 保持内容
+幂等。
+
+该机制不新增数据库、常驻调度服务、heartbeat action、通用工作流引擎或 Analysis
+发布 hook。
+
+## 14. Node Artifact 与重建
+
+权威共享路径为：
 
 ```text
 .coral/public/notes/
 ├── tree.md
+├── research_summary.md
+├── engineering_summary.md
 └── nodes/Nxxx/
     ├── spec.md
     ├── evaluation.md
     ├── research_analysis_vN.md
-    ├── research_review_vN.md
-    ├── engineering_analysis_vN.md
-    └── engineering_review_vN.md
+    └── engineering_analysis_vN.md
 ```
 
-`evaluation.md` 从 Attempts、`metadata.grader_runs`、raw grader logs 和对应 commit
-的 `submission.yaml` 重建。它显示唯一 Research SHA、同 SHA retries、全部
-Engineering Attempts、失败/退化、contract/hardware 和 evidence。多个不同
+`evaluation.md` 从 Attempts、`metadata.grader_runs`、raw grader logs 和对应
+commit 的 `submission.yaml` 重建。它显示唯一 Research SHA、同 SHA retries、
+全部 Engineering Attempts、失败/退化、contract/hardware 和 evidence。多个不同
 Research SHA 时显式报告一致性错误，不覆盖。不可比 contract 不排序。
 
-`tree.md` 只索引 Node 和最新已发布 Analysis/Review，可从 nodes 重建。没有
-`node_state.yaml`、`engineering_history.md`、`runs/`、`iterations/` 或 findings
-ledger。
+`tree.md` 只索引 Node 和最新已发布 Analysis，可从 nodes 重建。Node spec 固定
+Parent Commit、Research Analysis 版本、Hypothesis、Selection Rationale 和
+falsification criteria；不保存审批状态。没有 `node_state.yaml`、
+`engineering_history.md`、`runs/`、`iterations/` 或 findings ledger。
+Global Summary 可从已发布 Analysis 重新整理，不是研究事实的唯一来源。
 
-## 14. Root Bootstrap
+## 15. Root Bootstrap
 
 1. 复制并校验 GreedyLoRE source manifest。
 2. 建立 run repo seed commit `S0`，记录 source SHA 与 S0。
@@ -463,11 +557,14 @@ ledger。
 5. 在候选根新增 Root `submission.yaml`；trusted submit 检查 S0→A0 diff 只含该文件。
 6. 一次 `mode=research` eval 运行两项 quality 和两项 efficiency，A0 成为唯一
    Research SHA。
-7. `autoresearch analyze --node N000 --mode research` 从 Artifact 解析 A0 并发布 Root
-   Analysis 和 Review。
-8. Review 为 pass/warning 后允许普通 child；Engineer 可同时继续 N000。
+7. `autoresearch analyze --node N000 --mode research` 从 Artifact 解析 A0 并发布
+   Root Research Analysis。
+8. Root Analysis 有效发布后允许普通 child；Engineer 可同时继续 N000。
 
-## 15. 错误分类与恢复
+Global Memory 的 Cron 在 run bootstrap 完成后单独安装；Root Analysis 本身不触发
+Memory Manager。
+
+## 16. 错误分类与恢复
 
 grader 为每个失败设置一个分类：
 
@@ -480,11 +577,12 @@ grader 为每个失败设置一个分类：
   昂贵 benchmark 前拒绝。
 
 所有异常保留 command、return code、stdout/stderr tail、完整日志路径和 cleanup
-结果。缺失值写 `null`/`—`，不合成数字。
+结果。缺失值写 `null`/`—`，不合成数字。Memory Consolidation 的失败不改变
+Attempt、Node 或 Analysis 状态，也不阻塞 Producer；下一次 Cron 重新检查。
 
-## 16. 验证策略
+## 17. 验证策略
 
-### 16.1 单元和集成测试
+### 17.1 单元和集成测试
 
 - contract 解析和 hash 稳定性；
 - research/engineering submission schema；
@@ -494,24 +592,32 @@ grader 为每个失败设置一个分类：
 - Node 唯一 Research SHA；
 - infra-only same-SHA retry、retry 上限和最小 append-only run history；
 - `evaluation.md` 删除后可从 Attempts/eval logs 重建；
-- Analysis/Review 幂等、缺 Review 恢复、`--revise` 版本化和 reviewer decision；
+- Analysis 幂等、`--revise` 版本化和固定 evidence；
+- Child 只要求并固定引用 Parent Research Analysis；
+- Analyzer/Producer Prompt 将 Subagent 表述为按需能力；
+- Memory gate 只按未处理 Research Analysis 的不同 Node 计数，Engineering 不计数；
+- Memory Manager 使用独立 session，重复 evidence 幂等，失败不影响 Analysis；
+- Summary 格式、引用存在性、固定发布路径和 Reference 静态性；
+- 非阻塞 `flock` 避免同 run 重复 Manager；
 - heartbeat disabled 后 start/resume 均无动作；
 - SRT 对正式记录 deny-write、own-worktree 正常写权限、sibling worktree 非直接可写；
 - fixed trusted endpoint 不接受路径、任意命令、未知 operation 或未校验 Artifact；
 - grader process cleanup 与 GPU lock。
 
-V1 测试以正常科研流程中的可靠性与误操作隔离为目标。低概率并发竞态、复杂路径攻击矩阵和 GPU topology 等效性的专项测试延后；这不改变正式 Evaluation Contract、GPU allocator、环境指纹记录或分布式进程清理要求。
+V1 测试以正常科研流程中的可靠性与误操作隔离为目标。低概率竞态、复杂路径攻击
+矩阵和 GPU topology 等效性的专项测试延后；正式 Evaluation Contract、GPU
+allocator、环境指纹记录和分布式进程清理要求不变。
 
-### 16.2 分阶段 smoke
+### 17.2 分阶段 smoke
 
 1. 原生锁定 CORAL 的 init/validate/start/eval smoke；
 2. dummy task 验证 research 双 profile、engineering efficiency-only、Attempt/index；
 3. 单进程 CPU contract/parser smoke；
-4. 4 GPU、3-step dense/GreedyLoRE BF16 correctness smoke；
-5. 动态预留 4 GPU、短 warmup + 3 measured step 的两 timing cell smoke，确认 SHM 和异步
-   Future；
-6. 缩短版 60M/130M quality smoke，确认 final result schema；
-7. 核心 dummy acceptance；
+4. Analyzer-only 发布、Child 创建和 Memory gate/publish dummy smoke；
+5. 4 GPU、3-step dense/GreedyLoRE BF16 correctness smoke；
+6. 动态预留 4 GPU、短 warmup + 3 measured step 的两 timing cell smoke，确认 SHM
+   和异步 Future；
+7. 缩短版 60M/130M quality smoke，确认 final result schema；
 8. dense calibration；
 9. Root N000 正式 evaluation。
 
@@ -519,40 +625,40 @@ V1 测试以正常科研流程中的可靠性与误操作隔离为目标。低�
 grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；grader daemon
 中的真实 Attempt 没有该标记，始终执行 committed submission 对应的正式 contract。
 
-### 16.3 V1 核心验收映射
+### 17.3 V1 核心验收映射
 
 - trusted submit 保证单 Node 唯一 Research SHA；
 - retry 仅接受同 SHA 的 infra failure，并保留运行历史；
 - Evaluation Artifact 可由 CORAL Attempts/eval logs 恢复；
-- Analysis/Review 支持幂等、缺 Review 恢复、显式 revision 和 pass/warning/fail；
-- Child 固定引用创建时使用的 Analysis/Review 版本；
+- Analysis 支持幂等和显式 revision；
+- Child 固定引用创建时使用的 Parent Research Analysis；
 - Engineering 可有零或多个正式 Attempt，Evidence 保持完整；
+- Cron 与 `analyze` 解耦，三 Node gate 后才启动独立 Memory Manager；
+- 两份 Summary 保存完整 processed refs，不修改 Analysis、Evaluation 或 Reference；
 - SRT 允许 Agent 正常写 own worktree，并阻止其误改正式记录和 sibling worktree；
 - trusted endpoint 保持固定 operation 和服务端校验；
-- GPU lock、max_workers、异步 formal timing、Root diff、Reference Evidence 和 Node Selection Rationale 继续由其所属 Task 的测试与 smoke 覆盖。
+- GPU lock、max_workers、异步 formal timing、Root diff、Reference Evidence 和 Node
+  Selection Rationale 继续由所属 Task 的测试与 smoke 覆盖。
 
-低概率并发测试、复杂 symlink/absolute/dotdot 攻击测试和 GPU topology 等效性专项测试不属于 V1 核心 acceptance，后续按真实故障证据补充，不预建通用安全或工作流框架。
+## 18. 实施顺序
 
-## 17. 实施顺序
+1. 保持已完成的 task scaffold、heartbeat、trusted writes、Evaluation Contract、
+   grader、Node/Evaluation/Root、prompts 和 sandbox 基础；
+2. 将现有 Analysis workflow 收敛为 Analyzer-only，并删除不再属于目标结构的审批 assets 与前置条件；
+3. 更新 Researcher、Engineer、Analyzer prompts：Summary 读取与按需 Subagent；
+4. 实现极简 Memory gate、独立 Memory Manager session、Summary 校验和可信发布；
+5. 增加 run-scoped Cron 安装/移除说明与集成测试，不启动常驻服务；
+6. 运行核心 dummy acceptance 和全量非 GPU 回归；
+7. 做动态 4 GPU smoke、dense calibration、Root N000 正式 eval。
 
-1. 建立 task scaffold、复制脚本和 source manifest；
-2. 增加 heartbeat disable 与 validation marker；
-3. 增加 grader-owned trusted submit/retry/publish 和保护路径 sandbox；
-4. 实现 evaluation contract、quality/efficiency runner 和 packaged grader；
-5. 实现极简 Node Artifact、evaluation rebuild 和幂等 Root bootstrap；
-6. 部署 prompts/references/templates；
-7. 实现 Artifact 驱动的 Analyzer/Reviewer fresh-session 发布；
-8. 完成核心 dummy acceptance；
-9. 验证 SRT 主机依赖、正式记录写隔离及正常 Agent 命令兼容性；
-10. 做动态 4 GPU smoke、dense calibration、Root N000 正式 eval。
-
-实施时每完成一个可独立验证的大 step 就创建一个 Git commit。测试和检查在
-commit 前完成；commit 动作本身不额外触发 push、长训练或 calibration。
+实施时每完成一个可独立验证的大 step 就创建一个 Git commit。测试和检查在 commit
+前完成；commit 动作本身不额外触发 push、长训练、calibration 或真实 crontab
+安装。
 
 长训练通过 grader daemon/tmux 管理，不用 Agent 回合轮询。任何尚未真实运行的
-sandbox、GPU benchmark 或完整训练均不得在交付说明中声称通过。
+sandbox、Cron、GPU benchmark 或完整训练均不得在交付说明中声称通过。
 
-## 18. 完成条件
+## 19. 完成条件
 
 V1 完成需要同时满足：
 
@@ -560,10 +666,18 @@ V1 完成需要同时满足：
 - task validate/dummy acceptance 通过；
 - Research/Engineering 分流和完整 evidence 可重建；
 - 同 Node 不同 Research SHA 被拒绝，同 SHA infra retry 在预算内保留全部历史；
-- Analysis/Review fresh、版本化、幂等且受控发布；
+- Analysis fresh、版本化、幂等且受控发布；
+- Research Analysis 发布后可直接创建 Child；
+- Subagent 仅为按需能力且继承父 Agent 权限；
+- Cron 每 30 分钟检查，未处理 Research Analysis 涉及至少 3 个不同 Node 时才启动
+  独立 Memory Manager；
+- 两份 Global Summary 可追溯到完整 `processed_analyses`，Reference Toolkit
+  保持静态；
+- Memory Consolidation 失败不阻塞 Producer 或改变正式研究记录；
 - heartbeat 确实关闭；
 - Agent 不能直接改写 protected shared artifacts，受控命令仍可工作；
 - 四卡 SHM BF16/FP32 async timing smoke 有实际 NCCL 证据；
-- dense references 完成并与 contract 匹配，efficiency 对照使用同 GPU UUID 集合或经验证等效的 topology/NUMA/NCCL 环境；
-- Root N000 的唯一 Research Attempt、Analysis 和 Review 完成；
+- dense references 完成并与 contract 匹配，efficiency 对照使用同 GPU UUID 集合
+  或经验证等效的 topology/NUMA/NCCL 环境；
+- Root N000 的唯一 Research Attempt 和 Research Analysis 完成；
 - 已知限制、未覆盖项和所有失败结果如实记录。
