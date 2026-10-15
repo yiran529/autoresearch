@@ -1,10 +1,10 @@
 # GreedyLoRE CORAL AutoResearch V1 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Use subagents only when explicitly requested and useful for a bounded independent check. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在锁定的 CORAL fork 中交付一个以 GreedyLoRE r32/EF14 为 Root、支持 Research/Engineering 分流、受控证据发布和固定 GPU 评测合同的 AutoResearch V1 task。
 
-**Architecture:** 复用 CORAL 原生 Commit → Attempt → Grader 主链，只在现有 grader daemon 内增加固定用途的 trusted submit/retry/publish 入口，并收紧 SRT 写边界；不增加通用 RPC、第二套状态数据库或工作流引擎。GreedyLoRE task 拥有固定 evaluation contract、Analyzer-only Node workflow、按需 Subagent prompts 和低频 Global Memory；Memory 只在 Researcher start/resume/restart Hook 中异步检查三 Node 门槛。
+**Architecture:** 复用 CORAL 原生 Commit → Attempt → Grader 主链，只在现有 grader daemon 内增加固定用途的 trusted submit/retry/publish 入口，并收紧 SRT 写边界；不增加通用 RPC、第二套状态数据库或工作流引擎。GreedyLoRE task 自己拥有 evaluation contract、submission/artifact 校验、Node/Analysis/Review 规则和模板；正式 quality 使用 60M+AdamW 完训与 130M+Muon 前 2,500 updates，正式 efficiency 只使用 130M+AdamW 的 BF16/FP32 两个 cell。
 
 **Tech Stack:** Python 3.11、CORAL dataclass/OmegaConf 配置、pytest、Unix domain socket、PyYAML、PyTorch 2.4 DDP/NCCL、Hugging Face Transformers/Datasets、Git worktree、SRT/bubblewrap。
 
@@ -19,7 +19,7 @@
 - quality gate 对两个 workload 分别要求 `candidate_final_eval_loss <= 1.10 * dense_reference_final_eval_loss`，必须同时通过。
 - efficiency 只有 `130m_adamw_bf16` 和 `130m_adamw_fp32`；每卡 batch 1、SHM、异步 DDP、101 warmup、400 measured、每 cell 两次。
 - 正式 timing 不传 `--strict_blocking_communication`，只用被动 bucket layout 记录；Dense/candidate 都使用两次均值，**只有环境与 GPU 拓扑可比时**才计算 speedup，综合分数为两个 speedup 的几何平均。
-- Agent 不能直接写 Attempts、eval logs、Node history、Analysis、Global Summary 或 private data；`coral eval`、`autoresearch retry` 和 task-local Artifact 命令通过固定用途的可信入口发布。
+- Agent 不能直接写 Attempts、eval logs、Node history、Analysis/Review 或 private data；`coral eval`、`autoresearch retry` 和 task-local Artifact 命令通过固定用途的可信入口发布。
 - 每个下列 Task 是一个“大 step”：其测试通过后立即创建一次 commit；commit 本身不触发 push、长训练或 calibration。
 - 未实际执行的 GPU smoke、dense calibration、完整训练和 SRT 攻击测试不得标记为通过。
 - **防御性与复杂度成比例：** V1 只为会直接影响正式结果可信性、权限边界、GPU 资源冲突和分布式进程清理的常见故障路径增加强校验。对尚未观察到、极少见或高度平台相关的异常，不预先构建通用恢复层、复杂兼容解析或额外状态机；先清晰失败并保留日志，只有真实失败或验收测试证明必要时再增加最小处理。
@@ -497,488 +497,316 @@ git commit -m "feat: add GreedyLoRE quality and timing grader"
 
 ---
 
-### Task 6: 收敛 Analyzer-only Node workflow 与角色资产
+### Task 6: 实现极简 Node、evaluation rebuild 与 Root bootstrap
 
 **Files:**
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py`
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/validation.py`
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/nodes.py`
+- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/atomic.py`
+- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/nodes.py`
+- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/evaluation.py`
+- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/bootstrap.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/submission.py`
-- Delete: `tasks/greedylore_autoresearch/autoresearch/schemas/review.schema.json`
-- Modify: `tasks/greedylore_autoresearch/templates/node_spec.md`
-- Delete: `tasks/greedylore_autoresearch/templates/review.md`
-- Modify: `tasks/greedylore_autoresearch/roles/workflow_rules.md`
-- Modify: `tasks/greedylore_autoresearch/roles/researcher.md`
-- Modify: `tasks/greedylore_autoresearch/roles/engineer.md`
-- Modify: `tasks/greedylore_autoresearch/prompts/research_analysis.md`
-- Modify: `tasks/greedylore_autoresearch/prompts/engineering_analysis.md`
-- Delete: `tasks/greedylore_autoresearch/prompts/reviewer.md`
-- Modify: `tasks/greedylore_autoresearch/tests/test_analysis_cli.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_analysis_recovery.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_node_rules.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_submission.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_root_bootstrap.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_handoff_assets.py`
-
-**Interfaces:**
-- Consumes: existing `resolve_evidence(node_id, mode) -> EvidenceBundle`,
-  `run_fresh_codex(...) -> Path`, deterministic evaluation rebuild and Task 3
-  `publish_artifact`.
-- Produces: `AnalysisResult(evidence, analysis_version, analysis_path)`;
-  `analyze(node_id, mode, revise=False) -> AnalysisResult`; Child spec with only
-  fixed Analysis refs; Research Analysis publication as the sole Child prerequisite.
-  There is no Review schema, session, file, decision, recovery stage, or approval state.
-
-- [ ] **Step 1: Rewrite tests for the Analyzer-only contract**
-
-~~~python
-def test_analyze_runs_one_session_and_publishes_no_review(context):
-    runner = FakeCodex(context, ["analysis"])
-    result = analyze(
-        "N001",
-        "research",
-        context=context,
-        runner=runner,
-        publisher=FakePublisher(context),
-    )
-    assert runner.analysis_calls == 1
-    assert result.analysis_path.name == "research_analysis_v1.md"
-    assert not list(result.analysis_path.parent.glob("*_review_v*.md"))
-
-
-def test_completed_analysis_is_idempotent(context):
-    runner = FakeCodex(context, ["analysis"])
-    first = analyze(
-        "N001", "research", context=context, runner=runner,
-        publisher=FakePublisher(context),
-    )
-    second = analyze(
-        "N001", "research", context=context, runner=runner,
-        publisher=FakePublisher(context),
-    )
-    assert first.analysis_version == second.analysis_version == 1
-    assert runner.analysis_calls == 1
-
-
-def test_child_requires_only_fixed_parent_analysis(tmp_path):
-    evidence = parent_evidence(tmp_path, analysis_version=2)
-    spec = yaml.safe_load(create_node(child_request(), evidence).read_text())
-    assert spec["analysis_refs"]["parent_research"] == (
-        "nodes/N001/research_analysis_v2.md"
-    )
-    assert "review_refs" not in spec
-~~~
-
-Delete tests whose only behavior is missing-review recovery, decisions, or paired
-Analysis/Review versions. Preserve tests for Research-only evidence, zero/multiple
-Engineering Attempts, immutable evaluation snapshots, fixed-SHA code snapshots,
-`--revise`, and evidence-content validation.
-
-- [ ] **Step 2: Run the focused tests and verify RED**
-
-Run:
-
-~~~bash
-uv run --frozen --extra dev pytest \
-  tasks/greedylore_autoresearch/tests/test_analysis_cli.py \
-  tasks/greedylore_autoresearch/tests/test_analysis_recovery.py \
-  tasks/greedylore_autoresearch/tests/test_node_rules.py \
-  tasks/greedylore_autoresearch/tests/test_submission.py \
-  tasks/greedylore_autoresearch/tests/test_root_bootstrap.py \
-  tasks/greedylore_autoresearch/tests/test_handoff_assets.py -q
-~~~
-
-Expected: FAIL because the implementation still returns Review fields, starts a
-second session, and requires a Parent Review.
-
-- [ ] **Step 3: Reduce Analysis to one stage**
-
-`AnalysisResult` contains only `evidence`, `analysis_version`, and
-`analysis_path`. Versions come only from `<mode>_analysis_vN.md`: the default
-returns the latest valid version, no version creates v1, and `--revise` creates
-`max(existing)+1`.
-
-The implementation order is refresh evaluation → resolve evidence → validate and
-return an existing Analysis, or run one fresh Analyzer → `seal_document` →
-`validate_analysis` → trusted publication. Delete the reviewer prompt branch,
-`validate_review()`, review schema lookup, second scratch/session and decision
-output. Do not change EvidenceBundle, code snapshots, or evidence manifests.
-
-`autoresearch analyze` prints only:
-
-~~~json
-{
-  "analysis_version": 2,
-  "analysis_path": "/notes/nodes/N001/research_analysis_v2.md"
-}
-~~~
-
-- [ ] **Step 4: Remove approval references from Node and submission rules**
-
-`create_node()` verifies only that the selected Parent Research Analysis path
-exists and matches the Parent Node. Specs retain
-`analysis_refs.parent_research` and optional `parent_engineering`, and contain no
-`review_refs`. The Node CLI no longer constructs a Review path. Update submission
-validation, Root bootstrap, and templates to match. Existing obsolete files in an
-old run may remain readable, but no new workflow reads or creates them.
-
-- [ ] **Step 5: Update Producer and Analyzer prompts**
-
-Researcher reads `research_summary.md` when present, Parent spec/evaluation, and
-the fixed Parent Research Analysis; it may extend a Child immediately after a
-valid Research Analysis. Engineer reads `engineering_summary.md` when present;
-Engineering Analysis remains optional and never blocks Researcher. Both Analyzer
-prompts remove approval-stage language.
-
-Add this rule to Researcher, Engineer, Research Analyzer, and Engineering
-Analyzer:
-
-~~~text
-遇到实质性不确定性时，可以自主调用 Subagent 进行独立检查或辅助分析。
-优先自行解决简单问题，不要为常规代码修改、实验结果或 Analysis 强制调用
-Subagent。Subagent 必须有明确、有限的任务与输出，并继承当前 Sandbox、
-Evaluation 和 Artifact 发布边界。
-~~~
-
-`workflow_rules.md` exposes only the user-facing commands and Node/Artifact
-rules. It does not explain UDS, locks, grader run history, or SRT internals.
-Do not modify the three Reference Toolkit files.
-
-- [ ] **Step 6: Delete obsolete assets and verify GREEN**
-
-Delete the review schema, prompt, and template. Run the Step 2 command.
-
-Expected: PASS. Asset tests assert that obsolete files do not exist, no Analysis
-command creates them, Child creation has no approval state, and all four target
-prompts contain optional—not mandatory—Subagent guidance.
-
-- [ ] **Step 7: Commit**
-
-~~~bash
-git add -A tasks/greedylore_autoresearch/autoresearch \
-  tasks/greedylore_autoresearch/roles \
-  tasks/greedylore_autoresearch/prompts \
-  tasks/greedylore_autoresearch/templates \
-  tasks/greedylore_autoresearch/tests
-git commit -m "feat: simplify autoresearch to analyzer-only workflow"
-~~~
-
----
-
-### Task 7: 添加启动触发的 Global Memory 及完整受控边界
-
-**Files:**
-- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/memory.py`
-- Create: `tasks/greedylore_autoresearch/autoresearch/schemas/memory.schema.json`
-- Create: `tasks/greedylore_autoresearch/prompts/global_memory_manager.md`
-- Create: `tasks/greedylore_autoresearch/tests/test_memory.py`
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/artifacts.py`
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
-- Modify: `tasks/greedylore_autoresearch/task.yaml`
-- Modify: `tasks/greedylore_autoresearch/tests/test_analysis_cli.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_handoff_assets.py`
-- Create: `coral/agent/startup_hook.py`
-- Modify: `coral/agent/builtin/codex.py`
-- Create: `tests/test_codex_startup_hook.py`
 - Modify: `coral/grader/trusted_writes.py`
 - Modify: `tests/test_trusted_writes.py`
-- Modify: `coral/sandbox/srt.py`
-- Modify: `tests/test_sandbox.py`
-- Modify: `tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py`
+- Create: `tasks/greedylore_autoresearch/tests/test_node_rules.py`
+- Create: `tasks/greedylore_autoresearch/tests/test_evaluation_index.py`
+- Create: `tasks/greedylore_autoresearch/tests/test_root_bootstrap.py`
 
 **Interfaces:**
-- Consumes: Task 3 fixed `publish_artifact`; Task 6 published Analysis layout;
-  Codex `runtime.start()` shared by start/resume/automatic restart.
-- Produces:
-  - `list_analysis_refs(notes_root: Path, mode: str | None = None) -> tuple[str, ...]`
-  - `read_processed_analyses(summary: Path) -> frozenset[str]`
-  - `memory_due(notes_root: Path, threshold: int = 3) -> bool`
-  - `validate_summary(content: str, notes_root: Path) -> frozenset[str]`
-  - `consolidate_memory(*, if_due: bool, context=None, runner=..., publisher=None) -> MemoryResult`
-  - CLI `autoresearch consolidate-memory [--if-due] [--async]`
-  - Codex reserved option `runtime_options.startup_hook: list[str]`
-  - Artifact kinds `research_summary` and `engineering_summary`.
+- Consumes: Task 3 的 `publish_artifact` 与唯一 Research Attempt 保证；CORAL Attempts、`grader_runs`、raw eval logs 和 committed `submission.yaml`。
+- Produces: `create_node(request, evidence) -> Path`；`refresh_node_evaluation(node_id, attempts, log_root) -> str`；`bootstrap_root(repo, source_manifest) -> Path`；CLI `autoresearch node create` 与 `autoresearch refresh-evaluation`。不存在 Node 状态数据库、Engineering Iteration 模型或通用 Artifact Publisher。
 
-There is no timer, heartbeat action, Analysis publication hook, EvidenceBundle/hash,
-or persistent scheduling service.
+- [x] **Step 1: 写 fixed reference、rebuild、零/multi Engineering 与 Root 幂等失败测试**
 
-- [ ] **Step 1: Write failing gate and Summary validation tests**
-
-~~~python
-def test_gate_counts_unprocessed_research_nodes_only(notes_root):
-    publish_analysis(notes_root, "N001", "research", 1)
-    publish_analysis(notes_root, "N001", "research", 2)
-    publish_analysis(notes_root, "N002", "research", 1)
-    publish_analysis(notes_root, "N003", "engineering", 1)
-    assert memory_due(notes_root) is False
-
-    publish_analysis(notes_root, "N003", "research", 1)
-    assert memory_due(notes_root) is True
+```python
+def test_child_freezes_selected_parent_versions(parent_node):
+    spec = parse_spec(create_node(child_request(parent_node, analysis_version=2)))
+    assert spec["parent_commit"] == parent_node.research_sha
+    assert spec["analysis_ref"].endswith("research_analysis_v2.md")
+    assert spec["review_ref"].endswith("research_review_v2.md")
+    assert spec["selection_rationale"]
 
 
-def test_partial_summary_update_does_not_suppress_retry(notes_root):
-    write_summary(
-        notes_root / "research_summary.md",
-        ["nodes/N001/research_analysis_v1.md"],
-    )
-    write_summary(notes_root / "engineering_summary.md", [])
-    assert memory_due(notes_root, threshold=1) is True
+@pytest.mark.parametrize("engineering_count", [0, 2])
+def test_evaluation_rebuild_is_deterministic(fixture_run, engineering_count):
+    fixture_run.keep_engineering(engineering_count)
+    first = refresh_node_evaluation("N001", fixture_run.attempts, fixture_run.logs)
+    second = refresh_node_evaluation("N001", fixture_run.attempts, fixture_run.logs)
+    assert first == second
+    assert first.count("| engineering |") == engineering_count
 
 
-def test_summary_validator_only_checks_format_and_existing_refs(notes_root):
-    publish_analysis(notes_root, "N001", "research", 1)
-    content = """---
-processed_analyses:
-  - nodes/N001/research_analysis_v1.md
+def test_root_bootstrap_is_idempotent(root_fixture):
+    first = bootstrap_root(root_fixture.repo, root_fixture.manifest)
+    assert bootstrap_root(root_fixture.repo, root_fixture.manifest) == first
+    assert root_fixture.changed_paths("S0", "A0") == {"submission.yaml"}
+```
+
+- [x] **Step 2: 运行测试并确认接口缺失**
+
+Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_node_rules.py tasks/greedylore_autoresearch/tests/test_evaluation_index.py tasks/greedylore_autoresearch/tests/test_root_bootstrap.py -v`
+
+Expected: FAIL，Node/rebuild/bootstrap 接口尚不存在。
+
+- [x] **Step 3: 实现 task-specific Artifact 校验和原子发布**
+
+`artifacts.py` 只把 kind 映射到 `tree.md`、`nodes/Nxxx/spec.md`、`evaluation.md` 或版本化 Analysis/Review 文件；调用者不能提供路径。验证 Node ID、mode/version、symlink 和 resolved target，再由 Task 3 trusted writer 执行临时文件、flush/fsync、`os.replace` 和 parent fsync。不要抽象通用 Publisher 类或可配置路径规则。
+
+- [x] **Step 4: 实现最小 Node spec 规则**
+
+Root 固定 `N000`、parent null、base `S0`。普通 child ID 从已发布 Node 单调选择候选；trusted publication lock 保证同一 ID 只有一个发布成功，极少见的并发冲突由调用方重试；spec 保存 hypothesis、parent node、fixed parent/base commit、Node Selection Rationale、delta、risk、falsification criteria 和创建时选中的 Analysis/Review 精确版本。只有 Research Review pass/warning 才允许扩展；Research Attempt 唯一性由 Task 3 保证。
+
+- [x] **Step 5: 实现 deterministic evaluation rebuild**
+
+只从 Attempts、`grader_runs`、raw result JSON 和 committed `submission.yaml` 生成。输出唯一 Research SHA/retry 历史，并把每次正式 efficiency evaluation 映射成一个 CORAL Engineering Attempt；允许零 Engineering Attempt，不创建 iteration record。多个不同 Research SHA 报 consistency error 且不覆盖；缺值写 `—`，不可比 contract 不排序。
+
+- [x] **Step 6: 实现一次性幂等 Root bootstrap**
+
+区分 upstream source SHA 与运行仓库 S0，按 source manifest（含 adaptations/relocations）验证 seed；canonical A0/N000 已存在且匹配时幂等恢复缺失发布，冲突时失败；通过受限入口发布 spec。immutable Artifact 的相同内容重发幂等，不同内容仍拒绝。从固定模板只新增 `submission.yaml`，Task 3 接受 A0 前强制 `git diff --name-only S0 A0 == {"submission.yaml"}`。
+
+- [x] **Step 7: 运行 Node/evaluation/bootstrap 测试**
+
+Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_node_rules.py tasks/greedylore_autoresearch/tests/test_evaluation_index.py tasks/greedylore_autoresearch/tests/test_root_bootstrap.py -v`
+
+Expected: PASS。
+
+- [x] **Step 8: Commit**
+
+```bash
+git add tasks/greedylore_autoresearch/autoresearch tasks/greedylore_autoresearch/tests
+git commit -m "feat: add artifact-driven node workflow"
+```
+
 ---
-# Research Summary
 
-A bounded finding.
-"""
-    assert validate_summary(content, notes_root) == frozenset(
-        {"nodes/N001/research_analysis_v1.md"}
-    )
-~~~
+### Task 7: 实现轻量 Analysis / Reviewer CLI
 
-Add rejection cases for invalid frontmatter, empty body, non-canonical paths, and
-missing referenced files. Python must not interpret Summary semantics.
+**Files:**
+- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py`
+- Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/validation.py`
+- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
+- Create: `tasks/greedylore_autoresearch/autoresearch/schemas/analysis.schema.json`
+- Create: `tasks/greedylore_autoresearch/autoresearch/schemas/review.schema.json`
+- Create: `tasks/greedylore_autoresearch/tests/test_analysis_cli.py`
+- Create: `tasks/greedylore_autoresearch/tests/test_analysis_recovery.py`
 
-- [ ] **Step 2: Write failing Manager, async, and idempotency tests**
+**Interfaces:**
+- Produces: `analyze(node_id, mode, revise=False) -> AnalysisResult`；`resolve_evidence(node_id, mode) -> EvidenceBundle`；`run_fresh_codex(prompt, read_roots, output_schema, scratch) -> Path`；CLI `autoresearch analyze --node Nxxx --mode research|engineering [--revise]`。完成状态只由已校验、已发布的 Artifact 推导。
 
-~~~python
-def test_manager_publishes_two_fixed_summaries(memory_context):
-    runner = FakeMemoryRunner(valid_memory_output(memory_context.analysis_refs))
-    publisher = RecordingPublisher()
-    result = consolidate_memory(
-        if_due=True,
-        context=memory_context,
-        runner=runner,
-        publisher=publisher,
-    )
-    assert runner.calls == 1
-    assert [call.kind for call in publisher.calls] == [
-        "research_summary",
-        "engineering_summary",
+- [x] **Step 1: 写幂等、固定快照恢复、revision 与零 Engineering Attempt 测试**
+
+```python
+def test_review_failure_only_retries_missing_review(fake_codex, node):
+    fake_codex.outputs = [VALID_ANALYSIS, RuntimeError("review crashed"), VALID_REVIEW]
+    with pytest.raises(RuntimeError):
+        analyze(node.id, "research")
+    result = analyze(node.id, "research")
+    assert fake_codex.analysis_calls == 1
+    assert fake_codex.review_calls == 2
+    assert result.analysis_version == 1
+
+
+def test_engineering_analysis_allows_no_engineering_attempt(fake_codex, research_only_node):
+    result = analyze(research_only_node.id, "engineering")
+    assert result.evidence.engineering_attempts == []
+
+
+def test_engineering_analysis_freezes_all_attempts(fake_codex, node_with_three_eng_attempts):
+    result = analyze(node_with_three_eng_attempts.id, "engineering")
+    assert [a.commit_sha for a in result.evidence.engineering_attempts] == ["E1", "E2", "E3"]
+    assert all(a.eval_refs for a in result.evidence.engineering_attempts)
+
+
+def test_revise_keeps_v1_and_publishes_v2(node):
+    first = analyze(node.id, "research")
+    second = analyze(node.id, "research", revise=True)
+    assert first.analysis_path.exists() and first.review_path.exists()
+    assert second.analysis_version == second.review_version == 2
+```
+
+- [x] **Step 2: 运行测试并确认轻量 CLI 缺失**
+
+Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_analysis_cli.py tasks/greedylore_autoresearch/tests/test_analysis_recovery.py -v`
+
+Expected: FAIL，evidence resolver、fresh runners 和 Artifact 恢复逻辑尚不存在。
+
+- [x] **Step 3: 从 Node 与 evaluation Artifact 固定 evidence**
+
+启动时先用 Task 6 deterministic rebuild 通过受限入口刷新 `evaluation.md`。Research mode 只绑定唯一 terminal Research SHA（包括如实记录的失败结果）、contract hash、Node spec，并生成不含 Engineering rows 的 deterministic evaluation snapshot；`engineering_attempts` 必须为空。Engineering mode 绑定相同 Research anchor，并从 `evaluation.md` 与原始 Attempts/logs **按提交时间固定该 Node 的全部 Engineering Attempts**，逐项保存 `commit_sha`、正式 efficiency run IDs/原始日志及可比性状态；`engineering_attempts: []` 表示没有工程提交。宿主把 evaluation 文本、spec hash、contract、attempt 列表以及实际存在的原始证据内容 hash 封装为完整 canonical evidence manifest；缺失的失败日志显式记录为 `missing`，不阻止分析。Analysis/Review 均引用该固定版本；每个 session 只把 manifest 中状态为 present 的具体证据文件复制到独立 `scratch/evidence`，不暴露可增长的 Node 目录或整个 eval log root。后续新增工程 Attempt、后补 missing 日志、目录新增文件或刷新可变 `evaluation.md` 都不会进入已发布 Analysis 的证据集。没有 Engineering Attempt 时只分析 Research 实现、Research evaluation 和已有 profiling evidence，不得声称未测量的性能提升。analyze 不重跑正式训练。
+
+- [x] **Step 4: 实现两个独立 fresh Codex session**
+
+```bash
+codex exec --ephemeral --ignore-user-config --sandbox read-only \
+  --skip-git-repo-check --cd SCRATCH \
+  --output-schema SCHEMA --output-last-message OUTPUT -
+```
+
+Analyzer 与 Reviewer 使用不同 scratch 和全新命令；宿主从本地 Git object 按 Research SHA 及该 Analysis 固定的 Engineering SHAs 物化 `scratch/code/<sha>`，并只暴露这些 code snapshots、`scratch/evidence` 与 references。不得传入实时 Agent checkout（其中可能含共享 Artifact symlink）、原始宿主 Artifact 路径，不得 `resume`、复用 session/thread 或继承对话。
+
+- [x] **Step 5: 校验并通过受限入口发布**
+
+Analyzer/Reviewer 的 schema 只要求模型生成分析正文；宿主在发布前注入并校验 node、mode、Research SHA、**固定且可为空的 Engineering Attempt 列表及各 run 引用**、evaluation snapshot/version、完整 evidence manifest/hash 和 evidence paths，避免模型重复输出大段可信元数据。Review 必须引用完全相同的证据快照及 Analysis version，包含 workflow/evidence checks、issues/actions 和唯一 `decision: pass|warning|fail`。scratch 输出完整校验后才调用 `publish_artifact`；版本号从已发布 Artifact 单调选择候选；trusted publication lock 与 immutable target 保证同一版本只有一个内容成功，并发冲突显式失败后重试。canonical target 检查仍在 trusted lock 内完成。
+
+- [x] **Step 6: 实现 Artifact 驱动恢复规则**
+
+无 Analysis 时运行 Analyzer；有 Analysis、无 Review 时先重算并校验已发布 manifest，再只运行 Reviewer。Reviewer 使用 Analysis 内嵌的 immutable evaluation snapshot 和独立 `scratch/evidence` 快照，不用可能已刷新的 `evaluation.md` 或整个共享 log root；已记录为 present 的原始证据内容变化会使恢复失败，已记录为 missing 的证据即使后来出现也不会加入旧版本。两者有效时幂等返回。`fail` 是 terminal Review 但不是通过，也不自动修订；`--revise` 才创建下一版本并保留历史。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
+
+- [x] **Step 7: 运行 Analysis / Reviewer 测试**
+
+Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_analysis_cli.py tasks/greedylore_autoresearch/tests/test_analysis_recovery.py -v`
+
+Expected: PASS；证明 session 分离、fixed-SHA code snapshot、artifact-only recovery、Research/Engineering 证据边界、immutable evaluation 快照、原始证据内容 hash、零 Engineering Attempt、多个 Engineering Attempt 的完整固定历史及 Analysis/Review 引用一致。
+
+- [x] **Step 8: Commit**
+
+```bash
+git add tasks/greedylore_autoresearch/autoresearch tasks/greedylore_autoresearch/tests
+git commit -m "feat: add artifact-driven analysis review"
+```
+
+---
+
+### Task 8: 部署 roles、prompts、references、templates 并完成 task 配置
+
+**Files:**
+- Create: `tasks/greedylore_autoresearch/roles/workflow_rules.md`
+- Create: `tasks/greedylore_autoresearch/roles/researcher.md`
+- Create: `tasks/greedylore_autoresearch/roles/engineer.md`
+- Create: `tasks/greedylore_autoresearch/prompts/research_analysis.md`
+- Create: `tasks/greedylore_autoresearch/prompts/engineering_analysis.md`
+- Create: `tasks/greedylore_autoresearch/prompts/reviewer.md`
+- Create: `tasks/greedylore_autoresearch/references/algorithm_ref.md`
+- Create: `tasks/greedylore_autoresearch/references/system_ref.md`
+- Create: `tasks/greedylore_autoresearch/references/semantic_criteria.md`
+- Create: `tasks/greedylore_autoresearch/templates/node_spec.md`
+- Create: `tasks/greedylore_autoresearch/templates/evaluation.md`
+- Create: `tasks/greedylore_autoresearch/templates/research_analysis.md`
+- Create: `tasks/greedylore_autoresearch/templates/engineering_analysis.md`
+- Create: `tasks/greedylore_autoresearch/templates/review.md`
+- Create: `tasks/greedylore_autoresearch/templates/submission.yaml`
+- Modify: `tasks/greedylore_autoresearch/task.yaml`
+- Create: `tasks/greedylore_autoresearch/tests/test_handoff_assets.py`
+
+**Interfaces:**
+- Consumes: Appendix A/B/C from `/home/wyr/CORAL_AutoResearch_V1_Handoff_Refined.md` and Tasks 3/6/7 的最终 CLI。
+- Produces: two Codex assignments with distinct role files；简短共享 `workflow_rules.md`；private dense references；task-local validators/CLI 安装；`agents.heartbeat_enabled=false`；`grader.parallel.max_workers=1`；SRT enabled。
+
+- [x] **Step 1: 写 asset、task config 与 Prompt 边界失败测试**
+
+```python
+def test_task_has_two_distinct_codex_roles(task_yaml):
+    assignments = task_yaml["agents"]["assignments"]
+    assert [a["runtime_options"]["role_file"] for a in assignments] == [
+        "roles/researcher.md", "roles/engineer.md"
     ]
-    assert result.status == "published"
+    assert task_yaml["agents"]["heartbeat_enabled"] is False
+    assert task_yaml["grader"]["parallel"]["max_workers"] == 1
 
 
-def test_processed_set_skips_manager(memory_context):
-    write_both_summaries(memory_context.notes_root, memory_context.analysis_refs)
-    runner = FakeMemoryRunner()
-    result = consolidate_memory(
-        if_due=True,
-        context=memory_context,
-        runner=runner,
-        publisher=RecordingPublisher(),
-    )
-    assert result.status == "not_due"
-    assert runner.calls == 0
+def test_prompts_expose_workflow_not_transport(prompt_texts):
+    combined = "\n".join(prompt_texts)
+    for required in ("coral eval", "autoresearch retry", "autoresearch analyze"):
+        assert required in combined
+    for internal in ("trusted.sock", "flock", "grader_runs", "ControlProvider"):
+        assert internal not in combined
+```
 
+- [x] **Step 2: 提取 assets 并加入简短共享规则**
 
-def test_analyze_never_launches_memory(monkeypatch, analysis_context):
-    monkeypatch.setattr("autoresearch.memory.consolidate_memory", pytest.fail)
-    analyze("N001", "research", context=analysis_context, runner=FakeAnalyzer())
-~~~
+Researcher/Engineer/Analyzer/Reviewer 对应 Appendix A.1–A.5；algorithm/system/semantic 对应 B.1–B.3；templates 对应 C.1–C.6。`workflow_rules.md` 只描述任务、输入 Artifact、完成条件、Node/Attempt 规则、`coral eval`、`autoresearch retry`、`autoresearch analyze`、读写/发布边界和失败记录。保留 Node Selection、Reference Toolkit、Semantic Criteria；V1 Semantic Test 仍是 Prompt + Criteria 软约束。Prompt 不解释 UDS、锁、`grader_runs` 或 SRT internals。
 
-Mock `subprocess.Popen` for `--async` and assert it starts a hidden worker command
-then returns immediately. The worker—not the launcher—takes the non-blocking lock,
-checks the gate, and runs the session. An occupied lock returns `locked` without a
-Codex call. Runner or publisher failure must leave Analysis, Evaluation, and
-Reference files unchanged.
+- [x] **Step 3: 完成 task.yaml 与隔离安装**
 
-- [ ] **Step 3: Write failing trusted-target, sandbox, and startup-Hook tests**
+`workspace.repo_path` 指向 seed；`workspace.setup` 只在 CORAL 新建的每个 worktree `.venv` 中安装 seed 依赖和 task-local autoresearch CLI，不修改 `/home/wyr/greedy_lore/.venv` 或其他既有环境。`grader.setup` 在 `.coral/private/grader_venv` 安装 grader 与 autoresearch；`grader.args` 固定 trusted submission/artifact validator entrypoints。两个 Codex assignments 各 count 1；sandbox provider srt；network allowlist 只保留 Agent 必需域名，正式 evaluator offline。没有 control provider 配置。
 
-~~~python
-@pytest.mark.parametrize(
-    ("kind", "target"),
-    [
-        ("research_summary", "research_summary.md"),
-        ("engineering_summary", "engineering_summary.md"),
-    ],
-)
-def test_summary_artifacts_have_fixed_targets(kind, target):
-    result = validate_artifact(
-        kind,
-        valid_summary(),
-        {"node_id": None, "mode": None, "version": None},
-    )
-    assert result["relative_path"] == target
+- [x] **Step 4: 运行 asset/config 测试与 CORAL structural validation**
 
+Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_handoff_assets.py tasks/greedylore_autoresearch/tests/test_contract_static.py -v`
 
-def test_only_researcher_has_memory_hook(task_yaml):
-    researcher, engineer = task_yaml["agents"]["assignments"]
-    assert researcher["runtime_options"]["startup_hook"] == [
-        ".venv/bin/autoresearch",
-        "consolidate-memory",
-        "--if-due",
-        "--async",
-    ]
-    assert "startup_hook" not in engineer["runtime_options"]
+Run: `uv run --frozen --extra dev coral validate tasks/greedylore_autoresearch --json`
 
+Expected: PASS；validation 使用 `coral_validation=true` 便宜路径，不启动正式 8,393/2,500-step 训练。
 
-def test_hook_failure_still_execs_runtime(monkeypatch):
-    calls = record_hook_and_exec(monkeypatch, hook_returncode=1)
-    run_startup_hook(["hook"], ["codex", "exec"])
-    assert calls == [("hook",), ("exec", ("codex", "exec"))]
-~~~
+- [x] **Step 5: Commit**
 
-SRT tests require both Summary paths in `denyWrite` while
-`memory-consolidation.lock` remains writable. Trusted writer tests require fixed
-Summary targets to support atomic replacement and reject every other notes-root
-target.
+```bash
+git add tasks/greedylore_autoresearch
+git commit -m "feat: deploy autoresearch roles and artifact contracts"
+```
 
-- [ ] **Step 4: Run the new tests and verify RED**
+---
+
+### Task 9: 收紧粗粒度 SRT 边界并完成核心 acceptance
+
+**Files:**
+- Modify: `coral/sandbox/srt.py`
+- Modify: `tests/test_sandbox.py`
+- Create: `tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py`
+- Modify: `docs/superpowers/specs/2026-10-15-greedylore-autoresearch-coral-design.md`
+
+**Interfaces:**
+- Consumes: Task 3 的 `trusted.sock`、CORAL 原生 SRT 设置和 Task 6/7 的 Artifact 流程。
+- Produces: `_protected_write_paths(coral_dir, island_id) -> list[str]`；Agent 可读取已发布研究证据、写自己的 Worktree/Scratch，并通过可信入口发布；Agent 不能直接修改正式 Attempts、eval logs、Node 历史、private data 或其他 Agent 的 Worktree。不增加角色权限矩阵或 Permission Manager。
+
+- [ ] **Step 1: 写最小 settings 边界测试**
+
+验证 single/multi-island 下当前正式记录路径出现在 `denyWrite`；own worktree 和 candidate repository Git metadata 保持可写；同 island sibling worktree 不进入 `allowWrite`；已发布 evidence 保持可读。复用 CORAL 已有 dependency/preflight tests 验证 sandbox 不可用时 fail closed，不扩展复杂攻击矩阵。
+
+- [ ] **Step 2: 运行 sandbox tests 并确认新断言失败**
+
+Run: `uv run --frozen --extra dev pytest tests/test_sandbox.py tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py -q`
+
+Expected: FAIL，锁定 fork 尚未为 AutoResearch 正式记录生成 `denyWrite` 路径。
+
+- [ ] **Step 3: 实现最小 protected path 策略**
+
+保持 `.coral` 可达，使 Agent 可以连接可信 socket 并使用 CORAL 原生命令；显式 deny-write private、checkpoint repository，以及当前和所有已存在 island 的 Attempts、eval logs、`notes/tree.md` 和 `notes/nodes`。own worktree、candidate repository Git metadata、Scratch 和必要 runtime path 延续 CORAL 原有写权限；sibling worktree 仍可读取但不可直接写入。服务端继续验证 request，Prompt 不代替 OS 写隔离。不要建立角色矩阵、通用 Permission Manager 或额外控制平面。
+
+- [ ] **Step 4: 运行核心 Artifact/Analysis acceptance**
+
+复用既有真实测试验证：
+
+- trusted submit 的单 Node 唯一 Research SHA；
+- 仅 infra failure 可进行同 SHA retry，保留最小 `grader_runs` 历史；
+- `evaluation.md` 可从 Attempts/eval logs 重建；
+- Analysis/Review 的幂等、缺 Review 恢复、`--revise` 和 reviewer decision；
+- SRT settings 的正式记录写保护、own-worktree 正常写权限与 fail-closed preflight。
+
+V1 暂缓低概率并发竞态、复杂 symlink/absolute/dotdot 攻击矩阵及 GPU topology 等效性的专项测试；Task 4/5 已定义的 Evaluation Contract、GPU allocator、可比性记录和分布式进程清理要求不变。
 
 Run:
 
-~~~bash
+```bash
 uv run --frozen --extra dev pytest \
-  tasks/greedylore_autoresearch/tests/test_memory.py \
-  tasks/greedylore_autoresearch/tests/test_analysis_cli.py \
-  tasks/greedylore_autoresearch/tests/test_handoff_assets.py \
-  tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py \
-  tests/test_codex_startup_hook.py \
-  tests/test_trusted_writes.py \
-  tests/test_sandbox.py -q
-~~~
-
-Expected: FAIL because `memory.py`, Summary kinds, startup Hook, and protected
-Summary paths do not exist.
-
-- [ ] **Step 5: Implement the minimal file-reference gate**
-
-`list_analysis_refs()` accepts only
-`nodes/Nddd/(research|engineering)_analysis_vN.md`.
-`read_processed_analyses()` parses only the YAML frontmatter string list and
-returns an empty set for an absent Summary. `memory_due()` intersects the two
-Summary processed sets, extracts distinct Node IDs from unprocessed Research
-refs, and returns true at three Nodes. Engineering refs never count. Multiple
-unprocessed versions of one Node count once.
-
-`validate_summary()` requires valid frontmatter, a nonempty Markdown body,
-canonical Analysis refs, and existing referenced files. It does not read
-Analysis bodies, build EvidenceBundle, calculate hashes, judge conclusions, or
-enforce processed-list completeness.
-
-- [ ] **Step 6: Implement the independent Memory worker**
-
-The Manager runs one
-`codex exec --ephemeral --ignore-user-config --sandbox read-only` session with
-the current island root as its read root, so Node notes and selected
-`eval_logs` are available without exposing another island. Its prompt delegates
-discovery of new/revised Research and Engineering Analyses, filtering, semantic
-deduplication, conflict analysis, and uncertainty to Codex. Engineering Analysis
-is input to consolidation but never contributes to the three-Research-Node gate.
-The Manager may inspect Evaluation logs only as needed. The output schema is
-exactly:
-
-~~~json
-{
-  "research_summary": "<Markdown with processed_analyses frontmatter>",
-  "engineering_summary": "<Markdown with processed_analyses frontmatter>"
-}
-~~~
-
-The worker takes `LOCK_EX | LOCK_NB` on
-`.coral/public/memory-consolidation.lock`; this file is synchronization, not
-workflow state. `--async` starts the same CLI in hidden worker mode and returns.
-After validating both outputs, publish them sequentially through the trusted
-publisher and report success only after both complete. On partial publication,
-the next gate uses the intersection of both processed lists. Do not retry in a
-loop or alter source Artifacts.
-
-- [ ] **Step 7: Add fixed Summary publication and SRT protection**
-
-`validate_artifact()` accepts both Summary kinds only when node/mode/version are
-null and returns their two fixed root filenames. Extend CORAL's canonical
-allowlist by these exact names; do not accept caller paths. Summaries are
-replaceable via temp-file/fsync/replace, while versioned Analysis and spec remain
-immutable.
-
-Add both Summary paths to `_protected_write_paths()`. Keep the lock file
-writable and retain existing Attempts/logs/tree/nodes/private protections. Do not
-add an Artifact router, role matrix, or permission manager.
-
-- [ ] **Step 8: Implement the minimal Codex startup Hook**
-
-Create a wrapper that accepts a nonempty Hook argv and normal runtime argv, calls
-`subprocess.run(hook, check=False)`, logs Hook `OSError`, and always finishes with
-`os.execvpe(runtime[0], runtime, os.environ)`. No shell string is allowed.
-
-Codex runtime removes `startup_hook` from runtime options before constructing
-Codex `-c` arguments and wraps the normal command before `apply_sandbox()`:
-
-~~~text
-python -m coral.agent.startup_hook --hook-json '<JSON argv>' -- <codex command...>
-~~~
-
-This keeps Hook, async worker, and Codex under the same SRT/registered-Agent
-process root. Because every start, resume, and automatic restart calls
-`runtime.start()`, manager lifecycle code remains unchanged. Configure only the
-Researcher assignment with:
-
-~~~yaml
-startup_hook:
-  - .venv/bin/autoresearch
-  - consolidate-memory
-  - --if-due
-  - --async
-~~~
-
-Engineer has no Hook. Existing trusted-client startup retry handles the short PID
-registry race. If Researcher exits before worker publication, the worker may fail
-and the next Researcher launch checks again.
-
-- [ ] **Step 9: Add the Memory prompt and verify GREEN**
-
-`global_memory_manager.md` states that Summaries are derived navigation, preserves
-Node/Analysis citations, applicability and uncertainty, outputs the complete
-`processed_analyses` list, and never modifies Reference, Analysis, Evaluation, or
-commits. Asset tests require this prompt and verify the static Reference Toolkit
-content remains unchanged.
-
-Run the Step 4 command.
-
-Expected: PASS.
-
-- [ ] **Step 10: Run core acceptance and full non-GPU regression**
-
-Run:
-
-~~~bash
-uv run --frozen --extra dev pytest \
-  tests/test_trusted_writes.py \
   tests/test_sandbox.py \
-  tests/test_codex_startup_hook.py \
-  tasks/greedylore_autoresearch/tests/test_analysis_cli.py \
-  tasks/greedylore_autoresearch/tests/test_analysis_recovery.py \
-  tasks/greedylore_autoresearch/tests/test_node_rules.py \
+  tests/test_trusted_writes.py \
+  tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py \
   tasks/greedylore_autoresearch/tests/test_evaluation_index.py \
-  tasks/greedylore_autoresearch/tests/test_memory.py \
-  tasks/greedylore_autoresearch/tests/test_handoff_assets.py \
-  tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py -q
-~~~
+  tasks/greedylore_autoresearch/tests/test_analysis_recovery.py \
+  tasks/greedylore_autoresearch/tests/test_node_rules.py -q
+```
+
+Expected: PASS。
+
+- [ ] **Step 5: 运行全量非 GPU 回归**
 
 Run: `uv run --frozen --extra dev pytest -q`
 
-Expected: PASS without starting a real Codex Memory session, GPU training, timer,
-or background service.
+Expected: PASS；host dependency 缺失导致的显式 skip 必须有原因，不允许静默退化为 unsandboxed execution。
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 6: Commit**
 
-~~~bash
-git add coral/agent/startup_hook.py coral/agent/builtin/codex.py \
-  coral/grader/trusted_writes.py coral/sandbox/srt.py \
-  tests/test_codex_startup_hook.py tests/test_trusted_writes.py tests/test_sandbox.py \
-  tasks/greedylore_autoresearch
-git commit -m "feat: add startup-triggered autoresearch memory"
-~~~
+```bash
+git add coral/sandbox/srt.py tests/test_sandbox.py \
+  tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py \
+  docs/superpowers/plans/2026-10-15-greedylore-autoresearch-coral-implementation.md \
+  docs/superpowers/specs/2026-10-15-greedylore-autoresearch-coral-design.md
+git commit -m "feat: enforce autoresearch sandbox boundaries"
+```
 
 ---
 
-### Task 8: 真实环境 smoke、dense calibration 与 Root N000
+### Task 10: 真实环境 smoke、dense calibration 与 Root N000
 
 **Files:**
 - Create after real runs: `tasks/greedylore_autoresearch/taskdata/dense_references/manifest.json`
@@ -987,114 +815,77 @@ git commit -m "feat: add startup-triggered autoresearch memory"
 - Modify after real runs: `tasks/greedylore_autoresearch/README.md`
 
 **Interfaces:**
-- Consumes: installed SRT/bubblewrap/socat, four idle same-model GPUs, fixed
-  C4/tokenizer, and passing Tasks 1–7.
-- Produces: verified dense references; S0/A0; N000 Research Attempt and Research
-  Analysis; a real startup-Hook skip-path record; documented limitations.
+- Consumes: installed SRT/bubblewrap/socat、至少四张空闲且同型号 GPU、fixed C4/tokenizer、通过的 Tasks 1–9。
+- Produces: verified dense references；run repo S0/A0；N000 Research Attempt、Analysis、Review；完整 limitation record。
 
-- [ ] **Step 1: Check host dependencies and fail closed**
+- [ ] **Step 1: 检查主机依赖并 fail closed**
 
-Run each command:
+Run: `npx --no-install srt --version`
 
-~~~bash
-npx --no-install srt --version
-command -v bwrap
-command -v socat
-command -v rg
-command -v nvidia-smi
-~~~
+Run: `command -v bwrap`
 
-Expected: every command returns 0. Stop on missing dependencies; installation
-requires separate user authorization.
+Run: `command -v socat`
 
-- [ ] **Step 2: Probe dynamic GPU resources**
+Run: `command -v rg`
 
-Run:
+Run: `command -v nvidia-smi`
 
-~~~bash
-uv run --project tasks/greedylore_autoresearch/grader \
-  python -m greedylore_autoresearch_grader.gpu --count 4 --json
-~~~
+Expected: 全部返回 0。缺失依赖时停止，不启动 CORAL run；安装系统/npm 依赖需要单独的用户授权。
 
-Expected: four idle GPU indices/UUIDs/names plus topology/NUMA fingerprint, with no
-fixed index assumption.
+- [ ] **Step 2: 运行动态 GPU 资源探测**
 
-- [ ] **Step 3: Run four-GPU correctness smoke**
+Run: `uv run --project tasks/greedylore_autoresearch/grader python -m greedylore_autoresearch_grader.gpu --count 4 --json`
 
-Use fixed data/tokenizer and dynamic GPUs for 3 updates of 60M AdamW BF16 and
-130M Muon BF16. Verify finite loss, world size 4, cleanup, and result schema.
+Expected: 返回四个 idle GPU 的 index/UUID/name、拓扑/NUMA 指纹；没有固定 `3,4,5,6` 假设。正式 efficiency 与 dense 对照需匹配相同 UUID 集合或已核实的拓扑等效环境。
 
-- [ ] **Step 4: Run short efficiency smoke**
+- [ ] **Step 3: 运行 4 GPU correctness smoke**
 
-Run 130M AdamW BF16/FP32 with `warmup=3/measured=3` in reversed two-run order.
-Verify SHM NCCL, normal asynchronous hook, bucket layout, slowest-rank wall time,
-and a fresh process group per repetition.
+使用正式 data/tokenizer、Root compressor 和动态 GPU，分别运行 60M AdamW BF16 与 130M Muon BF16 各 3 updates；验证 finite loss、完整 world size、正常 process cleanup 和 result schema。
 
-- [ ] **Step 5: Commit smoke fixes only if smoke exposes a defect**
+- [ ] **Step 4: 运行两个 efficiency cell 的短 smoke**
 
-~~~bash
+130M AdamW BF16/FP32 各执行 `warmup=3/measured=3`，两轮反序；验证 SHM NCCL 日志、normal async hook、bucket layout、slowest-rank wall time 和不同 repetition 的新 process group。
+
+- [ ] **Step 5: Commit smoke 修正（仅在 smoke 暴露代码问题时）**
+
+```bash
 git add coral tasks/greedylore_autoresearch
 git commit -m "fix: address four-GPU smoke findings"
-~~~
+```
 
-Do not create an empty commit.
+如果 smoke 未产生代码或文档变更，不创建空 commit。
 
-- [ ] **Step 6: Calibrate dense references serially**
+- [ ] **Step 6: 串行校准 dense references**
 
-Run:
+Run: `uv run --project tasks/greedylore_autoresearch/autoresearch autoresearch calibrate-dense --task tasks/greedylore_autoresearch`
 
-~~~bash
-uv run --project tasks/greedylore_autoresearch/autoresearch \
-  autoresearch calibrate-dense --task tasks/greedylore_autoresearch
-~~~
+Expected: 60M AdamW 完整 8,393、130M Muon 2,500/20,000，以及 130M AdamW BF16/FP32 每 cell 两次均完成；manifest 锁定 contract hash、GPU UUID 集合、拓扑/NUMA/NCCL fingerprint、software fingerprint、commands 与 raw log hashes。后续 candidate 如果未能匹配该卡组且无法证明拓扑等效，先在候选卡组补测对应 dense reference，不直接使用原始 speedup。
 
-Expected: complete 60M AdamW, 2,500-update 130M Muon, and two repetitions of both
-130M AdamW timing cells. Freeze contract/source hashes, GPU UUIDs,
-topology/NUMA/NCCL and software fingerprints, commands, and raw-log hashes.
+- [ ] **Step 7: 验证并提交 dense references**
 
-- [ ] **Step 7: Verify and commit dense references**
+Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_contract.py tasks/greedylore_autoresearch/tests/test_grader.py -v`
 
-Run:
-
-~~~bash
-uv run --frozen --extra dev pytest \
-  tasks/greedylore_autoresearch/tests/test_contract.py \
-  tasks/greedylore_autoresearch/tests/test_grader.py -v
-~~~
-
-Commit:
-
-~~~bash
-git add tasks/greedylore_autoresearch/taskdata/dense_references \
-  tasks/greedylore_autoresearch/README.md
+```bash
+git add tasks/greedylore_autoresearch/taskdata/dense_references tasks/greedylore_autoresearch/README.md
 git commit -m "data: freeze dense evaluation references"
-~~~
+```
 
-- [ ] **Step 8: Bootstrap Root and run its unique Research Attempt**
+- [ ] **Step 8: Bootstrap Root 并运行唯一 formal Research Attempt**
 
-Start CORAL. Confirm Researcher startup Hook calls
-`consolidate-memory --if-due --async` and skips because fewer than three Research
-Nodes exist. Record S0, create N000 and A0 whose only diff is `submission.yaml`,
-run both quality workloads and both efficiency cells, rebuild `evaluation.md`,
-then publish one fresh Root Research Analysis. Analysis publication itself must
-not trigger Memory.
+启动 CORAL task，记录 S0；受控创建 N000 和仅含 `submission.yaml` 的 A0；运行两项 quality 与两项 efficiency；刷新 `evaluation.md`；运行 fresh Research Analysis 与 Reviewer。
 
-- [ ] **Step 9: Verify Root Artifacts and write boundaries**
+- [ ] **Step 9: 验证 Root artifacts 与安全边界**
 
-Confirm: one N000 Research SHA; reconstructible grader history; fixed Analysis
-evidence; Child creation immediately after Research Analysis; direct Agent writes
-to Attempts/logs/Node history/Summaries are denied; `coral eval`,
-`autoresearch retry`, `refresh-evaluation`, `analyze`, and the startup-Hook skip
-path work. Speedup must use comparable hardware.
+确认：S0→A0 只有 submission；N000 只有一个 Research SHA；所有 grader runs/log hashes 可重建 evaluation；Review 有 pass/warning/fail 明确结论；Agent 对 protected artifacts 的直接写入被拒绝，而 `coral eval`、`autoresearch retry`、`autoresearch refresh-evaluation`、`autoresearch analyze` 仍能工作；同 UID 提交者身份伪造被拒，共享 Git ref 改动不影响固定 SHA 评测证据，speedup 使用可比 GPU 环境。
 
-- [ ] **Step 10: Commit only factual real-environment records**
+- [ ] **Step 10: 提交真实环境记录**
 
-~~~bash
+```bash
 git add tasks/greedylore_autoresearch/README.md
 git commit -m "docs: record Root N000 validation"
-~~~
+```
 
-Run-local Attempts, Analysis, and Summaries stay in CORAL Artifacts.
+README 只记录真实执行过的命令、结果、失败和限制；run-local Attempts/Analysis/Review 留在 CORAL run artifacts，不复制为伪造的静态结果。
 
 ---
 
@@ -1105,6 +896,8 @@ Run-local Attempts, Analysis, and Summaries stay in CORAL Artifacts.
 - [ ] Run: `uv run --frozen --extra dev pytest -q`
 - [ ] Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests -q`
 - [ ] Run: `uv run --frozen --extra dev coral validate tasks/greedylore_autoresearch --json`
-- [ ] Inspect `git log --oneline 0123dfb..HEAD` and confirm one commit per completed
-  large Task, with no hidden push, long training, or Memory session in hooks.
-- [ ] Confirm `/home/wyr/greedy_lore` remains clean and unchanged.
+- [ ] 检查 `git log --oneline 0123dfb..HEAD`，确认每个完成的大 Task 都有独立 commit，且没有把长训练或 push 隐藏在 commit hook 中。
+- [ ] 检查最终工作区只包含明确记录的未提交 run artifacts；源 `/home/wyr/greedy_lore` 保持 clean 且 HEAD 未变化。
+- [ ] 核对 Task 3/9：同 UID 伪造 Agent 身份被拒、trusted server 在长评测/stop-resume 下可用、Git 公共元数据的权限边界已实测。
+- [ ] 核对 Task 4/5/10：正式 efficiency speedup 使用相同 GPU UUID 集合或经过验证的拓扑等效对照；不可比时标记无效并补测 dense。
+- [ ] 核对 Task 7：Engineering Analysis 固定全部已有 Engineering Attempts（可以为空），Review 与 Analysis 引用同一个证据快照。

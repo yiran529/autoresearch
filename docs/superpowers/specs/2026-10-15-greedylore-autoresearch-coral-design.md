@@ -1,7 +1,7 @@
 # GreedyLoRE CORAL AutoResearch V1 设计
 
 **日期：** 2026-10-15
-**状态：** Workflow Simplification 已获用户确认
+**状态：** Workflow Simplification 待用户确认
 **上游 CORAL：** `Human-Agent-Society/CORAL@0123dfb939b35228cf2c1fde224cd0561e727408`
 **GreedyLoRE 来源：** `/home/wyr/greedy_lore@d2c38bc2062e06fdfd73185c508e7cc652933de6`
 **权威需求：** `/home/wyr/CORAL_AutoResearch_V1_Handoff_Refined.md`
