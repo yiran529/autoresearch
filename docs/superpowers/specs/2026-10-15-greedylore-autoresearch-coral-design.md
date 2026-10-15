@@ -1,7 +1,7 @@
 # GreedyLoRE CORAL AutoResearch V1 设计
 
 **日期：** 2026-10-15
-**状态：** 已由用户批准架构，待书面 spec 复核
+**状态：** 已按用户 review 修订并批准
 **上游 CORAL：** `Human-Agent-Society/CORAL@0123dfb939b35228cf2c1fde224cd0561e727408`
 **GreedyLoRE 来源：** `/home/wyr/greedy_lore@d2c38bc2062e06fdfd73185c508e7cc652933de6`
 **权威需求：** `/home/wyr/CORAL_AutoResearch_V1_Handoff_Refined.md`
@@ -14,11 +14,11 @@ Researcher 和 Engineer 独立工作，并用统一 grader 评估：
 
 - quality：LLaMA 60M + AdamW 完整训练，以及 LLaMA 130M + Muon 的前
   2,500 个 update；
-- efficiency：同一 60M/130M workload 在 4 GPU、每卡 batch 1、SHM、
+- efficiency：LLaMA 130M + AdamW 在 4 GPU、每卡 batch 1、SHM、
   BF16/FP32 下的正常异步端到端训练 timing；
 - 约束：两个 quality workload 的 final validation loss 均不得比各自
   Dense reference 高超过 10%；
-- 优化目标：满足 quality gate 时，降低四个 timing cell 的归一化几何平均
+- 优化目标：满足 quality gate 时，降低两个 timing cell 的归一化几何平均
   step time。
 
 CORAL 继续负责 agent 生命周期、Git worktree、Attempt、grader daemon、共享
@@ -152,15 +152,18 @@ size、数据 manifest 和关键环境变量。
 
 ### 6.1 共用条件
 
-- 数据：本地 C4，默认 `/dev/shm/wyr_tmp/c4`；
-- tokenizer：本地 `t5-base` cache，默认 `/dev/shm/wyr_tmp/hf`；
+- 数据：固定本地 C4 目录 `/home/wyr/greedy_lore/c4/c4_en/en`；
+- tokenizer：固定已验证可离线加载的 `t5-base` snapshot
+  `/home/wyr/.cache/huggingface/hub/models--t5-base/snapshots/a9723ea7f1b39c1eae772870f3b547bf6ef7e6c1`；
 - sequence length：256；
 - world size：4；
 - seed：1243；
 - gradient accumulation：1；
 - gradient clipping：1.0；
 - tracker：正式 grader 强制 `WANDB_MODE=disabled`；
-- GPU：默认 `CUDA_VISIBLE_DEVICES=3,4,5,6`，由 task contract 显式记录；
+- GPU：不硬编码默认卡号；每个 run 从当前所有空闲 GPU 中原子预留任意 4 张，
+  然后设置 `CUDA_VISIBLE_DEVICES`。记录物理 index、UUID 和型号；不足 4 张时
+  fail fast 为 infrastructure failure；
 - worker 数：4；
 - evaluator 不下载模型、tokenizer 或数据；缺失本地资源属于基础设施失败。
 
@@ -223,46 +226,45 @@ candidate_final_eval_loss <= 1.10 * dense_reference_final_eval_loss
 
 ### 6.6 Efficiency matrix
 
-正式 efficiency 包含四个 cell：
+为节省评测成本，正式 efficiency 只包含两个 cell：
 
 | Cell | Model | Optimizer | Dtype |
 |---|---|---|---|
-| `60m_adamw_bf16` | 60M | AdamW | BF16 |
-| `60m_adamw_fp32` | 60M | AdamW | FP32 |
-| `130m_muon_bf16` | 130M | Muon | BF16 |
-| `130m_muon_fp32` | 130M | Muon | FP32 |
+| `130m_adamw_bf16` | 130M | AdamW | BF16 |
+| `130m_adamw_fp32` | 130M | AdamW | FP32 |
 
 每个 cell 固定：
 
 - 4 GPU；per-device batch 1；global batch 4；sequence 256；
+- AdamW：LR 0.0025、betas `(0.9, 0.999)`、eps `1e-8`、weight decay 0；
+- scheduler budget 20,000；warmup 2,000；`min_lr_ratio=0.1`；
 - 无 activation checkpointing；
 - `NCCL_P2P_DISABLE=1`、`NCCL_SHM_DISABLE=0`、
   `NCCL_CUMEM_HOST_ENABLE=0`、默认 NCCL channel；
 - 正常异步 DDP，不传 `--strict_blocking_communication`；
 - 使用被动 `--record_bucket_layout`，不得 `.wait()` 或同步 inner Future；
 - `ddp_bucket_cap_mb=1024`；
+- `start_compress_iter=100`；
 - warmup 101 updates，连续测量 400 updates；
-- 每个 cell 独立运行 3 次，次序由固定 seed 的 Latin-style rotation 决定，避免
-  所有候选总在相同热状态下测量；
-- 每次输出 slowest-rank continuous-window wall time / 400；cell 正式值取 3 次
-  `mean_iteration_seconds` 的 median；
+- 每个 cell 独立运行 2 次；第一轮顺序为 BF16、FP32，第二轮为
+  FP32、BF16；Dense 与 candidate 使用同一顺序；
+- 每次输出 slowest-rank continuous-window wall time / 400；cell 正式值取两次
+  `mean_iteration_seconds` 的算术平均，并同时报告两次原始值和 relative spread；
+- repetition 之间强制重建 launcher/process group，不复用上一次的
+  CUDA/NCCL 进程；
 - 非 finite loss、不完整窗口、bucket layout 不一致或 NCCL 未实际使用 SHM
   均使该 run 无效，不自动改变配置重跑。
 
-Dense timing reference 使用完全相同四个 cell、3 repetitions 和 aggregation。
+Dense timing reference 使用完全相同的两个 cell、2 repetitions 和 aggregation。
 每个 cell 的 speedup 为：
 
 ```text
-dense_median_step_seconds / candidate_median_step_seconds
+dense_mean_step_seconds / candidate_mean_step_seconds
 ```
 
-综合 `efficiency_score` 是四个 speedup 的几何平均。几何平均使不同模型和 dtype
-在归一化后等权，避免耗时最长的 FP32 cell 单独支配分数。
-
-正式次序不依赖运行时随机数：以上表的 `A/B/C/D` 为固定编号，3 个
-repetition 分别执行 `A,B,C,D`、`B,C,D,A`、`C,D,A,B`。Dense 与 candidate
-使用同一顺序；repetition 之间强制重建 launcher/process group，不复用上一次
-的 CUDA/NCCL 进程。
+综合 `efficiency_score` 是两个 speedup 的几何平均，使 BF16 和 FP32 在
+归一化后等权。Dense 和 candidate 可以分配到不同物理 GPU index，但 GPU
+型号、world size 和关键 NCCL 条件必须一致。
 
 ### 6.7 CORAL aggregate
 
@@ -278,14 +280,14 @@ Engineering Attempt 只运行 efficiency，`aggregated=efficiency_score`；quali
 Research SHA。Aggregate 只满足 CORAL 的排序接口，不构成 Node Selection、Review
 或科学结论。
 
-公开 named scores 至少包含：两项 quality loss/ratio/pass、四项 timing median、
-四项 speedup、`quality_gate` 和 `efficiency_score`。详细 repetition、命令、环境、
+公开 named scores 至少包含：两项 quality loss/ratio/pass、两项 timing mean、
+两项 speedup、`quality_gate` 和 `efficiency_score`。详细 repetition、命令、环境、
 stdout/stderr、config 和 machine-readable result 放入 immutable eval logs。
 
 ## 7. Dense Reference 校准
 
 真实 run 启动前，由受信任 operator 命令 `autoresearch calibrate-dense` 在固定
-`S0` 上串行运行两项 dense quality 和四项 dense efficiency。输出进入 taskdata
+`S0` 上串行运行两项 dense quality 和两项 dense efficiency。输出进入 taskdata
 并生成 manifest，包含 contract hash、source/S0 SHA、完整命令、数据 manifest、
 硬件/软件 fingerprint 和原始日志 hash。
 
@@ -316,11 +318,11 @@ packaged `TaskGrader` 从固定 checkout 读取 committed `submission.yaml`，�
 6. Root：A0 相对 S0 的 diff 只包含根目录 `submission.yaml`；
 7. GPU lock、GPU 空闲、数据/tokenizer、磁盘空间和环境可用。
 
-`mode=research` 串行运行 60M quality、130M quality 和四个 efficiency cell。
+`mode=research` 串行运行 60M quality、130M quality 和两个 efficiency cell。
 quality 失败不跳过 efficiency，因为一次 Research Attempt 必须给出完整 quality +
 efficiency 证据。进程崩溃、OOM、非 finite、数据耗尽和 contract 不符均按实际记录。
 
-`mode=engineering` 只运行四个 efficiency cell。grader 不声称 semantic 等价；它
+`mode=engineering` 只运行两个 efficiency cell。grader 不声称 semantic 等价；它
 只复制 `submission.yaml.semantic_self_check` 到 evidence，并校验状态值、命令和
 日志引用格式。
 
@@ -474,7 +476,7 @@ ledger。
 4. 受控创建 `N000/spec.md`：`node_type=seed`、`parent_node=null`、
    `base_commit=S0`、provided GreedyLoRE r32/EF14。
 5. 在候选根新增 Root `submission.yaml`；broker 检查 S0→A0 diff 只含该文件。
-6. 一次 `mode=research` eval 运行两项 quality 和四项 efficiency，A0 成为唯一
+6. 一次 `mode=research` eval 运行两项 quality 和两项 efficiency，A0 成为唯一
    Research SHA。
 7. `autoresearch analyze --node N000 --mode research --attempt A0` 发布 Root
    Analysis 和 Review。
@@ -502,7 +504,7 @@ grader 为每个失败设置一个分类：
 - contract 解析和 hash 稳定性；
 - research/engineering submission schema；
 - quality 10% 边界（等于 1.10 通过，超过失败）；
-- timing repetition median 和四 cell geometric mean；
+- timing 两次算术平均、relative spread 和两 cell geometric mean；
 - incomplete/nonfinite/mismatched environment 拒绝；
 - Node 唯一 Research SHA，并发 reservation；
 - infra-only same-SHA retry 与 append-only run history；
@@ -519,7 +521,7 @@ grader 为每个失败设置一个分类：
 2. dummy task 验证 research 双 profile、engineering efficiency-only、Attempt/index；
 3. 单进程 CPU contract/parser smoke；
 4. 4 GPU、3-step dense/GreedyLoRE BF16 correctness smoke；
-5. 4 GPU、短 warmup + 3 measured step 的四 timing cell smoke，确认 SHM 和异步
+5. 动态预留 4 GPU、短 warmup + 3 measured step 的两 timing cell smoke，确认 SHM 和异步
    Future；
 6. 缩短版 60M/130M quality smoke，确认 final result schema；
 7. S1–S15 dummy acceptance；
@@ -554,7 +556,10 @@ grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；gr
 7. 实现 Analyzer/Reviewer fresh-session 发布；
 8. 完成 dummy S1–S15；
 9. 安装/验证 SRT 主机依赖并做权限攻击测试；
-10. 做 4 GPU smoke、dense calibration、Root N000 正式 eval。
+10. 做动态 4 GPU smoke、dense calibration、Root N000 正式 eval。
+
+实施时每完成一个可独立验证的大 step 就创建一个 Git commit。测试和检查在
+commit 前完成；commit 动作本身不额外触发 push、长训练或 calibration。
 
 长训练通过 grader daemon/tmux 管理，不用 Agent 回合轮询。任何尚未真实运行的
 sandbox、GPU benchmark 或完整训练均不得在交付说明中声称通过。
