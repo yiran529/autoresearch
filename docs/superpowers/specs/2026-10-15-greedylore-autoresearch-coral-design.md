@@ -44,9 +44,9 @@ CORAL 继续负责 agent 生命周期、Git worktree、Attempt、grader daemon�
 2. **把 Node/Analysis 做成 CORAL 原生领域对象**：会把特定研究语义扩散到
    通用框架，引入 handoff 明确排除的第二套状态机。
 
-框架 patch 只提供通用能力：显式禁用 heartbeat、固定 commit retry、受限本地
-控制通道和 validation 标记。算法、评测矩阵、Node 规则、prompts、templates
-全部留在 task 目录。
+框架 patch 只提供显式禁用 heartbeat、validation 标记、grader daemon 内固定用途的
+trusted writes 和粗粒度 SRT 保护。submission/artifact 校验、算法、评测矩阵、Node
+规则、prompts 和 templates 全部留在 task 目录；不建立通用控制平面。
 
 ## 4. 目录布局
 
@@ -76,7 +76,9 @@ CORAL 继续负责 agent 生命周期、Git worktree、Attempt、grader daemon�
     │   ├── pyproject.toml
     │   └── src/autoresearch/
     │       ├── cli.py
-    │       ├── broker.py
+    │       ├── client.py
+    │       ├── submission.py
+    │       ├── artifacts.py
     │       ├── nodes.py
     │       ├── evaluation.py
     │       ├── analysis.py
@@ -336,7 +338,7 @@ process group 启动；正常结束、timeout 和异常路径都执行 TERM、�
 
 ### 9.1 唯一 Research SHA
 
-受信任 submit broker 在写 pending Attempt 前解析 committed `submission.yaml`，把
+grader daemon 内的 trusted submit handler 在写 pending Attempt 前解析 committed `submission.yaml`，把
 `mode`、`node_id`、`base_commit` 和 `quality_anchor` 写入 Attempt metadata。它在
 同一原子锁内扫描 pending + terminal Attempts：同 Node 已有不同 research SHA
 时直接拒绝，因此无需独立 `node_state.yaml`。
@@ -347,7 +349,7 @@ research 必须使用默认 real budget class。Tune 只允许运行明确的 sm
 
 ### 9.2 同 SHA 基础设施 retry
 
-新增 `coral retry <sha>` 或等价受信任 RPC。它只接受 terminal Attempt metadata
+新增 `autoresearch retry <sha>`。它通过固定 trusted endpoint 请求，只接受 terminal Attempt metadata
 中 `failure_class=infra` 的 SHA；candidate failure、quality failure、OOM 因算法
 内存需求、非 finite 或用户代码异常不能 retry。
 
@@ -366,39 +368,29 @@ retry 不创建 commit 或第二个 Research Attempt；最终视图可以反映�
 
 ### 10.2 写权限策略
 
-SRT 允许 Agent 直接写自己的 worktree、runtime home 必需目录和 `/tmp`；允许读
-同 island 已发布 evidence 和 sibling worktrees。额外 deny-write：
+SRT 允许 Agent 直接写自己的 worktree、scratch、candidate repo `.git`、runtime home 必需目录和 `/tmp`；允许读
+同 island 已发布 evidence 和 sibling worktrees，但 sibling 只读。它不再 allow-write 整个 `.coral/`；仅允许连接 trusted socket，并 deny-write：
 
 ```text
 .coral/public/attempts/
 .coral/public/eval_logs/
 .coral/public/notes/tree.md
 .coral/public/notes/nodes/
+.coral/.git/
 .coral/private/
 ```
 
-其他普通共享 notes 可保留 CORAL 原能力。跨 island 不开放读取。
+已发布普通 notes 可读，Agent 的过程记录留在 own worktree/scratch；所有 `.coral` 写入都由 grader daemon、manager 或 trusted endpoint 完成。跨 island 不开放读取。
 
-### 10.3 窄控制通道
+### 10.3 固定用途的可信写入入口
 
-manager 启动一个本 run 私有 Unix domain socket。Agent-side CLI 只能请求固定
-operation：
+现有 grader daemon 在进入 Attempt scan loop 前监听本 run 的 `.coral/public/trusted.sock`，并复用 daemon 的 start/stop/resume 生命周期；不新增 manager-owned server、`ControlConfig`、动态 Provider 或通用 operation registry。入口只支持：
 
-- `submit_attempt`
-- `retry_attempt`
-- `create_node`
-- `refresh_evaluation`
-- `analyze`
-- `revise_analysis`
+- `submit_attempt`：从固定 commit 自行读取并校验 `submission.yaml`，在同一锁内完成 Research 唯一性检查和 pending Attempt 写入；
+- `retry_attempt`：仅把同 SHA、terminal、`failure_class=infra` 且 contract 未改变的 Attempt 重新置为 pending；
+- `publish_artifact`：只接受 kind、Node/mode/version 和 bounded content，由 task validator 映射 canonical target 后原子发布；没有任意路径或命令字段。
 
-请求没有任意路径、shell command 或原始文件写入字段。服务端从固定 commit、
-Attempt store、模板和 scratch 自行解析内容，验证 node ID、SHA、schema、目标路径
-和版本号，再以临时文件 + `fsync` + atomic rename 发布。socket 权限和 run ID
-防止跨 run 使用；服务端仍把 Agent 视为不可信输入。
-
-`coral eval` 的 Git add/commit 保留在 Agent worktree；pending Attempt 和 shared
-checkpoint 的受保护写入移到 broker。这样 Agent 仍能正常提交，但不能直接伪造
-Attempt 或 grader 输出。
+`coral eval` 仍在 Agent worktree 完成 Git add/commit 和 parent lookup，然后请求 `submit_attempt`；trusted handler 执行 shared checkpoint、parent checkpoint provenance 和 pending write。`autoresearch retry` 与 Node/Analysis CLI 使用后两个 operation。trusted validator 安装在 grader-private venv，服务端把所有 Agent payload 当作不可信输入。`metadata.grader_runs` 仅是同 SHA retry 所需的 append-only 最小历史，不扩展成独立运行管理系统。
 
 ### 10.4 主机前置条件
 
@@ -422,26 +414,18 @@ reliability。Researcher/Engineer 的稳定角色来自各自 role file。
 
 ## 12. Producer、Analyzer 与 Reviewer
 
-`task.yaml` 启动两个 Codex producer：一个 Researcher、一个 Engineer。两者同
-island、独立 worktree、不同 role file；Node Selection 由角色根据 evidence 自主
-决定，不由 aggregate score 自动指定。
+`task.yaml` 启动两个 Codex producer：一个 Researcher、一个 Engineer。两者同 island、独立 worktree、不同 role file；Node Selection 由角色根据 evidence 自主决定，不由 aggregate score 自动指定。
 
-`autoresearch analyze` 通过 broker 执行：
+`autoresearch analyze --node Nxxx --mode research|engineering` 是 task-local 轻量 CLI：
 
-1. 验证 Node、Attempt、固定 SHA、terminal 状态和 mode；
-2. 调用 `refresh_node_evaluation(node_id)`；
-3. 建立只写 scratch、只读固定代码/evidence/reference 的 Analyzer sandbox；
-4. 使用 `codex exec` 启动 fresh session，生成候选 Analysis；
-5. 校验标题、Node、唯一 Research SHA、evidence 路径和版本，再原子发布；
-6. 建立另一个 fresh Reviewer scratch/session；
-7. 校验单一 `decision: pass|warning|fail` 并原子发布 Review。
+1. 从 Node spec、`evaluation.md`、Attempts 和固定 commit 解析不可变 EvidenceBundle；
+2. 无有效 Analysis 时启动 fresh Analyzer session，校验后通过 `publish_artifact` 原子发布；
+3. 有 Analysis 而无对应 Review 时只启动独立 fresh Reviewer session；
+4. 两者都有效时幂等返回；`--revise` 才分配下一版本并保留旧版本。
 
-普通重复调用幂等：已有有效 Analysis 和 Review 就返回其路径。Analyzer 进程成功、
-Reviewer 进程失败时只补 Review。Review 结论为 `fail` 是已完成状态，不自动重抽；
-只有 `--revise` 生成 Analysis vN+1 并触发 Review vN+1。
+Analyzer/Reviewer 使用不同 scratch 和独立 `codex exec --ephemeral`，不复用 session、thread 或对话。Review decision 为 `pass|warning|fail`；`fail` 表示 Review 已完成但不表示通过，也不触发自动修订。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
 
-Analyzer/Reviewer 不能修改候选代码、Analysis 历史或 raw evaluation。正式训练不由
-analyze 命令重跑。
+Engineering Analysis 不要求已有 Engineering Attempt。没有时，它绑定唯一 Research SHA、Research evaluation 和现有 profiling/evidence，并明确 `engineering_attempt_sha: null`；不得声称未测量的提升。Analyzer/Reviewer 不能修改候选代码、历史 Artifact 或 raw evaluation，analyze 也不重跑正式训练。完成/恢复状态只由校验通过的版本化 Artifact 推导，不保存额外 workflow state。
 
 ## 13. Node artifact 与重建
 
@@ -475,10 +459,10 @@ ledger。
 3. 运行 trusted dense calibration，冻结 references。
 4. 受控创建 `N000/spec.md`：`node_type=seed`、`parent_node=null`、
    `base_commit=S0`、provided GreedyLoRE r32/EF14。
-5. 在候选根新增 Root `submission.yaml`；broker 检查 S0→A0 diff 只含该文件。
+5. 在候选根新增 Root `submission.yaml`；trusted submit 检查 S0→A0 diff 只含该文件。
 6. 一次 `mode=research` eval 运行两项 quality 和两项 efficiency，A0 成为唯一
    Research SHA。
-7. `autoresearch analyze --node N000 --mode research --attempt A0` 发布 Root
+7. `autoresearch analyze --node N000 --mode research` 从 Artifact 解析 A0 并发布 Root
    Analysis 和 Review。
 8. Review 为 pass/warning 后允许普通 child；Engineer 可同时继续 N000。
 
@@ -512,7 +496,7 @@ grader 为每个失败设置一个分类：
 - Analysis/Review 幂等、partial recovery、`--revise` 版本化；
 - heartbeat disabled 后 start/resume 均无动作；
 - SRT deny-write、symlink、绝对路径和 sibling write 尝试；
-- broker 不接受路径穿越、任意命令或未知 operation；
+- fixed trusted endpoint 不接受路径、任意命令、未知 operation 或未校验 Artifact；
 - grader process cleanup 与 GPU lock。
 
 ### 16.2 分阶段 smoke
@@ -534,8 +518,8 @@ grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；gr
 
 ### 16.3 Handoff 验收映射
 
-- S1/S2：submit broker + retry history；
-- S3/S9/S11：analyze 状态机的幂等、partial recovery 和 revision；
+- S1/S2：trusted submit + retry history；
+- S3/S9/S11：Artifact 驱动 analyze 的幂等、missing-review recovery 和 revision；
 - S4/S5：child 引用固定 Analysis/Review 版本；
 - S6/S7：evaluation rebuild 覆盖多 Engineering/零 Engineering；
 - S8：Reviewer fixtures；
@@ -543,17 +527,17 @@ grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；gr
 - S12：Root diff allowlist 和 S0/A0 双记录；
 - S13：reference prompts 和 evidence validation；
 - S14：selection rationale schema，不实现自动 selector；
-- S15：SRT + broker adversarial filesystem tests。
+- S15：SRT + trusted endpoint adversarial filesystem tests。
 
 ## 17. 实施顺序
 
 1. 建立 task scaffold、复制脚本和 source manifest；
 2. 增加 heartbeat disable 与 validation marker；
-3. 增加 trusted submit/retry broker 和保护路径 sandbox；
+3. 增加 grader-owned trusted submit/retry/publish 和保护路径 sandbox；
 4. 实现 evaluation contract、quality/efficiency runner 和 packaged grader；
-5. 实现 Node 创建、Attempt 索引和 Root bootstrap；
+5. 实现极简 Node Artifact、evaluation rebuild 和幂等 Root bootstrap；
 6. 部署 prompts/references/templates；
-7. 实现 Analyzer/Reviewer fresh-session 发布；
+7. 实现 Artifact 驱动的 Analyzer/Reviewer fresh-session 发布；
 8. 完成 dummy S1–S15；
 9. 安装/验证 SRT 主机依赖并做权限攻击测试；
 10. 做动态 4 GPU smoke、dense calibration、Root N000 正式 eval。
