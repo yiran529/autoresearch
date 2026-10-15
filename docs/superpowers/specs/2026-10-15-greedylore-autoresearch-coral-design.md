@@ -301,7 +301,7 @@ grader 启动时拒绝以下情况：
 
 - reference contract hash 与当前 contract 不同；
 - reference 缺 cell、步数不符或有非 finite 值；
-- 当前 GPU 型号、world size 或关键 NCCL 条件与 reference 不兼容；
+- efficiency 当前 GPU UUID 集合与 reference 不同，且 GPU 类型、选定四卡互联拓扑、NUMA/NCCL fingerprint 不能证明等效；此时须在候选卡组补测 dense reference；
 - source/S0 来源无法验证。
 
 Dense calibration 不是 CORAL Node 或 Attempt。Root `N000` 仍通过统一 grader
@@ -341,7 +341,7 @@ process group 启动；正常结束、timeout 和异常路径都执行 TERM、�
 grader daemon 内的 trusted submit handler 在写 pending Attempt 前解析 committed `submission.yaml`，把
 `mode`、`node_id`、`base_commit` 和 `quality_anchor` 写入 Attempt metadata。它在
 同一原子锁内扫描 pending + terminal Attempts：同 Node 已有不同 research SHA
-时直接拒绝，因此无需独立 `node_state.yaml`。
+时直接拒绝，因此无需独立 `node_state.yaml`。客户端声明的 Agent、island、parent 均不授予权限；manager 把 Agent 根 PID、进程 start time、worktree realpath 和 island 原子登记在 `.coral/private/trusted_agents.json`，handler 将 `SO_PEERCRED` PID 沿 `/proc` 父链归属到仍存活且 start time 匹配的登记根进程。同 UID、无法归属、PID 复用或跨 Worktree SHA 均 fail closed。
 
 普通 Git commit 和 `coral eval --tune` 不构成正式 Research Attempt；真实
 research 必须使用默认 real budget class。Tune 只允许运行明确的 smoke contract，
@@ -356,7 +356,7 @@ research 必须使用默认 real budget class。Tune 只允许运行明确的 sm
 Attempt JSON 仍以 commit SHA 为主键。`metadata.grader_runs` 是 append-only 列表，
 每项含 `run_id`、started/finished、status、failure class、contract hash 和 log dir。
 retry 不创建 commit 或第二个 Research Attempt；最终视图可以反映最新有效结果，
-但原始失败 run 永远保留。并发 retry、contract 改变或 checkout SHA 不同均拒绝。
+但原始失败 run 永远保留。受保护 contract 固定 `max_infra_retries=2`（初始运行之外最多两次 retry）；每次实际 Grader 调用单独记录 run、时间和 GPU 资源消耗。dispatch、finalize 与 retry 在同一锁或等效原子事务中读改写 Attempt，避免丢失 run history。并发 retry、预算耗尽、contract 改变、来源 Agent/Worktree 不符或 checkout SHA 不同均拒绝。
 
 ## 10. 受控发布与 sandbox
 
@@ -390,7 +390,7 @@ SRT 允许 Agent 直接写自己的 worktree、scratch、candidate repo `.git`�
 - `retry_attempt`：仅把同 SHA、terminal、`failure_class=infra` 且 contract 未改变的 Attempt 重新置为 pending；
 - `publish_artifact`：只接受 kind、Node/mode/version 和 bounded content，由 task validator 映射 canonical target 后原子发布；没有任意路径或命令字段。
 
-`coral eval` 仍在 Agent worktree 完成 Git add/commit 和 parent lookup，然后请求 `submit_attempt`；trusted handler 执行 shared checkpoint、parent checkpoint provenance 和 pending write。`autoresearch retry` 与 Node/Analysis CLI 使用后两个 operation。trusted validator 安装在 grader-private venv，服务端把所有 Agent payload 当作不可信输入。`metadata.grader_runs` 仅是同 SHA retry 所需的 append-only 最小历史，不扩展成独立运行管理系统。
+`coral eval` 仍在 Agent worktree 完成 Git add/commit 和 parent lookup，然后请求 `submit_attempt`；trusted handler 从受保护登记推导 Agent/worktree/island，验证 SHA 为该 worktree 当前提交，再执行 shared checkpoint、parent checkpoint provenance 和 pending write。Root bootstrap 使用固定 S0/N000/content 的独立受信任宿主入口，Agent 不能伪装。`autoresearch retry` 与 Node/Analysis CLI 使用后两个 operation。trusted validator 安装在 grader-private venv，服务端把所有 Agent payload 当作不可信输入。`metadata.grader_runs` 仅是同 SHA retry 所需的 append-only 最小历史，不扩展成独立运行管理系统。
 
 ### 10.4 主机前置条件
 
@@ -425,7 +425,7 @@ reliability。Researcher/Engineer 的稳定角色来自各自 role file。
 
 Analyzer/Reviewer 使用不同 scratch 和独立 `codex exec --ephemeral`，不复用 session、thread 或对话。Review decision 为 `pass|warning|fail`；`fail` 表示 Review 已完成但不表示通过，也不触发自动修订。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
 
-Engineering Analysis 不要求已有 Engineering Attempt。没有时，它绑定唯一 Research SHA、Research evaluation 和现有 profiling/evidence，并明确 `engineering_attempt_sha: null`；不得声称未测量的提升。Analyzer/Reviewer 不能修改候选代码、历史 Artifact 或 raw evaluation，analyze 也不重跑正式训练。完成/恢复状态只由校验通过的版本化 Artifact 推导，不保存额外 workflow state。
+Engineering Analysis 不要求已有 Engineering Attempt。它在开始时固定该 Node 当时已有的全部 Engineering Attempts（允许空列表）及各自正式 run/log/comparability 引用，并与 Review 共享同一个 evidence manifest hash；后续 Attempt 不会悄然改变已发布版本。没有时只绑定唯一 Research SHA、Research evaluation 和现有 profiling/evidence，不得声称未测量的提升。Analyzer/Reviewer 不能修改候选代码、历史 Artifact 或 raw evaluation，analyze 也不重跑正式训练。完成/恢复状态只由校验通过的版本化 Artifact 推导，不保存额外 workflow state。
 
 ## 13. Node artifact 与重建
 
@@ -490,8 +490,10 @@ grader 为每个失败设置一个分类：
 - quality 10% 边界（等于 1.10 通过，超过失败）；
 - timing 两次算术平均、relative spread 和两 cell geometric mean；
 - incomplete/nonfinite/mismatched environment 拒绝；
+- efficiency 使用同 GPU UUID 集合或验证通过的 topology/NUMA/NCCL 等效对照；
 - Node 唯一 Research SHA，并发 reservation；
-- infra-only same-SHA retry 与 append-only run history；
+- infra-only same-SHA retry、受保护 retry 上限、append-only run history 与 finalize/retry 并发；
+- 同 UID Agent 身份伪造、PID 复用与跨 Worktree SHA 提交被拒；
 - `evaluation.md` 删除后可完全重建；
 - Analysis/Review 幂等、partial recovery、`--revise` 版本化；
 - heartbeat disabled 后 start/resume 均无动作；
@@ -555,11 +557,11 @@ V1 完成需要同时满足：
 - 锁定 CORAL 与 GreedyLoRE 来源可复核；
 - task validate/dummy acceptance 通过；
 - Research/Engineering 分流和完整 evidence 可重建；
-- 同 Node 不同 Research SHA 被拒绝，同 SHA infra retry 保留全部历史；
+- 同 Node 不同 Research SHA 被拒绝，同 SHA infra retry 在预算内保留全部历史，且同 UID 不能伪造提交者；
 - Analysis/Review fresh、版本化、幂等且受控发布；
 - heartbeat 确实关闭；
 - Agent 不能直接改写 protected shared artifacts，受控命令仍可工作；
 - 四卡 SHM BF16/FP32 async timing smoke 有实际 NCCL 证据；
-- dense references 完成并与 contract/hardware 匹配；
+- dense references 完成并与 contract 匹配，efficiency 对照使用同 GPU UUID 集合或经验证等效的 topology/NUMA/NCCL 环境；
 - Root N000 的唯一 Research Attempt、Analysis 和 Review 完成；
 - 已知限制、未覆盖项和所有失败结果如实记录。
