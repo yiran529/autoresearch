@@ -537,3 +537,25 @@ def test_client_bridges_short_manager_registry_publication_race(tmp_path):
         server.stop()
 
     assert result["commit_hash"] == commit
+
+
+def test_publish_immutable_artifact_is_idempotent_for_same_content(tmp_path):
+    repo, _ = _init_repo(tmp_path / "agent")
+    binding = AgentBinding(
+        "agent-0", os.getpid(), process_start_time(os.getpid()), str(repo), None
+    )
+    service = TrustedWriteService(
+        tmp_path / ".coral",
+        SimpleNamespace(grader=SimpleNamespace(args={})),
+        identity_resolver=lambda *_args: binding,
+        artifact_validator=lambda *_args: {"relative_path": "nodes/N001/spec.md"},
+    )
+    payload = {
+        "kind": "spec", "node_id": "N001", "mode": None, "version": None,
+        "content": "node_id: N001\n",
+    }
+
+    first = service.handle("publish_artifact", payload, os.getpid())
+    second = service.handle("publish_artifact", payload, os.getpid())
+
+    assert first == second == {"path": "nodes/N001/spec.md"}

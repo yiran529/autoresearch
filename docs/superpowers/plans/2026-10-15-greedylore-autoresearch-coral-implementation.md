@@ -505,6 +505,8 @@ git commit -m "feat: add GreedyLoRE quality and timing grader"
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/evaluation.py`
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/bootstrap.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
+- Modify: `coral/grader/trusted_writes.py`
+- Modify: `tests/test_trusted_writes.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_node_rules.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_evaluation_index.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_root_bootstrap.py`
@@ -513,7 +515,7 @@ git commit -m "feat: add GreedyLoRE quality and timing grader"
 - Consumes: Task 3 的 `publish_artifact` 与唯一 Research Attempt 保证；CORAL Attempts、`grader_runs`、raw eval logs 和 committed `submission.yaml`。
 - Produces: `create_node(request, evidence) -> Path`；`refresh_node_evaluation(node_id, attempts, log_root) -> str`；`bootstrap_root(repo, source_manifest) -> Path`；CLI `autoresearch node create` 与 `autoresearch refresh-evaluation`。不存在 Node 状态数据库、Engineering Iteration 模型或通用 Artifact Publisher。
 
-- [ ] **Step 1: 写 fixed reference、rebuild、零/multi Engineering 与 Root 幂等失败测试**
+- [x] **Step 1: 写 fixed reference、rebuild、零/multi Engineering 与 Root 幂等失败测试**
 
 ```python
 def test_child_freezes_selected_parent_versions(parent_node):
@@ -539,35 +541,35 @@ def test_root_bootstrap_is_idempotent(root_fixture):
     assert root_fixture.changed_paths("S0", "A0") == {"submission.yaml"}
 ```
 
-- [ ] **Step 2: 运行测试并确认接口缺失**
+- [x] **Step 2: 运行测试并确认接口缺失**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_node_rules.py tasks/greedylore_autoresearch/tests/test_evaluation_index.py tasks/greedylore_autoresearch/tests/test_root_bootstrap.py -v`
 
 Expected: FAIL，Node/rebuild/bootstrap 接口尚不存在。
 
-- [ ] **Step 3: 实现 task-specific Artifact 校验和原子发布**
+- [x] **Step 3: 实现 task-specific Artifact 校验和原子发布**
 
 `artifacts.py` 只把 kind 映射到 `tree.md`、`nodes/Nxxx/spec.md`、`evaluation.md` 或版本化 Analysis/Review 文件；调用者不能提供路径。验证 Node ID、mode/version、symlink 和 resolved target，再由 Task 3 trusted writer 执行临时文件、flush/fsync、`os.replace` 和 parent fsync。不要抽象通用 Publisher 类或可配置路径规则。
 
-- [ ] **Step 4: 实现最小 Node spec 规则**
+- [x] **Step 4: 实现最小 Node spec 规则**
 
-Root 固定 `N000`、parent null、base `S0`。普通 child ID 在发布锁内单调分配；spec 保存 hypothesis、parent node、fixed parent/base commit、Node Selection Rationale、delta、risk、falsification criteria 和创建时选中的 Analysis/Review 精确版本。只有 Research Review pass/warning 才允许扩展；Research Attempt 唯一性由 Task 3 保证。
+Root 固定 `N000`、parent null、base `S0`。普通 child ID 从已发布 Node 单调选择候选；trusted publication lock 保证同一 ID 只有一个发布成功，极少见的并发冲突由调用方重试；spec 保存 hypothesis、parent node、fixed parent/base commit、Node Selection Rationale、delta、risk、falsification criteria 和创建时选中的 Analysis/Review 精确版本。只有 Research Review pass/warning 才允许扩展；Research Attempt 唯一性由 Task 3 保证。
 
-- [ ] **Step 5: 实现 deterministic evaluation rebuild**
+- [x] **Step 5: 实现 deterministic evaluation rebuild**
 
 只从 Attempts、`grader_runs`、raw result JSON 和 committed `submission.yaml` 生成。输出唯一 Research SHA/retry 历史，并把每次正式 efficiency evaluation 映射成一个 CORAL Engineering Attempt；允许零 Engineering Attempt，不创建 iteration record。多个不同 Research SHA 报 consistency error 且不覆盖；缺值写 `—`，不可比 contract 不排序。
 
-- [ ] **Step 6: 实现一次性幂等 Root bootstrap**
+- [x] **Step 6: 实现一次性幂等 Root bootstrap**
 
-验证 S0、source manifest 与 pinned SHA；canonical N000 已存在且匹配时返回，冲突时失败；通过受限入口发布 spec。从固定模板只新增 `submission.yaml`，Task 3 接受 A0 前强制 `git diff --name-only S0 A0 == {"submission.yaml"}`。
+区分 upstream source SHA 与运行仓库 S0，按 source manifest（含 adaptations/relocations）验证 seed；canonical A0/N000 已存在且匹配时幂等恢复缺失发布，冲突时失败；通过受限入口发布 spec。immutable Artifact 的相同内容重发幂等，不同内容仍拒绝。从固定模板只新增 `submission.yaml`，Task 3 接受 A0 前强制 `git diff --name-only S0 A0 == {"submission.yaml"}`。
 
-- [ ] **Step 7: 运行 Node/evaluation/bootstrap 测试**
+- [x] **Step 7: 运行 Node/evaluation/bootstrap 测试**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_node_rules.py tasks/greedylore_autoresearch/tests/test_evaluation_index.py tasks/greedylore_autoresearch/tests/test_root_bootstrap.py -v`
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tasks/greedylore_autoresearch/autoresearch tasks/greedylore_autoresearch/tests

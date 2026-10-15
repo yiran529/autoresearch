@@ -712,7 +712,13 @@ class TrustedWriteService:
             if not target.resolve().is_relative_to(resolved_root):
                 raise TrustedWriteError("artifact target escapes the notes tree")
             if target.exists() and ("_v" in target.stem or target.name == "spec.md"):
-                raise TrustedWriteError("versioned artifact already exists")
+                try:
+                    existing = target.read_text(encoding="utf-8")
+                except OSError as exc:
+                    raise TrustedWriteError("immutable artifact cannot be read") from exc
+                if existing == content:
+                    return {"path": relative}
+                raise TrustedWriteError("immutable artifact already exists")
             fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
