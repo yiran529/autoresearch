@@ -205,6 +205,7 @@ git commit -m "feat: allow tasks to disable heartbeat"
 - Create: `coral/grader/trusted_worker.py`
 - Modify: `coral/hooks/post_commit.py`
 - Modify: `coral/grader/daemon.py`
+- Modify: `coral/grader/task_grader.py`
 - Modify: `coral/agent/manager.py`（只把已有 Agent 进程与 Worktree 绑定原子写入受保护登记文件，不引入新的运行管理机制）
 - Create: `tests/test_trusted_writes.py`
 - Create: `tests/test_retry_attempt.py`
@@ -216,12 +217,14 @@ git commit -m "feat: allow tasks to disable heartbeat"
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/artifacts.py`
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_submission.py`
+- Modify: `tasks/greedylore_autoresearch/taskdata/eval_contract.yaml`
+- Modify: `tasks/greedylore_autoresearch/task.yaml`
 
 **Interfaces:**
 - Consumes: CORAL 原生 `submit_eval()` 的 Git commit/parent 语义、`checkpoint()` API 和 grader daemon 生命周期；`grader.args.trusted_submission_validator="autoresearch.submission:validate_submission"` 与 `grader.args.trusted_artifact_validator="autoresearch.artifacts:validate_artifact"` 由 trusted grader venv 调用。
-- Produces: `.coral/public/trusted.sock`；固定 request `{"version":1,"operation":"submit_attempt|retry_attempt|publish_artifact","payload":{...}}`；`request_trusted(coral_dir, operation, payload) -> dict`；`invoke_task_validator(entrypoint, payload) -> dict`（只使用 grader-private Python）；`validate_submission(commit_hash, context) -> dict[str, object]`；`validate_artifact(kind, content, context) -> dict[str, object]`；CLI `autoresearch retry HASH`；`.coral/private/trusted_agents.json` 中的可信 Agent 根 PID/start time/worktree/island 登记；`peer_pid → /proc 父链 → registered_agent/worktree` 来源上下文；受保护的 retry 上限与实际 Grader 执行次数记录。不存在 `ControlConfig`、动态 `ControlProvider` 或任意 operation registry。
+- Produces: `.coral/public/trusted.sock`；固定 request `{"version":1,"operation":"submit_attempt|retry_attempt|publish_artifact","payload":{...}}`；`request_trusted(coral_dir, operation, payload) -> dict`；`invoke_task_validator(entrypoint, payload) -> dict`（只使用 grader-private Python）；`validate_submission(commit_hash, context) -> dict[str, object]`；`validate_artifact(kind, content, context) -> dict[str, object]`；CLI `autoresearch retry HASH`；仅供可信宿主进程直接调用、且不暴露为 socket operation 的 `submit_root_attempt(worktree, commit_hash)`；`.coral/private/trusted_agents.json` 中的可信 Agent 根 PID/start time/worktree/island 登记；`peer_pid → /proc 父链 → registered_agent/worktree` 来源上下文；受保护的 retry 上限与实际 Grader 执行次数记录。不存在 `ControlConfig`、动态 `ControlProvider` 或任意 operation registry。
 
-- [ ] **Step 1: 写固定 operation、submission ownership 与 retry 失败测试**
+- [x] **Step 1: 写固定 operation、submission ownership 与 retry 失败测试**
 
 ```python
 def test_retry_accepts_only_terminal_infra_attempt(coral_dir):
@@ -273,23 +276,23 @@ def test_research_uniqueness_check_and_write_share_one_lock(
     assert len(read_research_attempts(trusted_server.coral_dir, "N001")) == 1
 ```
 
-- [ ] **Step 2: 运行测试并确认最小入口缺失**
+- [x] **Step 2: 运行测试并确认最小入口缺失**
 
 Run: `uv run --frozen --extra dev pytest tests/test_trusted_writes.py tests/test_retry_attempt.py tests/test_hooks.py tests/test_grader_daemon.py tasks/greedylore_autoresearch/tests/test_submission.py -q`
 
 Expected: FAIL，缺少 trusted-writes、validator 与 retry 接口。
 
-- [ ] **Step 3: 在现有 grader daemon 生命周期内实现固定用途 UDS**
+- [x] **Step 3: 在现有 grader daemon 生命周期内实现固定用途 UDS**
 
 `run_daemon()` 在 pending scan loop 前启动 `.coral/public/trusted.sock`，并在同一个 `stop_event` 路径关闭；不增加第二个受管进程。socket mode `0600`，单 request 最大 64 KiB，只识别 `submit_attempt`、`retry_attempt`、`publish_artifact`。拒绝任意路径、shell command、嵌套 operation 和未知字段。
 
 **提交者绑定：** 不能信任客户端传入的 `agent_id`、`island_id`、`parent_hash` 或 UID 作为 Agent 身份证明。manager 复用每次启动/重启后的 `AgentHandle`，把根 PID、`/proc/<pid>/stat` start time、worktree realpath 和 island 原子写入 `.coral/private/trusted_agents.json`；停止时清空。服务端使用内核提供的 `SO_PEERCRED` PID，沿当前 `/proc` 父链归属到一个仍存活且 start time 匹配的登记根进程；不要要求调用 `coral eval` 的子进程 PID 等于 Agent 根 PID，也不只依赖可被子进程重建的 process group。映射失效或无法验证时 **Agent 发起的正式提交** fail-closed，不因同 UID 放行；若 SRT 或其他包装层使 `SO_PEERCRED` 指向代理进程，只有该代理也能通过同一父链规则归属时才放行。**Root Bootstrap 的受信任宿主入口是独立例外**，由 manager/可信进程固定来源 S0、目标 N000 和提交内容，不允许 Agent 伪装该入口。验证者从服务端可信登记信息推导身份和工作区；不增加通用身份服务。
 
-- [ ] **Step 4: 把 formal pending write 移到 trusted submit**
+- [x] **Step 4: 把 formal pending write 移到 trusted submit**
 
-`submit_eval()` 保留 Git add/commit、parent lookup 和 wait/poll，但 Agent 进程不再调用 `checkpoint()` 或 `write_attempt()`。handler 对 Agent 请求使用已验证的 Agent→Worktree 绑定，检查提交 SHA 是该 Worktree 当前提交且 parent/provenance 一致；对 Root Bootstrap 仅接受可信管理端固定的 S0→A0 提交，不复用任意 Agent payload。客户端的身份与 parent 字段仅作声明，不授予权限。在 `.coral/private/trusted_writes.lock` 内执行 shared checkpoint、解析 parent checkpoint provenance，并用 `git show <sha>:submission.yaml` 读取 committed 内容，调用 grader venv 中固定的 `validate_submission`，再原子执行唯一 Research reservation 与 pending Attempt 写入。validator 校验 schema、HEAD、base、quality anchor、Root diff 和 Node 引用；`mode/node_id/base_commit/quality_anchor/contract_hash` 只能来自 committed submission 与 trusted config。
+`submit_eval()` 保留 Git add/commit、parent lookup 和 wait/poll，但 Agent 进程不再调用 `checkpoint()` 或 `write_attempt()`。handler 对 Agent 请求使用已验证的 Agent→Worktree 绑定，检查提交 SHA 是该 Worktree 当前提交且 parent/provenance 一致；对 Root Bootstrap 仅接受可信宿主进程直接调用的 `submit_root_attempt()`，固定校验 S0→A0/N000 且不暴露为 socket operation，也不复用任意 Agent payload。客户端的身份与 parent 字段仅作声明，不授予权限。在 `.coral/private/trusted_writes.lock` 内执行 shared checkpoint、解析 parent checkpoint provenance，并用 `git show <sha>:submission.yaml` 读取 committed 内容，调用 grader venv 中固定的 `validate_submission`，再原子执行唯一 Research reservation 与 pending Attempt 写入。validator 校验 schema、HEAD、base、quality anchor、Root diff 和 Node 引用；`mode/node_id/base_commit/quality_anchor/contract_hash` 只能来自 committed submission 与 trusted config。
 
-- [ ] **Step 5: 实现最小 append-only grader run history 与 failure 分类边界**
+- [x] **Step 5: 实现最小 append-only grader run history 与 failure 分类边界**
 
 ```python
 {
@@ -300,25 +303,29 @@ Expected: FAIL，缺少 trusted-writes、validator 与 retry 接口。
     "failure_class": None,
     "contract_hash": attempt.metadata.get("contract_hash"),
     "log_dir": f"eval_logs/{attempt.commit_hash}/{run_id}",
+    "dispatcher_pid": os.getpid(),
+    "dispatcher_start_time": process_start_time(os.getpid()),
+    "resource_usage": None,
+    "gpu_uuids": None,
 }
 ```
 
 finalize 只更新同 `run_id` 项；**dispatch、finalize、retry 对 Attempt metadata 的读改写使用同一锁或等效原子事务**，避免并发覆盖 `grader_runs`。只有 trusted grader 明确写入的 `failure_class=infra` 可 retry；candidate crash、算法 OOM、non-finite、deadlock、invalid submission 和 quality failure 都不可 retry。Retry 保持 SHA 和历史，不增加 formal Research Attempt 数；可保持 CORAL 原有 `eval counter` 语义，但 **每一次实际 Grader 调用必须单独计入运行次数、时间和 GPU 资源消耗**。增加从受保护 contract 读取的 `max_infra_retries`（V1 默认 2），达到上限即停止自动/手动重试；`grader_runs` 只是 Attempt metadata，不是独立数据库。
 
-- [ ] **Step 6: 实现 `autoresearch retry HASH` 与受限 Artifact 发布**
+- [x] **Step 6: 实现 `autoresearch retry HASH` 与受限 Artifact 发布**
 
 `autoresearch retry` 只请求 trusted socket；handler 在同一 flock 临界区检查 terminal state、infra 分类、contract hash、来源 Agent/Worktree、剩余 retry 预算以及 pending/running 状态，两个并发 retry 只有一个成功。`publish_artifact` 只接受 `kind/node_id/mode/version/content`，不接受路径；task validator 返回 canonical target，core 再限定到 `notes/tree.md` 或 `notes/nodes/N[0-9]{3}/`，校验后用临时文件、`fsync`、`os.replace` 发布。Task 6/7 只在写正式 Artifact 时使用它。
 
-- [ ] **Step 7: 运行 trusted submit/daemon/hook 回归测试**
+- [x] **Step 7: 运行 trusted submit/daemon/hook 回归测试**
 
 Run: `uv run --frozen --extra dev pytest tests/test_trusted_writes.py tests/test_retry_attempt.py tests/test_hooks.py tests/test_grader_daemon.py tests/test_cli_test_eval_alias.py tasks/greedylore_autoresearch/tests/test_submission.py -q`
 
 Expected: PASS；额外覆盖同 UID 伪造身份/跨 Worktree SHA 提交被拒、retry/finalize 并发不丢记录、retry 上限，以及长 Grader 运行时 socket 仍可响应、daemon stop/resume 后入口可用。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
-git add coral/grader/trusted_writes.py coral/grader/trusted_worker.py coral/grader/daemon.py coral/hooks/post_commit.py coral/agent/manager.py tests tasks/greedylore_autoresearch/autoresearch tasks/greedylore_autoresearch/tests/test_submission.py
+git add coral/grader/trusted_writes.py coral/grader/trusted_worker.py coral/grader/daemon.py coral/grader/task_grader.py coral/hooks/post_commit.py coral/agent/manager.py tests tasks/greedylore_autoresearch/autoresearch tasks/greedylore_autoresearch/tests/test_submission.py tasks/greedylore_autoresearch/taskdata/eval_contract.yaml
 git commit -m "feat: add minimal trusted attempt submission"
 ```
 

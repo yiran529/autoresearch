@@ -610,6 +610,7 @@ def test_grader_marks_grader_error_on_timeout():
             assert final is not None
             assert final.status == "timeout"
             assert final.budget_class == "grader_error"
+            assert final.metadata["failure_class"] == "candidate"
         finally:
             sys.path.pop(0)
 
@@ -1070,3 +1071,153 @@ def test_append_eval_logs_hint_unknown_runtime_falls_back_to_claude():
 
     assert ".claude/eval_logs/h1/" in out
     assert "feedback" in out  # original preserved
+
+
+def test_grader_run_history_records_each_actual_invocation(tmp_path):
+    repo = _init_repo_and_coral(tmp_path, score=0.42)
+    (repo / "main.py").write_text("print('history')\n")
+    pending = submit_eval(
+        message="history", agent_id="agent-1", workdir=str(repo), wait=False
+    )
+
+    process_pending_once(repo / ".coral")
+    finalized = read_attempt(repo / ".coral", pending.commit_hash)
+
+    assert finalized is not None
+    assert finalized.metadata["grader_invocation_count"] == 1
+    assert len(finalized.metadata["grader_runs"]) == 1
+    run = finalized.metadata["grader_runs"][0]
+    assert run["status"] == "improved"
+    assert run["failure_class"] is None
+    assert run["finished_at"] is not None
+    assert run["log_dir"].startswith(f"eval_logs/{pending.commit_hash}/")
+
+
+def test_checkout_failure_is_retryable_infrastructure(tmp_path, monkeypatch):
+    repo = _init_repo_and_coral(tmp_path)
+    (repo / "main.py").write_text("print('checkout')\n")
+    pending = submit_eval(
+        message="checkout", agent_id="agent-1", workdir=str(repo), wait=False
+    )
+    monkeypatch.setattr(
+        "coral.grader.daemon._add_isolated_worktree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("git checkout failed")),
+    )
+
+    process_pending_once(repo / ".coral")
+    finalized = read_attempt(repo / ".coral", pending.commit_hash)
+
+    assert finalized is not None
+    assert finalized.status == "crashed"
+    assert finalized.metadata["failure_class"] == "infra"
+    assert finalized.metadata["grader_runs"][0]["failure_class"] == "infra"
+
+
+def test_outer_grader_exception_is_not_retryable_without_infra_evidence(tmp_path):
+    repo = _init_repo_and_coral(tmp_path)
+    _write_grader(
+        repo,
+        "from coral.grader.task_grader import TaskGrader\n"
+        "class Grader(TaskGrader):\n"
+        "    def evaluate(self):\n"
+        "        raise RuntimeError('worker exploded')\n",
+    )
+    (repo / "main.py").write_text("print('crash')\n")
+    pending = submit_eval(
+        message="crash", agent_id="agent-1", workdir=str(repo), wait=False
+    )
+
+    process_pending_once(repo / ".coral")
+    finalized = read_attempt(repo / ".coral", pending.commit_hash)
+
+    assert finalized is not None
+    assert finalized.status == "crashed"
+    assert finalized.metadata["failure_class"] == "candidate"
+    assert finalized.metadata["grader_runs"][0]["failure_class"] == "candidate"
+
+
+def _enable_trusted_server(repo: Path) -> None:
+    config_path = repo / ".coral" / "config.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config["grader"].setdefault("args", {})["trusted_submission_validator"] = (
+        "unused:validator"
+    )
+    config_path.write_text(yaml.safe_dump(config))
+
+
+def _raw_trusted_request(socket_path: Path, operation: str) -> dict:
+    import socket
+
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(1)
+    try:
+        client.connect(str(socket_path))
+        client.sendall(
+            json.dumps(
+                {"version": 1, "operation": operation, "payload": {}}
+            ).encode()
+            + b"\n"
+        )
+        return json.loads(client.recv(4096).split(b"\n", 1)[0])
+    finally:
+        client.close()
+
+
+def test_daemon_trusted_socket_stops_and_restarts(tmp_path):
+    import threading
+
+    repo = _init_repo_and_coral(tmp_path)
+    _enable_trusted_server(repo)
+    coral_dir = repo / ".coral"
+    socket_path = coral_dir / "public" / "trusted.sock"
+
+    for _ in range(2):
+        stop = threading.Event()
+        thread = threading.Thread(target=run_daemon, args=(coral_dir, stop))
+        thread.start()
+        deadline = time.monotonic() + 3
+        while not socket_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert socket_path.exists()
+        response = _raw_trusted_request(socket_path, "unknown")
+        assert response["ok"] is False
+        stop.set()
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+        assert not socket_path.exists()
+
+
+def test_trusted_socket_responds_while_grader_is_running(tmp_path):
+    import threading
+
+    repo = _init_repo_and_coral(tmp_path)
+    _write_grader(
+        repo,
+        "import time\n"
+        "from coral.grader.task_grader import TaskGrader\n"
+        "class Grader(TaskGrader):\n"
+        "    def evaluate(self):\n"
+        "        time.sleep(1.0)\n"
+        "        return 0.5\n",
+    )
+    (repo / "main.py").write_text("print('slow')\n")
+    submit_eval(message="slow", agent_id="agent-1", workdir=str(repo), wait=False)
+    _enable_trusted_server(repo)
+    coral_dir = repo / ".coral"
+    socket_path = coral_dir / "public" / "trusted.sock"
+    stop = threading.Event()
+    thread = threading.Thread(target=run_daemon, args=(coral_dir, stop))
+    thread.start()
+    try:
+        deadline = time.monotonic() + 3
+        while not socket_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        started = time.monotonic()
+        response = _raw_trusted_request(socket_path, "unknown")
+        elapsed = time.monotonic() - started
+        assert response["ok"] is False
+        assert elapsed < 0.5
+    finally:
+        stop.set()
+        thread.join(timeout=4)
+    assert not thread.is_alive()

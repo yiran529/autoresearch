@@ -282,6 +282,10 @@ class AgentManager:
                 prompt_source="warmstart:main" if warmstart.enabled else None,
             )
             handles.append(handle)
+            # Publish each binding immediately: the newly started Agent may
+            # submit before the remainder of the roster has launched.
+            self.handles = list(handles)
+            self._write_trusted_agent_registry()
 
         self.handles = handles
         self._running = True
@@ -877,6 +881,13 @@ class AgentManager:
         # fresh launch specs reflecting its new state).
         self._start_sandbox_if_enabled()
 
+        # A crashed prior manager may have left live-looking bindings behind.
+        # Revoke them before exposing the resumed run's trusted socket; fresh
+        # bindings are published only after the new Agent handles exist.
+        from coral.grader.trusted_writes import clear_trusted_agent_registry
+
+        clear_trusted_agent_registry(paths.coral_dir)
+
         # Start grader daemon (must be up before resumed agents submit evals).
         self._start_grader_daemon()
 
@@ -1016,6 +1027,10 @@ class AgentManager:
                 prompt=prompt,
             )
             handles.append(handle)
+            # Publish each binding immediately: the newly started Agent may
+            # submit before the remainder of the roster has launched.
+            self.handles = list(handles)
+            self._write_trusted_agent_registry()
 
         self.handles = handles
         self._running = True
@@ -2691,6 +2706,48 @@ class AgentManager:
             pid_map_file = self.paths.coral_dir / "public" / "agent_pids.json"
             pid_map_file.write_text(json.dumps(pid_map), encoding="utf-8")
 
+            self._write_trusted_agent_registry()
+
+    def _write_trusted_agent_registry(self) -> None:
+        """Publish only the private, manager-owned Agent identity snapshot."""
+        if not self.paths:
+            return
+        from coral.grader.trusted_writes import (
+            AgentBinding,
+            TrustedWriteError,
+            process_start_time,
+            write_trusted_agent_registry,
+        )
+
+        bindings = []
+        for handle in self.handles:
+            if not handle.process or not handle.process.pid:
+                continue
+            pid = handle.process.pid
+            try:
+                started = process_start_time(pid)
+            except TrustedWriteError:
+                logger.warning(
+                    "Could not register trusted identity for %s (PID %s)",
+                    handle.agent_id,
+                    pid,
+                )
+                continue
+            island_id = self._agent_island.get(handle.agent_id)
+            if island_id is None:
+                spec = self.specs_by_id.get(handle.agent_id)
+                island_id = spec.island_id if spec is not None else None
+            bindings.append(
+                AgentBinding(
+                    agent_id=handle.agent_id,
+                    root_pid=pid,
+                    start_time=started,
+                    worktree=str(handle.worktree_path.resolve()),
+                    island_id=str(island_id) if island_id is not None else None,
+                )
+            )
+        write_trusted_agent_registry(self.paths.coral_dir, bindings)
+
     def _atexit_cleanup(self) -> None:
         """Safety net: kill any surviving agent processes on interpreter exit."""
         self._save_sessions()
@@ -2722,6 +2779,9 @@ class AgentManager:
                 f = self.paths.coral_dir / "public" / name
                 if f.exists():
                     f.unlink()
+            from coral.grader.trusted_writes import clear_trusted_agent_registry
+
+            clear_trusted_agent_registry(self.paths.coral_dir)
 
 
 def _session_exists(session_id: str, coral_dir: Path | None = None) -> bool:

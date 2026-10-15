@@ -122,6 +122,11 @@ class TaskGrader(ABC):
             )
         else:
             d = coral_root / "public" / "eval_logs" / Path(self.codebase_path).name
+        run_id = None
+        if self.tasks:
+            run_id = self.tasks[0].metadata.get("grader_run_id")
+        if isinstance(run_id, str) and run_id:
+            d = d / run_id
         d.mkdir(parents=True, exist_ok=True)
         return d
 

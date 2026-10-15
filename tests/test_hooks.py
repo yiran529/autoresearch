@@ -656,3 +656,51 @@ def test_submit_eval_single_island_unchanged(tmp_path):
     assert expected.exists()
     # No island_id stamped
     assert "island_id" not in (attempt.metadata or {})
+
+
+def test_submit_eval_trusted_mode_delegates_formal_write(tmp_path, monkeypatch):
+    repo = _setup_repo_with_config(tmp_path)
+    _set_grader_config(
+        repo,
+        args={"trusted_submission_validator": "task.submission:validate_submission"},
+    )
+    (repo / "hello.py").write_text("print('trusted')\n")
+    captured = {}
+
+    def fake_request(coral_dir, operation, payload):
+        captured.update(coral_dir=coral_dir, operation=operation, payload=payload)
+        return {
+            "commit_hash": payload["commit_hash"],
+            "agent_id": payload["agent_id"],
+            "title": payload["title"],
+            "score": None,
+            "status": "pending",
+            "parent_hash": payload["parent_hash"],
+            "timestamp": "2026-10-15T00:00:00+00:00",
+            "feedback": "",
+            "shared_state_hash": "trusted-checkpoint",
+            "parent_shared_state_hash": None,
+            "metadata": {"mode": "research", "node_id": "N001"},
+        }
+
+    monkeypatch.setattr("coral.grader.trusted_writes.request_trusted", fake_request)
+    monkeypatch.setattr(
+        "coral.hooks.post_commit.checkpoint",
+        lambda *_args, **_kwargs: pytest.fail("Agent-side checkpoint must not run"),
+    )
+    monkeypatch.setattr(
+        "coral.hooks.post_commit.write_attempt",
+        lambda *_args, **_kwargs: pytest.fail("Agent-side Attempt write must not run"),
+    )
+
+    attempt = submit_eval(
+        message="trusted submission",
+        agent_id="agent-test",
+        workdir=str(repo),
+        wait=False,
+    )
+
+    assert attempt.status == "pending"
+    assert captured["operation"] == "submit_attempt"
+    assert captured["payload"]["commit_hash"] == _head_hash(repo)
+    assert captured["payload"]["budget_class"] == "real"

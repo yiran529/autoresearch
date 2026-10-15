@@ -412,11 +412,21 @@ def _grade_one(
     coral_dir: Path,
     config: CoralConfig,
 ) -> Attempt:
-    """Grade a single pending attempt and return the finalized Attempt record."""
+    """Grade one pending attempt and atomically finalize its run record."""
+    from coral.grader.trusted_writes import begin_grader_run, finalize_grader_run
+
+    # The queued object remembers where grading/logging started. Migration may
+    # already have moved the authoritative Attempt before this worker runs.
     grading_island_id = _attempt_island_id(attempt)
-    # Task.metadata is the canonical channel for surfacing per-attempt context
-    # to the user's grader (read via TaskGrader.tune / .budget_class).
-    # Final budget_class may flip to "grader_error" below.
+    current_attempt, dispatch_island_id = _current_attempt_location(
+        coral_dir,
+        attempt.commit_hash,
+        fallback_island_id=grading_island_id,
+    )
+    attempt = current_attempt or attempt
+    attempt, run_id = begin_grader_run(
+        coral_dir, attempt.commit_hash, dispatch_island_id
+    )
     budget_class = get_budget_class(attempt.metadata)
     task = Task(
         id=config.task.name,
@@ -426,6 +436,7 @@ def _grade_one(
             "budget_class": budget_class,
             "agent_id": attempt.agent_id,
             "commit_hash": attempt.commit_hash,
+            "grader_run_id": run_id,
         },
     )
     timeout = config.grader.timeout
@@ -435,13 +446,16 @@ def _grade_one(
 
     score: float | None = None
     status = "crashed"
+    failure_class: str | None = "infra"
     feedback = ""
-    metadata: dict = {}
+    metadata: dict[str, Any] = {}
     public_scores: dict[str, dict[str, Any]] | None = None
     grader_completed = False
+    stage = "checkout"
 
     try:
         _add_isolated_worktree(repo_dir, attempt.commit_hash, checkout_path)
+        stage = "evaluation"
         try:
             bundle = _run_grader(
                 str(config_path),
@@ -453,8 +467,12 @@ def _grade_one(
             score = bundle.aggregated
             feedback = _build_feedback(bundle)
             metadata = dict(getattr(bundle, "metadata", None) or {})
+            failure_class = metadata.get("failure_class")
             if getattr(bundle, "is_public", True):
-                public_scores = {name: score.to_dict() for name, score in bundle.scores.items()}
+                public_scores = {
+                    name: named_score.to_dict()
+                    for name, named_score in bundle.scores.items()
+                }
             grader_completed = True
         finally:
             _remove_worktree(repo_dir, checkout_path)
@@ -463,11 +481,26 @@ def _grade_one(
         status = "timeout"
         feedback = f"Eval timed out after {timeout}s."
         budget_class = BUDGET_CLASS_GRADER_ERROR
-    except Exception as e:
+        # An outer timeout can be caused by candidate deadlock or excessive
+        # work. Without explicit trusted evidence it is not retryable infra.
+        failure_class = "candidate"
+    except OSError as exc:
+        logger.exception("Grader infrastructure failed on %s", attempt.commit_hash[:12])
+        status = "crashed"
+        feedback = str(exc)
+        budget_class = BUDGET_CLASS_GRADER_ERROR
+        # Direct OSError here belongs to checkout or worker launch; candidate
+        # OSErrors are serialized by the worker as ordinary grader exceptions.
+        failure_class = "infra"
+    except Exception as exc:
         logger.exception("Grader crashed on %s", attempt.commit_hash[:12])
         status = "crashed"
-        feedback = str(e)
+        feedback = str(exc)
         budget_class = BUDGET_CLASS_GRADER_ERROR
+        # Checkout is daemon-owned infrastructure. Once candidate evaluation
+        # begins, unknown failures fail closed unless the grader returns
+        # explicit failure_class=infra metadata.
+        failure_class = "infra" if stage == "checkout" else "candidate"
 
     current_attempt, final_island_id = _current_attempt_location(
         coral_dir,
@@ -492,42 +525,32 @@ def _grade_one(
             island_id=final_island_id,
         )
 
-    # Append the per-attempt eval_logs path so the agent can always find
-    # their trace logs, regardless of which feedback path produced this
-    # result (success / timeout / crashed). This is the universal safety
-    # net — see _append_eval_logs_hint for the contract.
-    feedback = _append_eval_logs_hint(feedback, attempt.commit_hash, config.agents.runtime)
-
-    # Carry forward any pending metadata the grader bundle didn't overwrite,
-    # then stamp the final budget_class (always wins over any pending value).
-    for k, v in (base_attempt.metadata or {}).items():
-        metadata.setdefault(k, v)
+    feedback = _append_eval_logs_hint(
+        feedback, attempt.commit_hash, config.agents.runtime
+    )
+    metadata_remove: set[str] = set()
     if grader_completed:
-        # Score breakdowns are daemon-owned. Apply their visibility after the
-        # merge so neither grader nor pending metadata can publish private data.
         if public_scores is None:
             metadata.pop("scores", None)
+            metadata_remove.add("scores")
         else:
             metadata["scores"] = public_scores
     if final_island_id is not None:
         metadata["island_id"] = final_island_id
     metadata["budget_class"] = budget_class
 
-    finalized = Attempt(
-        commit_hash=base_attempt.commit_hash,
-        agent_id=base_attempt.agent_id,
-        title=base_attempt.title,
-        score=score,
+    finalized = finalize_grader_run(
+        coral_dir,
+        attempt.commit_hash,
+        final_island_id,
+        run_id,
         status=status,
-        parent_hash=base_attempt.parent_hash,
-        # Preserve original submission timestamp; daemon doesn't re-stamp.
-        timestamp=base_attempt.timestamp,
+        failure_class=failure_class,
+        score=score,
         feedback=feedback,
-        shared_state_hash=base_attempt.shared_state_hash,
-        parent_shared_state_hash=base_attempt.parent_shared_state_hash,
-        metadata=metadata,
+        metadata_updates=metadata,
+        metadata_remove=metadata_remove,
     )
-    write_attempt(str(coral_dir), finalized, island_id=final_island_id)
     with _eval_count_lock:
         count = increment_eval_count(coral_dir, island_id=final_island_id)
     logger.info(
@@ -585,8 +608,15 @@ def _safe_grade_one(
     Returns the finalized Attempt, or None if even the crash-record write
     failed.
     """
+    from coral.grader.trusted_writes import DispatchClaimError
+
     try:
         return _grade_one(attempt, config_path, coral_dir, config)
+    except DispatchClaimError as exc:
+        # Another live daemon owns the attempt, or a stale claim was already
+        # finalized under the trusted-write lock. Never finalize that run here.
+        logger.warning("Skipped grader claim for %s: %s", attempt.commit_hash[:12], exc)
+        return None
     except Exception:
         logger.exception("Unhandled error grading %s; marking crashed", attempt.commit_hash[:12])
         try:
@@ -607,20 +637,44 @@ def _safe_grade_one(
             if final_island_id is not None:
                 metadata["island_id"] = final_island_id
             metadata["budget_class"] = BUDGET_CLASS_GRADER_ERROR
-            crashed = Attempt(
-                commit_hash=base_attempt.commit_hash,
-                agent_id=base_attempt.agent_id,
-                title=base_attempt.title,
-                score=None,
-                status="crashed",
-                parent_hash=base_attempt.parent_hash,
-                timestamp=base_attempt.timestamp,
-                feedback="Grader daemon hit an unexpected error; see logs.",
-                shared_state_hash=base_attempt.shared_state_hash,
-                parent_shared_state_hash=base_attempt.parent_shared_state_hash,
-                metadata=metadata,
-            )
-            write_attempt(str(coral_dir), crashed, island_id=final_island_id)
+            running = [
+                run
+                for run in metadata.get("grader_runs", [])
+                if run.get("status") == "running"
+            ]
+            if running:
+                from coral.grader.trusted_writes import finalize_grader_run
+
+                crashed = finalize_grader_run(
+                    coral_dir,
+                    base_attempt.commit_hash,
+                    final_island_id,
+                    running[-1]["run_id"],
+                    status="crashed",
+                    failure_class="infra",
+                    score=None,
+                    feedback="Grader daemon hit an unexpected error; see logs.",
+                    metadata_updates=metadata,
+                )
+            else:
+                from coral.grader.trusted_writes import trusted_writes_lock
+
+                metadata["failure_class"] = "infra"
+                crashed = Attempt(
+                    commit_hash=base_attempt.commit_hash,
+                    agent_id=base_attempt.agent_id,
+                    title=base_attempt.title,
+                    score=None,
+                    status="crashed",
+                    parent_hash=base_attempt.parent_hash,
+                    timestamp=base_attempt.timestamp,
+                    feedback="Grader daemon hit an unexpected error; see logs.",
+                    shared_state_hash=base_attempt.shared_state_hash,
+                    parent_shared_state_hash=base_attempt.parent_shared_state_hash,
+                    metadata=metadata,
+                )
+                with trusted_writes_lock(coral_dir):
+                    write_attempt(str(coral_dir), crashed, island_id=final_island_id)
             with _eval_count_lock:
                 increment_eval_count(coral_dir, island_id=final_island_id)
             return crashed
@@ -727,30 +781,47 @@ def run_daemon(coral_dir: str | Path, stop_event: Any = None) -> None:
     def _should_stop() -> bool:
         return bool(stop_event and stop_event.is_set())
 
-    while not _should_stop():
-        try:
-            pending = _find_pending(coral_dir)
-        except Exception:
-            logger.exception("Failed to scan for pending attempts")
-            pending = []
+    trusted_server = None
+    trusted_args = config.grader.args or {}
+    if trusted_args.get("trusted_submission_validator") or trusted_args.get(
+        "trusted_artifact_validator"
+    ):
+        from coral.grader.trusted_writes import TrustedWriteServer, TrustedWriteService
 
-        if not pending:
-            # Idle heartbeat so supervisors can tell the daemon is alive.
-            try:
-                heartbeat_file.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
-            except OSError:
-                pass
-            time.sleep(_POLL_INTERVAL_SEC)
-            continue
-
-        _drain_pending(
-            pending,
-            config_path,
-            coral_dir,
-            config,
-            max_workers=max_workers,
-            heartbeat_file=heartbeat_file,
-            should_stop=_should_stop,
+        trusted_server = TrustedWriteServer(
+            coral_dir, TrustedWriteService(coral_dir, config)
         )
+        trusted_server.start()
+
+    try:
+        while not _should_stop():
+            try:
+                pending = _find_pending(coral_dir)
+            except Exception:
+                logger.exception("Failed to scan for pending attempts")
+                pending = []
+
+            if not pending:
+                # Idle heartbeat so supervisors can tell the daemon is alive.
+                try:
+                    heartbeat_file.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+                except OSError:
+                    pass
+                time.sleep(_POLL_INTERVAL_SEC)
+                continue
+
+            _drain_pending(
+                pending,
+                config_path,
+                coral_dir,
+                config,
+                max_workers=max_workers,
+                heartbeat_file=heartbeat_file,
+                should_stop=_should_stop,
+            )
+
+    finally:
+        if trusted_server is not None:
+            trusted_server.stop()
 
     logger.info("Grader daemon stopped")

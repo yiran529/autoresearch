@@ -13,6 +13,9 @@ grader:
     - "uv pip install -e ./autoresearch"
   timeout: 0
   direction: maximize
+  args:
+    trusted_submission_validator: "autoresearch.submission:validate_submission"
+    trusted_artifact_validator: "autoresearch.artifacts:validate_artifact"
   parallel:
     max_workers: 1
   private:

@@ -93,3 +93,11 @@ def test_contract_freezes_compressor_and_idle_gpu_policy() -> None:
         "max_memory_used_mib": 512,
         "max_utilization_percent": 5,
     }
+
+
+def test_task_wires_fixed_trusted_validators() -> None:
+    task = yaml.safe_load((TASK_ROOT / "task.yaml").read_text())
+    assert task["grader"]["args"] == {
+        "trusted_submission_validator": "autoresearch.submission:validate_submission",
+        "trusted_artifact_validator": "autoresearch.artifacts:validate_artifact",
+    }

@@ -24,7 +24,7 @@ from coral.hub.attempts import (
     write_attempt,
 )
 from coral.hub.checkpoint import checkpoint
-from coral.types import BUDGET_CLASS_TUNE, Attempt
+from coral.types import BUDGET_CLASS_REAL, BUDGET_CLASS_TUNE, Attempt
 from coral.workspace.breadcrumbs import find_coral_breadcrumb, read_island_breadcrumb
 
 # Legacy alias — external tests/hooks may still import the underscore-prefixed
@@ -186,43 +186,61 @@ def submit_eval(
     commit_hash = _git_add_and_commit(message, str(workdir_path))
     parent_hash = _get_parent_hash(commit_hash, str(workdir_path))
 
-    # Checkpoint shared state at submission time (captures agent's current notes/skills).
-    shared_state_hash = checkpoint(str(coral_dir), agent_id, message, island_id=island_id)
+    trusted_validator = (config.grader.args or {}).get("trusted_submission_validator")
+    if trusted_validator:
+        from coral.grader.trusted_writes import request_trusted
 
-    # Look up parent attempt's shared state hash for provenance chain.
-    parent_shared_state_hash = None
-    if parent_hash:
-        from coral.hub._island import island_root
+        result = request_trusted(
+            coral_dir,
+            "submit_attempt",
+            {
+                "commit_hash": commit_hash,
+                "agent_id": agent_id,
+                "title": message,
+                "parent_hash": parent_hash,
+                "budget_class": BUDGET_CLASS_TUNE if tune else BUDGET_CLASS_REAL,
+                "island_id": island_id,
+            },
+        )
+        attempt = Attempt.from_dict(result)
+    else:
+        # Checkpoint shared state at submission time (captures agent's current notes/skills).
+        shared_state_hash = checkpoint(str(coral_dir), agent_id, message, island_id=island_id)
 
-        parent_attempt_file = island_root(coral_dir, island_id) / "attempts" / f"{parent_hash}.json"
-        if parent_attempt_file.exists():
-            try:
-                parent_data = json.loads(parent_attempt_file.read_text(encoding="utf-8"))
-                parent_shared_state_hash = parent_data.get("shared_state_hash")
-            except (json.JSONDecodeError, OSError):
-                pass
+        # Look up parent attempt's shared state hash for provenance chain.
+        parent_shared_state_hash = None
+        if parent_hash:
+            from coral.hub._island import island_root
 
-    # Write pending record. The grader daemon will observe this and fill in
-    # score/status/feedback asynchronously.
-    metadata: dict = {}
-    if tune:
-        metadata["budget_class"] = BUDGET_CLASS_TUNE
-    if island_id is not None:
-        metadata["island_id"] = island_id
-    attempt = Attempt(
-        commit_hash=commit_hash,
-        agent_id=agent_id,
-        title=message,
-        score=None,
-        status="pending",
-        parent_hash=parent_hash,
-        timestamp=datetime.now(UTC).isoformat(),
-        feedback="",
-        shared_state_hash=shared_state_hash,
-        parent_shared_state_hash=parent_shared_state_hash,
-        metadata=metadata,
-    )
-    write_attempt(str(coral_dir), attempt, island_id=island_id)
+            parent_attempt_file = island_root(coral_dir, island_id) / "attempts" / f"{parent_hash}.json"
+            if parent_attempt_file.exists():
+                try:
+                    parent_data = json.loads(parent_attempt_file.read_text(encoding="utf-8"))
+                    parent_shared_state_hash = parent_data.get("shared_state_hash")
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        # Write pending record. The grader daemon will observe this and fill in
+        # score/status/feedback asynchronously.
+        metadata: dict = {}
+        if tune:
+            metadata["budget_class"] = BUDGET_CLASS_TUNE
+        if island_id is not None:
+            metadata["island_id"] = island_id
+        attempt = Attempt(
+            commit_hash=commit_hash,
+            agent_id=agent_id,
+            title=message,
+            score=None,
+            status="pending",
+            parent_hash=parent_hash,
+            timestamp=datetime.now(UTC).isoformat(),
+            feedback="",
+            shared_state_hash=shared_state_hash,
+            parent_shared_state_hash=parent_shared_state_hash,
+            metadata=metadata,
+        )
+        write_attempt(str(coral_dir), attempt, island_id=island_id)
 
     if not wait:
         return attempt

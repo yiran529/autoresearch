@@ -1,0 +1,83 @@
+"""Invoke task-owned trusted validators inside the grader-private Python."""
+
+from __future__ import annotations
+
+import importlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from coral.workspace.grader_env import grader_python_path
+
+_WORKER = r"""
+import importlib, json, sys, traceback
+
+try:
+    request = json.loads(sys.stdin.read())
+    module_name, function_name = request["entrypoint"].rsplit(":", 1)
+    function = getattr(importlib.import_module(module_name), function_name)
+    result = function(*request.get("args", []), **request.get("kwargs", {}))
+    if not isinstance(result, dict):
+        raise TypeError("trusted validator must return an object")
+    sys.stdout.write(json.dumps({"ok": True, "result": result}))
+except Exception as exc:
+    sys.stdout.write(json.dumps({
+        "ok": False,
+        "error": f"{type(exc).__name__}: {exc}",
+        "traceback": traceback.format_exc(),
+    }))
+"""
+
+
+def invoke_task_validator(
+    coral_dir: str | Path,
+    entrypoint: str,
+    *args: Any,
+    timeout: float = 60.0,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Call one configured function in the already-created grader venv."""
+    if not entrypoint or ":" not in entrypoint:
+        raise ValueError("trusted validator entrypoint must be 'module:function'")
+    python = grader_python_path(Path(coral_dir))
+    if not python.exists():
+        raise RuntimeError(f"grader-private Python is unavailable at {python}")
+    completed = subprocess.run(
+        [str(python), "-c", _WORKER],
+        input=json.dumps({"entrypoint": entrypoint, "args": args, "kwargs": kwargs}),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"trusted validator worker exited {completed.returncode}: "
+            f"{completed.stderr.strip()[-1000:]}"
+        )
+    try:
+        response = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("trusted validator returned invalid JSON") from exc
+    if not response.get("ok"):
+        raise RuntimeError(
+            f"trusted validator rejected request: {response.get('error', 'unknown error')}"
+        )
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("trusted validator returned a non-object result")
+    return result
+
+
+def main() -> None:
+    """Small module CLI, useful for diagnostics without importing task code in host."""
+    request = json.loads(sys.stdin.read())
+    module_name, function_name = request["entrypoint"].rsplit(":", 1)
+    function = getattr(importlib.import_module(module_name), function_name)
+    result = function(*request.get("args", []), **request.get("kwargs", {}))
+    sys.stdout.write(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "greedylore-autoresearch"
+version = "0.1.0"
+description = "Task-local workflow for GreedyLoRE AutoResearch"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6"]
+
+[project.scripts]
+autoresearch = "autoresearch.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autoresearch"]
