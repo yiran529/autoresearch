@@ -453,22 +453,30 @@ Researcher、Engineer 和两种 Analyzer 的 Prompt 允许在遇到实质性不�
 ## 13. Global Memory Manager
 
 Global Memory Manager 是 task-local、低频、非阻塞的跨 Node 记忆整理器。它不由
-Analysis 发布事件触发，不使用 CORAL heartbeat，也不常驻。run 部署时添加一条
-run-scoped Cron：
+Analysis 发布事件触发，不使用 CORAL heartbeat，也不常驻。每次 CORAL 初次启动、
+resume 或自动重启 Researcher Agent 时，Researcher 的启动 Hook 调用一次：
 
-```cron
-*/30 * * * * cd <stable-run-worktree> && <absolute-autoresearch> consolidate-memory --if-due
+```bash
+autoresearch consolidate-memory --if-due --async
 ```
 
-Cron 使用包含有效 `.coral_dir` / `.coral_island` breadcrumb 的稳定 worktree 和
-绝对 CLI 路径。实现不在测试或普通安装阶段擅自修改用户 crontab；由 run bootstrap
-显式安装、列出和移除这一条带唯一 run 标识的记录。
+Engineer 的启动不调用该命令。Hook 只发起一次检查，不轮询、不定时运行，也不创建
+后台调度服务；实际 Memory Manager 是有界的独立 ephemeral Codex session。
+
+锁定 fork 尚无 assignment-level startup Hook。V1 在 Codex
+`runtime_options.startup_hook` 增加一个最小的 argv-list 选项，只配置给 Researcher。
+Codex runtime 在同一 SRT/Agent 进程树内运行 Hook，然后无论 Hook 成功与否都继续
+`exec` 正常 Codex runtime。所有初启、resume 和自动重启已经汇合到同一个
+`runtime.start()` 路径，因此不增加第二套生命周期管理。Hook 命令使用 worktree
+相对的 `.venv/bin/autoresearch`，`--async` 在启动有界 worker 后立即返回；错误
+写入现有 Agent diagnostics，但不阻止 Researcher 启动。
 
 ### 13.1 CLI 粗粒度触发
 
-`autoresearch consolidate-memory --if-due`：
+`autoresearch consolidate-memory --if-due --async` 的启动检查：
 
-1. 在 `.coral/public/memory-consolidation.lock` 尝试取得 run-scoped 非阻塞 `flock`；已有实例时正常退出；该文件只用于同步，不记录 workflow 状态；
+1. 在 `.coral/public/memory-consolidation.lock` 尝试取得 run-scoped 非阻塞
+   `flock`；已有实例时正常退出；该文件只用于同步，不记录 workflow 状态；
 2. 仅枚举已发布的 `nodes/Nxxx/research_analysis_vN.md` 文件名；
 3. 仅解析已有两份 Summary frontmatter 的 `processed_analyses` 引用集合；
 4. 以“尚未同时出现在两份成功 Summary 中的 Research Analysis 引用”为候选，
@@ -512,13 +520,14 @@ Python CLI 只校验：
 
 CLI 不判断总结内容、语义重复或冲突处理质量。两份 Summary 通过现有 Trusted
 Publisher 逐份原子写入；命令仅在两份均发布后报告成功。若 session、校验或发布
-失败，保留原始 Analysis/Evaluation/Reference，退出并等待下一次 Cron。若只完成
+失败，保留原始 Analysis/Evaluation/Reference，退出并等待下一次 Researcher
+启动或重启 Hook。若只完成
 一份写入，下次检查使用两份 Summary 已处理引用的交集，因此不会把不完整更新视为
 成功。相同证据集合再次运行时，Manager 根据完整 `processed_analyses` 保持内容
 幂等。
 
 该机制不新增数据库、常驻调度服务、heartbeat action、通用工作流引擎或 Analysis
-发布 hook。
+发布 hook；`autoresearch analyze` 不调用 Memory Manager。
 
 ## 14. Node Artifact 与重建
 
@@ -561,8 +570,8 @@ Global Summary 可从已发布 Analysis 重新整理，不是研究事实的唯�
    Root Research Analysis。
 8. Root Analysis 有效发布后允许普通 child；Engineer 可同时继续 N000。
 
-Global Memory 的 Cron 在 run bootstrap 完成后单独安装；Root Analysis 本身不触发
-Memory Manager。
+Root Analysis 本身不触发 Memory Manager；只有随后发生的 Researcher 初启、resume
+或自动重启会执行一次 Memory 启动检查。
 
 ## 16. 错误分类与恢复
 
@@ -578,7 +587,8 @@ grader 为每个失败设置一个分类：
 
 所有异常保留 command、return code、stdout/stderr tail、完整日志路径和 cleanup
 结果。缺失值写 `null`/`—`，不合成数字。Memory Consolidation 的失败不改变
-Attempt、Node 或 Analysis 状态，也不阻塞 Producer；下一次 Cron 重新检查。
+Attempt、Node 或 Analysis 状态，也不阻塞 Producer；下一次 Researcher 启动或重启
+Hook 重新检查。
 
 ## 17. 验证策略
 
@@ -597,6 +607,7 @@ Attempt、Node 或 Analysis 状态，也不阻塞 Producer；下一次 Cron 重�
 - Analyzer/Producer Prompt 将 Subagent 表述为按需能力；
 - Memory gate 只按未处理 Research Analysis 的不同 Node 计数，Engineering 不计数；
 - Memory Manager 使用独立 session，重复 evidence 幂等，失败不影响 Analysis；
+- startup Hook 只配置给 Researcher，在 start/resume/restart 执行且失败不阻止 Agent；
 - Summary 格式、引用存在性、固定发布路径和 Reference 静态性；
 - 非阻塞 `flock` 避免同 run 重复 Manager；
 - heartbeat disabled 后 start/resume 均无动作；
@@ -613,7 +624,8 @@ allocator、环境指纹记录和分布式进程清理要求不变。
 1. 原生锁定 CORAL 的 init/validate/start/eval smoke；
 2. dummy task 验证 research 双 profile、engineering efficiency-only、Attempt/index；
 3. 单进程 CPU contract/parser smoke；
-4. Analyzer-only 发布、Child 创建和 Memory gate/publish dummy smoke；
+4. Analyzer-only 发布、Child 创建、Researcher startup Hook 和 Memory
+   gate/publish dummy smoke；
 5. 4 GPU、3-step dense/GreedyLoRE BF16 correctness smoke；
 6. 动态预留 4 GPU、短 warmup + 3 measured step 的两 timing cell smoke，确认 SHM
    和异步 Future；
@@ -633,7 +645,8 @@ grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；gr
 - Analysis 支持幂等和显式 revision；
 - Child 固定引用创建时使用的 Parent Research Analysis；
 - Engineering 可有零或多个正式 Attempt，Evidence 保持完整；
-- Cron 与 `analyze` 解耦，三 Node gate 后才启动独立 Memory Manager；
+- Researcher startup Hook 与 `analyze` 解耦，三 Node gate 后才异步启动独立
+  Memory Manager；
 - 两份 Summary 保存完整 processed refs，不修改 Analysis、Evaluation 或 Reference；
 - SRT 允许 Agent 正常写 own worktree，并阻止其误改正式记录和 sibling worktree；
 - trusted endpoint 保持固定 operation 和服务端校验；
@@ -644,19 +657,20 @@ grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；gr
 
 1. 保持已完成的 task scaffold、heartbeat、trusted writes、Evaluation Contract、
    grader、Node/Evaluation/Root、prompts 和 sandbox 基础；
-2. 将现有 Analysis workflow 收敛为 Analyzer-only，并删除不再属于目标结构的审批 assets 与前置条件；
+2. 将现有 Analysis workflow 收敛为 Analyzer-only，并删除不再属于目标结构的
+   审批 assets 与前置条件；
 3. 更新 Researcher、Engineer、Analyzer prompts：Summary 读取与按需 Subagent；
 4. 实现极简 Memory gate、独立 Memory Manager session、Summary 校验和可信发布；
-5. 增加 run-scoped Cron 安装/移除说明与集成测试，不启动常驻服务；
+5. 增加 Researcher-only startup Hook 与 start/resume/restart 集成测试，不启动常驻服务；
 6. 运行核心 dummy acceptance 和全量非 GPU 回归；
 7. 做动态 4 GPU smoke、dense calibration、Root N000 正式 eval。
 
 实施时每完成一个可独立验证的大 step 就创建一个 Git commit。测试和检查在 commit
-前完成；commit 动作本身不额外触发 push、长训练、calibration 或真实 crontab
-安装。
+前完成；commit 动作本身不额外触发 push、长训练、calibration 或真实 Memory
+session。
 
 长训练通过 grader daemon/tmux 管理，不用 Agent 回合轮询。任何尚未真实运行的
-sandbox、Cron、GPU benchmark 或完整训练均不得在交付说明中声称通过。
+sandbox、startup Hook、GPU benchmark 或完整训练均不得在交付说明中声称通过。
 
 ## 19. 完成条件
 
@@ -669,8 +683,8 @@ V1 完成需要同时满足：
 - Analysis fresh、版本化、幂等且受控发布；
 - Research Analysis 发布后可直接创建 Child；
 - Subagent 仅为按需能力且继承父 Agent 权限；
-- Cron 每 30 分钟检查，未处理 Research Analysis 涉及至少 3 个不同 Node 时才启动
-  独立 Memory Manager；
+- 每次 Researcher 初启、resume 或自动重启只执行一次异步检查，未处理 Research
+  Analysis 涉及至少 3 个不同 Node 时才启动独立 Memory Manager；
 - 两份 Global Summary 可追溯到完整 `processed_analyses`，Reference Toolkit
   保持静态；
 - Memory Consolidation 失败不阻塞 Producer 或改变正式研究记录；
