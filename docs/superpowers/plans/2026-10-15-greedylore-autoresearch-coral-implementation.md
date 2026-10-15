@@ -691,7 +691,7 @@ git commit -m "feat: add artifact-driven analysis review"
 - Consumes: Appendix A/B/C from `/home/wyr/CORAL_AutoResearch_V1_Handoff_Refined.md` and Tasks 3/6/7 的最终 CLI。
 - Produces: two Codex assignments with distinct role files；简短共享 `workflow_rules.md`；private dense references；task-local validators/CLI 安装；`agents.heartbeat_enabled=false`；`grader.parallel.max_workers=1`；SRT enabled。
 
-- [ ] **Step 1: 写 asset、task config 与 Prompt 边界失败测试**
+- [x] **Step 1: 写 asset、task config 与 Prompt 边界失败测试**
 
 ```python
 def test_task_has_two_distinct_codex_roles(task_yaml):
@@ -711,15 +711,15 @@ def test_prompts_expose_workflow_not_transport(prompt_texts):
         assert internal not in combined
 ```
 
-- [ ] **Step 2: 提取 assets 并加入简短共享规则**
+- [x] **Step 2: 提取 assets 并加入简短共享规则**
 
 Researcher/Engineer/Analyzer/Reviewer 对应 Appendix A.1–A.5；algorithm/system/semantic 对应 B.1–B.3；templates 对应 C.1–C.6。`workflow_rules.md` 只描述任务、输入 Artifact、完成条件、Node/Attempt 规则、`coral eval`、`autoresearch retry`、`autoresearch analyze`、读写/发布边界和失败记录。保留 Node Selection、Reference Toolkit、Semantic Criteria；V1 Semantic Test 仍是 Prompt + Criteria 软约束。Prompt 不解释 UDS、锁、`grader_runs` 或 SRT internals。
 
-- [ ] **Step 3: 完成 task.yaml 与隔离安装**
+- [x] **Step 3: 完成 task.yaml 与隔离安装**
 
 `workspace.repo_path` 指向 seed；`workspace.setup` 只在 CORAL 新建的每个 worktree `.venv` 中安装 seed 依赖和 task-local autoresearch CLI，不修改 `/home/wyr/greedy_lore/.venv` 或其他既有环境。`grader.setup` 在 `.coral/private/grader_venv` 安装 grader 与 autoresearch；`grader.args` 固定 trusted submission/artifact validator entrypoints。两个 Codex assignments 各 count 1；sandbox provider srt；network allowlist 只保留 Agent 必需域名，正式 evaluator offline。没有 control provider 配置。
 
-- [ ] **Step 4: 运行 asset/config 测试与 CORAL structural validation**
+- [x] **Step 4: 运行 asset/config 测试与 CORAL structural validation**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_handoff_assets.py tasks/greedylore_autoresearch/tests/test_contract_static.py -v`
 
@@ -727,7 +727,7 @@ Run: `uv run --frozen --extra dev coral validate tasks/greedylore_autoresearch -
 
 Expected: PASS；validation 使用 `coral_validation=true` 便宜路径，不启动正式 8,393/2,500-step 训练。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tasks/greedylore_autoresearch
