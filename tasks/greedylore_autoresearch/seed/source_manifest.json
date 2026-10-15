@@ -1,0 +1,487 @@
+{
+  "files": {
+    ".DS_Store": {
+      "seed_path": ".DS_Store",
+      "sha256": "925db89fbf0c8cf2cd651a491fe82e7d5865ef36100f8c53d37bf954ea29eebc"
+    },
+    ".agents/skills/experiment-results-reporting/SKILL.md": {
+      "seed_path": ".agents/skills/experiment-results-reporting/SKILL.md",
+      "sha256": "273c61b7470a24d7f17e253a541fe576bfa9fbe6031dd0c993ee36f4b3e89689"
+    },
+    ".agents/skills/experiment-results-reporting/references/concise-template.md": {
+      "seed_path": ".agents/skills/experiment-results-reporting/references/concise-template.md",
+      "sha256": "cf92251954353070c0288d65eb90c339db51bb3d35f63b76fe7380244b443e19"
+    },
+    ".agents/skills/greedy-lore-experiment-workflow/SKILL.md": {
+      "seed_path": ".agents/skills/greedy-lore-experiment-workflow/SKILL.md",
+      "sha256": "2ee72f1594f970b82f8295e0e82bab90a85da4ec68c35d1de6fc45b16fbd9539"
+    },
+    ".gitignore": {
+      "seed_path": ".gitignore",
+      "sha256": "2192b39bd5621304327852f707e18173067b01b8e80885ef6a2862212fc623ae"
+    },
+    "AGENTS.md": {
+      "seed_path": "docs/greedylore-agent-guidance.md",
+      "sha256": "5ab6a769fb4ea36237c414169b32cd00a4752777d62e7b78966a74545e2ee670"
+    },
+    "c4/.DS_Store": {
+      "seed_path": "c4/.DS_Store",
+      "sha256": "33f57e0de1f43923f81db0af152256affee107301b2374aa2645a2c5abd53af8"
+    },
+    "c4/__init__.py": {
+      "seed_path": "c4/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "c4/configs/llama_130m.json": {
+      "seed_path": "c4/configs/llama_130m.json",
+      "sha256": "21f33d6a29062d0ef28e12379f03eb9f0efc27fe9849e91bfca7d05334a561c6"
+    },
+    "c4/configs/llama_1b.json": {
+      "seed_path": "c4/configs/llama_1b.json",
+      "sha256": "81205ac273e999bcb0ead2a5bef82a9ac4b926e1e73d427ecf18353d794e1c95"
+    },
+    "c4/configs/llama_350m.json": {
+      "seed_path": "c4/configs/llama_350m.json",
+      "sha256": "c236d16168c108d29c051ca012d96ed1dee6f77d0fc47bb739a8650506687c6c"
+    },
+    "c4/configs/llama_60m_table_iv.json": {
+      "seed_path": "c4/configs/llama_60m_table_iv.json",
+      "sha256": "fc15fdbddb80c161f2c26f7a1f088e8cbfb8b9f15fe541ecd4e16c85ad550305"
+    },
+    "c4/pept_utils/args_utils.py": {
+      "seed_path": "c4/pept_utils/args_utils.py",
+      "sha256": "4faceaf7d520624fc7e4a30f7ac63df4385c3c6cb54f6123c09f3fad3943edb9"
+    },
+    "c4/pept_utils/c4_data.py": {
+      "seed_path": "c4/pept_utils/c4_data.py",
+      "sha256": "f8fb74127ef13a80a8f75b0e3f9278ed1117ee5d9ec35637ef0555c517cc0cc5"
+    },
+    "c4/pept_utils/dataloader.py": {
+      "seed_path": "c4/pept_utils/dataloader.py",
+      "sha256": "bd28a4e3bb9d466197926282ac411ea9cdd6750a51c8f61ab7f966a15ff0c99d"
+    },
+    "c4/pept_utils/metrics.py": {
+      "seed_path": "c4/pept_utils/metrics.py",
+      "sha256": "5e39ec23221824eae252f5c83766eaff07d976f1497f60c962c8952b444371b6"
+    },
+    "c4/pept_utils/modeling_llama.py": {
+      "seed_path": "c4/pept_utils/modeling_llama.py",
+      "sha256": "31155b9e724da6c9f355706b4e49b655f388c35906cc85734b76fefacfdeb799"
+    },
+    "c4/pept_utils/training_utils.py": {
+      "seed_path": "c4/pept_utils/training_utils.py",
+      "sha256": "6f7f3e946a4c3bcfbd0e86bd95c30a9dc5a7628d81e364d60da3860573a370a8"
+    },
+    "c4/run_llama_pretraining.py": {
+      "seed_path": "c4/run_llama_pretraining.py",
+      "sha256": "cadec315e66368e8e110c0406f57b0e65b87a3d4b39891755cad42434e5935ce"
+    },
+    "c4/scripts/queue_table_iv_130m_followups.bash": {
+      "seed_path": "c4/scripts/queue_table_iv_130m_followups.bash",
+      "sha256": "81384a2513640746097b71a9ce5d2ae9fb4e6e49b59dee8029438bc99deebd71"
+    },
+    "c4/scripts/queue_table_iv_130m_muon_lr.py": {
+      "seed_path": "c4/scripts/queue_table_iv_130m_muon_lr.py",
+      "sha256": "0528fa922a24b7e22d27537e0d1706d41f8130fb95c9be2431103e5f27e2f03c"
+    },
+    "c4/scripts/queue_table_iv_350m_muon.py": {
+      "seed_path": "c4/scripts/queue_table_iv_350m_muon.py",
+      "sha256": "cb56f163e2a4d8b37297750fc6b418fd32969ffb47095bd07e063dec2a606df2"
+    },
+    "c4/scripts/run_table_iv_130m.bash": {
+      "seed_path": "c4/scripts/run_table_iv_130m.bash",
+      "sha256": "b4260219769dcba2e58d97b180d2b6136f59097bed2c131281f85939b1d89238"
+    },
+    "c4/scripts/run_table_iv_60m_adam_after_muon.bash": {
+      "seed_path": "c4/scripts/run_table_iv_60m_adam_after_muon.bash",
+      "sha256": "adca98101ec2c6426b8d5de760c9fe96196faab1e73fc8b628af1ec97587bed1"
+    },
+    "c4/scripts/run_table_iv_60m_muon.bash": {
+      "seed_path": "c4/scripts/run_table_iv_60m_muon.bash",
+      "sha256": "46bbe0104ad247c446dd9067a369239ff9544b299ca81687789b2f4012c7a006"
+    },
+    "c4/scripts/run_table_v_adam_350m.py": {
+      "seed_path": "c4/scripts/run_table_v_adam_350m.py",
+      "sha256": "979b5d68842114647761eab9c7ef800cd32dd6b90fec9853f8b2ce3a0fc11a36"
+    },
+    "c4/scripts/run_table_v_muon.py": {
+      "seed_path": "c4/scripts/run_table_v_muon.py",
+      "sha256": "929c5c91b29429be3aeda8fc2f9b72222e664677e5358ea38aaa9addbc6b1ae9"
+    },
+    "c4/scripts/run_table_v_muon_setting_matrix.py": {
+      "seed_path": "c4/scripts/run_table_v_muon_setting_matrix.py",
+      "sha256": "9032c30c3e0b9cb08cdf1bd584455cf8310a37737f141d52dd7a369ce42eef1c"
+    },
+    "c4/scripts/run_table_v_muon_strict_blocking.py": {
+      "seed_path": "c4/scripts/run_table_v_muon_strict_blocking.py",
+      "sha256": "e3db3e15b0439f86f5191542dd3d2211e757dc4dcd896e9ef752521066549042"
+    },
+    "c4/scripts/sweep_table_iv_130m_lr.py": {
+      "seed_path": "c4/scripts/sweep_table_iv_130m_lr.py",
+      "sha256": "bfd89f61d3c7629477f4d299f206f631b87f0d7ca497060c44db478b417989c0"
+    },
+    "c4/table_v_timing.py": {
+      "seed_path": "c4/table_v_timing.py",
+      "sha256": "4683c8a6fddac36bce160438b48cec4afbe0d3155d46b481214d560b1a40a171"
+    },
+    "comm_hooks/__init__.py": {
+      "seed_path": "comm_hooks/__init__.py",
+      "sha256": "ad0dc69a87cc1d59b0183ee653e6694b3ea36a913836f7ff5b3ef8657bb06ea5"
+    },
+    "comm_hooks/ddp_zero_hook.py": {
+      "seed_path": "comm_hooks/ddp_zero_hook.py",
+      "sha256": "65e00ae49ba38fd8cb1c9d452327192a8786e4ba64fe2ca916b616fb7a9bbe88"
+    },
+    "comm_hooks/debugging_hooks.py": {
+      "seed_path": "comm_hooks/debugging_hooks.py",
+      "sha256": "233ea90be5fc6f37af113dec7537e9ccdcee5787abb097b5a49598b1faf20d62"
+    },
+    "comm_hooks/default_hooks.py": {
+      "seed_path": "comm_hooks/default_hooks.py",
+      "sha256": "1e738d139aa9a64e2173d913421651124ba560fcbec2ef36f0c87b8d7ed131d9"
+    },
+    "comm_hooks/fake_powersgd_hook.py": {
+      "seed_path": "comm_hooks/fake_powersgd_hook.py",
+      "sha256": "f9707c594b8f5b7c151382355c7a47d90dd740817d7314c87c45953739d9141e"
+    },
+    "comm_hooks/fake_subspace_hook.py": {
+      "seed_path": "comm_hooks/fake_subspace_hook.py",
+      "sha256": "094fe77718247d93da2b9f023a87848a2b0d572bae31b3d192f1589fd555d2be"
+    },
+    "comm_hooks/flex_quant_hooks.py": {
+      "seed_path": "comm_hooks/flex_quant_hooks.py",
+      "sha256": "4afbb27cf7f89d9d017e694565224d0e2f55a19a59932a17fc087a0063973a52"
+    },
+    "comm_hooks/lore_hook.py": {
+      "seed_path": "comm_hooks/lore_hook.py",
+      "sha256": "3f4b9fdb0a46537c46cf6d62fd6ca168c7489a11041fc6d8c61aab226cc57b85"
+    },
+    "comm_hooks/optimizer_overlap_hooks.py": {
+      "seed_path": "comm_hooks/optimizer_overlap_hooks.py",
+      "sha256": "81879bd2ce498871f10139c9630924a17187903ad188dac3317349fa9af3163b"
+    },
+    "comm_hooks/original_powerSGD_hook.py": {
+      "seed_path": "comm_hooks/original_powerSGD_hook.py",
+      "sha256": "01e13b37cca1c296fa99b5f982fb8940c65434d9f5a909c6c0785489bcd3a19c"
+    },
+    "comm_hooks/post_localSGD_hook.py": {
+      "seed_path": "comm_hooks/post_localSGD_hook.py",
+      "sha256": "cdfd4f59c518315b6061294d489c13d840c0996a6e4e7ed93276e31f1fa7b6a6"
+    },
+    "comm_hooks/powerSGD_hook.py": {
+      "seed_path": "comm_hooks/powerSGD_hook.py",
+      "sha256": "961f08598f6123922a4f3d4ddbbb3ce1fee04faf381338e1b344d5435d0ae883"
+    },
+    "comm_hooks/sparse_hook.py": {
+      "seed_path": "comm_hooks/sparse_hook.py",
+      "sha256": "f22d4430a8431cb0c4b6254f8627235ee4334ddf03aef9160b429c71bee58997"
+    },
+    "comm_hooks/subspace_hook.py": {
+      "seed_path": "comm_hooks/subspace_hook.py",
+      "sha256": "b340f97e01dcd7a160c5b12f80e0ef57c803f93ece59b15498f4f5f0c1e02b5f"
+    },
+    "comm_hooks/utils.py": {
+      "seed_path": "comm_hooks/utils.py",
+      "sha256": "c545b97391a764e6cf4f9e8e241a4aa08ed495cb63b7ce9ef5a2bfab1a9a2900"
+    },
+    "docs/results.md": {
+      "seed_path": "docs/results.md",
+      "sha256": "37bc55a344ef61205f709affebaaec8332f82b9fe0fa7d8859a56d0a30e119f1"
+    },
+    "docs/superpowers/plans/2026-09-15-greedy-lore-uv-environment.md": {
+      "seed_path": "docs/superpowers/plans/2026-09-15-greedy-lore-uv-environment.md",
+      "sha256": "16cbe96cc43a59b3455c95eed889ef1fd8013827556b325191153bb577099b0d"
+    },
+    "docs/superpowers/plans/2026-09-24-muon-integration.md": {
+      "seed_path": "docs/superpowers/plans/2026-09-24-muon-integration.md",
+      "sha256": "00203575edebab520681c7a25ce7d0264d7e602dbaccf74a8e9b7114ba1ecce0"
+    },
+    "docs/superpowers/specs/2026-09-24-muon-integration-design.md": {
+      "seed_path": "docs/superpowers/specs/2026-09-24-muon-integration-design.md",
+      "sha256": "7c2482571eda1019aa51da4ca903ae270c3b3e92cb57d84f07c0874f6d339e64"
+    },
+    "docs/table-iv-350m-muon-protocol.md": {
+      "seed_path": "docs/table-iv-350m-muon-protocol.md",
+      "sha256": "21790cbf810f47e243da3a63f48ee16b62ab0ccbbb00e46e9e054438a946d2fc"
+    },
+    "docs/table-v-adam-350m-protocol.md": {
+      "seed_path": "docs/table-v-adam-350m-protocol.md",
+      "sha256": "6b470dfa770e0685046f48c23acc6af82a0d189083fc09808cabbe79c843add7"
+    },
+    "docs/table-v-muon-protocol.md": {
+      "seed_path": "docs/table-v-muon-protocol.md",
+      "sha256": "073d3321be69bd83823b906f747e3c4fe182c0989910fcdc9421525c8c8b2f9f"
+    },
+    "docs/table-v-muon-setting-matrix.md": {
+      "seed_path": "docs/table-v-muon-setting-matrix.md",
+      "sha256": "f5fa6b8a5c5f392594378a8c76261cb4c774bba17dc9c03b16d88196abb3c583"
+    },
+    "docs/table-v-muon-strict-blocking.md": {
+      "seed_path": "docs/table-v-muon-strict-blocking.md",
+      "sha256": "91edc5a0a632ec7a06726287ff5c3c7297f302cf3446773193c42f7a7d429874"
+    },
+    "docs/worklog/M001-dense-muon-table-iv.md": {
+      "seed_path": "docs/worklog/M001-dense-muon-table-iv.md",
+      "sha256": "9aef3780edd176e655a71fed88739e9f130ac73e5b06811af0d354caeb0a27f8"
+    },
+    "docs/worklog/M002-greedylore-muon-table-iv.md": {
+      "seed_path": "docs/worklog/M002-greedylore-muon-table-iv.md",
+      "sha256": "727605e8cadc53233fcac1afb1319bf58ccd5255d2868d00d9e9f8a84653d8c1"
+    },
+    "docs/worklog/M003-dense-adamw-table-iv.md": {
+      "seed_path": "docs/worklog/M003-dense-adamw-table-iv.md",
+      "sha256": "9fdae1abcfcc9cc694679dce282a31a962b1585c46005cfe9cfde1e8e9558ae6"
+    },
+    "docs/worklog/M004-powersgd-muon-table-v.md": {
+      "seed_path": "docs/worklog/M004-powersgd-muon-table-v.md",
+      "sha256": "347b1501a0493caa113e75d1978462944cacc78c44d7a3abc9a7d21613b430b2"
+    },
+    "docs/worklog/M005-greedylore-adam-table-v.md": {
+      "seed_path": "docs/worklog/M005-greedylore-adam-table-v.md",
+      "sha256": "6e499515de4523a942c662ca3f6261f61efacae97e143f180198ffe4d33048fb"
+    },
+    "glue/local_glue.py": {
+      "seed_path": "glue/local_glue.py",
+      "sha256": "420155f79e0a667a9f399e8aaaa7aa575b2215d209de0b07529952516c8318a6"
+    },
+    "glue/run_glue_no_trainer_HF.py": {
+      "seed_path": "glue/run_glue_no_trainer_HF.py",
+      "sha256": "095faee69c005ab532837b61997554eb1610196e202c6b685f5c21bcbe42ba20"
+    },
+    "glue/scripts/run_table_iii_muon.bash": {
+      "seed_path": "glue/scripts/run_table_iii_muon.bash",
+      "sha256": "a402f1d0aff5802ae5ecf11c6044d2d34ba2b9c17af943abe1e532bcd3587f01"
+    },
+    "glue/utils.py": {
+      "seed_path": "glue/utils.py",
+      "sha256": "8b552bad52c2dadee9ee51f1a3b900e89b6aabc6ee904bf0925a59cf5354115d"
+    },
+    "optimizer/__init__.py": {
+      "seed_path": "optimizer/__init__.py",
+      "sha256": "101244a6e430bb4aa440a0c235b2cbac7a81b4fd18d9608b5a7f3830136d845b"
+    },
+    "optimizer/galore_adamw.py": {
+      "seed_path": "optimizer/galore_adamw.py",
+      "sha256": "2dd9d148c4bf72b9a3f81295c6ede8315754b1bd29e8ec87318edb5209fdc025"
+    },
+    "optimizer/galore_projector.py": {
+      "seed_path": "optimizer/galore_projector.py",
+      "sha256": "0cf522880e0fb92462ae93f44a2684311b077e05b1c8a8e49c165f72f7af8946"
+    },
+    "optimizer/golore_adamw.py": {
+      "seed_path": "optimizer/golore_adamw.py",
+      "sha256": "303e50ff1664cf75a002e11aeea7306fb55d0a3ff7b687f6191fbfb4737c10cd"
+    },
+    "optimizer/golore_projector.py": {
+      "seed_path": "optimizer/golore_projector.py",
+      "sha256": "f8b40db1cf0f06518fbfaf5fcbde20ea99a84303f0895d0fb31a7ef1fedfbb38"
+    },
+    "optimizer/muon.py": {
+      "seed_path": "optimizer/muon.py",
+      "sha256": "59fb1f15ab38a07cd46f37a54e58c8822d089eac44cd6bc48c3ea64ea211b4df"
+    },
+    "optimizer/muon_utils.py": {
+      "seed_path": "optimizer/muon_utils.py",
+      "sha256": "205ea1bd218503d126189335c5f640bc77e6912f47be90e903431a0a722eef5f"
+    },
+    "optimizer/onebit_adam.py": {
+      "seed_path": "optimizer/onebit_adam.py",
+      "sha256": "346cf70e77197d878be4ccd41980583fe70413bd008fab0252daaad1787a4ddb"
+    },
+    "optimizer/onebit_adammini.py": {
+      "seed_path": "optimizer/onebit_adammini.py",
+      "sha256": "a04bfcf4558e4b3804a20960fd5d59fd0c7ae8ec21280b0f7bc43e57b9cbfbaa"
+    },
+    "optimizer/onebit_utils.py": {
+      "seed_path": "optimizer/onebit_utils.py",
+      "sha256": "87c31107bcdfd711bdc4c4c1bf9b9bb52ccef2f821be50d5e5517468b858dd6f"
+    },
+    "optimizer/precond_adam.py": {
+      "seed_path": "optimizer/precond_adam.py",
+      "sha256": "841195b2c7bca33a2af931bff9b047a055c6b9c073e203367339253fe99677b6"
+    },
+    "pyproject.toml": {
+      "seed_path": "pyproject.toml",
+      "sha256": "05c7bd51cf0c4da92e94dd2ead6ba8f77909e20ca7f5f1acaed312122da33f0e"
+    },
+    "pytorch-cifar/LICENSE": {
+      "seed_path": "pytorch-cifar/LICENSE",
+      "sha256": "c1ae623a43452c53afe03e2e04c81aee0cb1e06e9274a06de8c60908c9d048f0"
+    },
+    "pytorch-cifar/README.md": {
+      "seed_path": "pytorch-cifar/README.md",
+      "sha256": "726ba7a920af7e4f457fa379f701a56ba2d5019dc7c12f4c3336853068c96291"
+    },
+    "pytorch-cifar/main.py": {
+      "seed_path": "pytorch-cifar/main.py",
+      "sha256": "b530247b67f1d7ea3221493b97332970f73d39bc13a298b0cae8533aecd71044"
+    },
+    "pytorch-cifar/models/__init__.py": {
+      "seed_path": "pytorch-cifar/models/__init__.py",
+      "sha256": "52e08c404afcaffc95c5d38ea4f2850f3ba66742fcac3409464ebf61a35ff3f3"
+    },
+    "pytorch-cifar/models/densenet.py": {
+      "seed_path": "pytorch-cifar/models/densenet.py",
+      "sha256": "617c3a85b760e5606d75e45453ee3c90f7eedea4bf0070ffafc6ed4424249290"
+    },
+    "pytorch-cifar/models/dla.py": {
+      "seed_path": "pytorch-cifar/models/dla.py",
+      "sha256": "110e9b7317f74d51a1c859bb672ff9e9ca7016a389b7abf0491228fb528c0d59"
+    },
+    "pytorch-cifar/models/dla_simple.py": {
+      "seed_path": "pytorch-cifar/models/dla_simple.py",
+      "sha256": "c7454baa2ed7e71406275f4232f29e2b4d4a9034cc9cc3d724e65839f62beea1"
+    },
+    "pytorch-cifar/models/dpn.py": {
+      "seed_path": "pytorch-cifar/models/dpn.py",
+      "sha256": "d99b63939f23dd1cbc18c1432de2b8f63a7d4248729f45d31e9092d7919c1b37"
+    },
+    "pytorch-cifar/models/efficientnet.py": {
+      "seed_path": "pytorch-cifar/models/efficientnet.py",
+      "sha256": "58adf6107ffbe8cf073d03da21c804e38fde8593695542ef7ae5e7c32d86f333"
+    },
+    "pytorch-cifar/models/googlenet.py": {
+      "seed_path": "pytorch-cifar/models/googlenet.py",
+      "sha256": "165d505255db8e9f38d1dc041a7f1541904aa2f229aff725262ce00bbf2cdd70"
+    },
+    "pytorch-cifar/models/lenet.py": {
+      "seed_path": "pytorch-cifar/models/lenet.py",
+      "sha256": "bb87a7053653351d346f3b69a7f3713567cd9a9fa74a5d3454af9f5e24b867db"
+    },
+    "pytorch-cifar/models/mobilenet.py": {
+      "seed_path": "pytorch-cifar/models/mobilenet.py",
+      "sha256": "3f6ef2c6371289b50908f1b60c4c533c025ec120294e802861c373fe853761ff"
+    },
+    "pytorch-cifar/models/mobilenetv2.py": {
+      "seed_path": "pytorch-cifar/models/mobilenetv2.py",
+      "sha256": "7e5ee0d8d9ecd923fb9acb28499d44554d57091f5f81375e1a731d8624d928b0"
+    },
+    "pytorch-cifar/models/pnasnet.py": {
+      "seed_path": "pytorch-cifar/models/pnasnet.py",
+      "sha256": "f6421290b066d8e1ea9d983def4c390431c8679a73c58faabf67dd6bee34cecf"
+    },
+    "pytorch-cifar/models/preact_resnet.py": {
+      "seed_path": "pytorch-cifar/models/preact_resnet.py",
+      "sha256": "3cb4ae02d7c419dc3b9adccc47617e0310805c3cfa07dfee1b73816a5ff2a04a"
+    },
+    "pytorch-cifar/models/regnet.py": {
+      "seed_path": "pytorch-cifar/models/regnet.py",
+      "sha256": "a694137f828af1ba5eca57a28f8d8c59c5932b5361bd86b33a241c3cd0013c32"
+    },
+    "pytorch-cifar/models/resnet.py": {
+      "seed_path": "pytorch-cifar/models/resnet.py",
+      "sha256": "7bcbe6bba6544645a5da6037bf3e5ddf90e97d0b3ef4183be90e17a0443b4510"
+    },
+    "pytorch-cifar/models/resnext.py": {
+      "seed_path": "pytorch-cifar/models/resnext.py",
+      "sha256": "da94de29613d495384ec8ae4a24031149798e1a541b96bca0d7323da6a70b098"
+    },
+    "pytorch-cifar/models/senet.py": {
+      "seed_path": "pytorch-cifar/models/senet.py",
+      "sha256": "d790bd677eec6ff126c686731624f8634361d7d21742ddeea0aa37cad72f6071"
+    },
+    "pytorch-cifar/models/shufflenet.py": {
+      "seed_path": "pytorch-cifar/models/shufflenet.py",
+      "sha256": "49e88cb68accd64351bf4bcccc53ce8de7f9a45b8d9c0c36e5d534f6b2a91390"
+    },
+    "pytorch-cifar/models/shufflenetv2.py": {
+      "seed_path": "pytorch-cifar/models/shufflenetv2.py",
+      "sha256": "5fa2c82d48ee9feec75c44126f75bfe33050c63f8b1e626251635b9c86678f25"
+    },
+    "pytorch-cifar/models/vgg.py": {
+      "seed_path": "pytorch-cifar/models/vgg.py",
+      "sha256": "20f9a5ef048ef91c3144ecbb22708347d48299ad419bbfc122b74ceed89d3016"
+    },
+    "pytorch-cifar/queue_paper_muon.bash": {
+      "seed_path": "pytorch-cifar/queue_paper_muon.bash",
+      "sha256": "30832784f86a5564b287c00200c7115389664c4e7b8d5ceda5254f1b35ea9860"
+    },
+    "pytorch-cifar/run_paper_muon.bash": {
+      "seed_path": "pytorch-cifar/run_paper_muon.bash",
+      "sha256": "88ecf017c6c17a1cedb4084891d7dea20b8debd645a018fe7843bb5542c1e9ba"
+    },
+    "pytorch-cifar/train_ddp.py": {
+      "seed_path": "pytorch-cifar/train_ddp.py",
+      "sha256": "200bf8a161acae0b21b20b0e2e4076a84843ad1569091791b5641dec734f0b80"
+    },
+    "pytorch-cifar/utils.py": {
+      "seed_path": "pytorch-cifar/utils.py",
+      "sha256": "ac04aa21d03d96c4273b779ff9de0956cd37d073d93cfcf1e1f92e9bb5f17b20"
+    },
+    "readme.md": {
+      "seed_path": "readme.md",
+      "sha256": "43dd70d8854612e187d7e7573221296ebc0ba9da86998258d9d17f22bf21b161"
+    },
+    "requirements.txt": {
+      "seed_path": "requirements.txt",
+      "sha256": "f9e3ad4b7a6b4ea4745e4c192668cc31e84f2a3426bd503dba12636974191a2d"
+    },
+    "tests/__init__.py": {
+      "seed_path": "tests/__init__.py",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    "tests/test_c4_130m_muon_lr_queue.py": {
+      "seed_path": "tests/test_c4_130m_muon_lr_queue.py",
+      "sha256": "b8a239c027c158fac44ff25490ed619f2ca8d7cb1d7a3ca8cc695e4fe2384351"
+    },
+    "tests/test_c4_130m_sweep.py": {
+      "seed_path": "tests/test_c4_130m_sweep.py",
+      "sha256": "b871a8a9151e75229d079ae6dfee0dcf0455c9f5ad6365296d90bb93a5c9b6a1"
+    },
+    "tests/test_c4_350m_queue.py": {
+      "seed_path": "tests/test_c4_350m_queue.py",
+      "sha256": "0120b942ab2cffce19a40c12260dae1a0f0b71f93525600139b620739d3d7f45"
+    },
+    "tests/test_c4_dataloader.py": {
+      "seed_path": "tests/test_c4_dataloader.py",
+      "sha256": "c45b7395d416edb4f633664ee5c9b683deb6d51a203112e76eaf5d6cf75cb0fa"
+    },
+    "tests/test_c4_local_data.py": {
+      "seed_path": "tests/test_c4_local_data.py",
+      "sha256": "62664dce703e02bc7702ccca051432d20e45ac242df20c2cb4326da54ff0b9bd"
+    },
+    "tests/test_c4_model_setup.py": {
+      "seed_path": "tests/test_c4_model_setup.py",
+      "sha256": "33833ba2244effdab200a2bd4765f74b031b3d7e7611778898ae0e1b51403891"
+    },
+    "tests/test_cifar_ddp.py": {
+      "seed_path": "tests/test_cifar_ddp.py",
+      "sha256": "f622cf0af93f63057da43b580e44e443708af42d8c98417070597e5c30fa3a12"
+    },
+    "tests/test_glue_cli.py": {
+      "seed_path": "tests/test_glue_cli.py",
+      "sha256": "6486e9bae3a0dfa747e62ed4db637d224354b3b38670225d0c7822639b152a0e"
+    },
+    "tests/test_local_glue.py": {
+      "seed_path": "tests/test_local_glue.py",
+      "sha256": "3540568eb18569afd41fbad26c3e34decccd8dc76fd14ed058c704d1d9072b96"
+    },
+    "tests/test_muon.py": {
+      "seed_path": "tests/test_muon.py",
+      "sha256": "f86eba47570bb43c7ef7f74322ee40ece9f0349741f46fd8c92f0edc07645079"
+    },
+    "tests/test_muon_entrypoints.py": {
+      "seed_path": "tests/test_muon_entrypoints.py",
+      "sha256": "8aa315029001a41351326eae23bf87e3b49eaba4335a88db40830289b55f68fa"
+    },
+    "tests/test_subspace_table_iv.py": {
+      "seed_path": "tests/test_subspace_table_iv.py",
+      "sha256": "cbec3edb959fcebb2a3cfea11a32a843edbd524625b80c6f2199d3b0a1dfb432"
+    },
+    "tests/test_table_v_timing.py": {
+      "seed_path": "tests/test_table_v_timing.py",
+      "sha256": "099800fefba8b97517fcd9ffc71db80d93b6cfa293ccc339362aa5a9bb7562d4"
+    },
+    "uv.lock": {
+      "seed_path": "uv.lock",
+      "sha256": "cf9f13fedc1a51a2c5383806737f07e0a5cdebcc3df4348134050b1ac163b6b8"
+    }
+  },
+  "locked_coral_commit": "0123dfb939b35228cf2c1fde224cd0561e727408",
+  "relocations": {
+    "AGENTS.md": "docs/greedylore-agent-guidance.md"
+  },
+  "schema_version": 1,
+  "source_commit": "d2c38bc2062e06fdfd73185c508e7cc652933de6",
+  "source_repository": "/home/wyr/greedy_lore"
+}

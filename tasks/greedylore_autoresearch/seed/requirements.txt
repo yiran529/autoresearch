@@ -1,0 +1,9 @@
+transformers
+accelerate
+datasets
+evaluate
+wandb
+loguru
+cupy
+scipy
+scikit-learn

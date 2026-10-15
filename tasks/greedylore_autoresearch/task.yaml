@@ -1,0 +1,33 @@
+task:
+  name: "GreedyLoRE AutoResearch V1"
+  description: |
+    Improve the pinned GreedyLoRE seed while preserving the fixed quality gate
+    and optimizing the fixed four-GPU efficiency protocol. Formal evaluation is
+    controlled by taskdata/eval_contract.yaml and is published only through the
+    trusted evaluation broker.
+
+grader:
+  entrypoint: "greedylore_autoresearch_grader.grader:Grader"
+  setup:
+    - "uv pip install -e ./grader"
+    - "uv pip install -e ./autoresearch"
+  timeout: 0
+  direction: maximize
+  parallel:
+    max_workers: 1
+  private:
+    - "taskdata/eval_contract.yaml"
+    - "taskdata/dense_references"
+
+agents:
+  count: 2
+  runtime: codex
+
+workspace:
+  results_dir: "./results"
+  repo_path: "./tasks/greedylore_autoresearch/seed"
+
+run:
+  verbose: false
+  ui: false
+  session: local
