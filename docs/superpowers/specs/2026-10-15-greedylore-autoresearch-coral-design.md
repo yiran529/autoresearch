@@ -424,9 +424,9 @@ reliability。Researcher/Engineer 的稳定角色来自各自 role file。
 3. 有 Analysis 而无对应 Review 时只启动独立 fresh Reviewer session；
 4. 两者都有效时幂等返回；`--revise` 才分配下一版本并保留旧版本。
 
-Analyzer/Reviewer 使用不同 scratch 和独立 `codex exec --ephemeral`，不复用 session、thread 或对话。Review decision 为 `pass|warning|fail`；`fail` 表示 Review 已完成但不表示通过，也不触发自动修订。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
+Analyzer/Reviewer 使用不同 scratch 和独立 `codex exec --ephemeral`，不复用 session、thread 或对话。宿主从本地 Git object 按 manifest 中的固定 SHA 物化 session-local code snapshots，并把 manifest 中已封存的 evidence 文件复制到 session-local evidence snapshot；不向 session 暴露实时 Agent checkout、可增长的共享 log root 或宿主 Artifact 绝对路径。Review decision 为 `pass|warning|fail`；`fail` 表示 Review 已完成但不表示通过，也不触发自动修订。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
 
-Engineering Analysis 不要求已有 Engineering Attempt。它在开始时固定该 Node 当时已有的全部 Engineering Attempts（允许空列表）及各自正式 run/log/comparability 引用，并与 Review 共享同一个 evidence manifest hash；后续 Attempt 不会悄然改变已发布版本。没有时只绑定唯一 Research SHA、Research evaluation 和现有 profiling/evidence，不得声称未测量的提升。Analyzer/Reviewer 不能修改候选代码、历史 Artifact 或 raw evaluation，analyze 也不重跑正式训练。完成/恢复状态只由校验通过的版本化 Artifact 推导，不保存额外 workflow state。
+Research Analysis 使用不含 Engineering rows 的 Research-only evaluation snapshot。Engineering Analysis 不要求已有 Engineering Attempt；它在开始时固定该 Node 当时已有的全部 Engineering Attempts（允许空列表）及各自正式 run/log/comparability 引用，并与 Review 共享同一个 evidence manifest hash；后续 Attempt、后补日志或目录新增文件不会悄然改变已发布版本。没有时只绑定唯一 Research SHA、Research evaluation 和现有 profiling/evidence，不得声称未测量的提升。Analyzer/Reviewer 不能修改候选代码、历史 Artifact 或 raw evaluation，analyze 也不重跑正式训练。完成/恢复状态只由校验通过的版本化 Artifact 推导，不保存额外 workflow state。
 
 ## 13. Node artifact 与重建
 

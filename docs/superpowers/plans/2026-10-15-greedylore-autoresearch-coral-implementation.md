@@ -583,6 +583,7 @@ git commit -m "feat: add artifact-driven node workflow"
 **Files:**
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py`
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/validation.py`
+- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
 - Create: `tasks/greedylore_autoresearch/autoresearch/schemas/analysis.schema.json`
 - Create: `tasks/greedylore_autoresearch/autoresearch/schemas/review.schema.json`
 - Create: `tasks/greedylore_autoresearch/tests/test_analysis_cli.py`
@@ -591,7 +592,7 @@ git commit -m "feat: add artifact-driven node workflow"
 **Interfaces:**
 - Produces: `analyze(node_id, mode, revise=False) -> AnalysisResult`；`resolve_evidence(node_id, mode) -> EvidenceBundle`；`run_fresh_codex(prompt, read_roots, output_schema, scratch) -> Path`；CLI `autoresearch analyze --node Nxxx --mode research|engineering [--revise]`。完成状态只由已校验、已发布的 Artifact 推导。
 
-- [ ] **Step 1: 写幂等、缺 Review 恢复、revision 与零 Engineering Attempt 测试**
+- [x] **Step 1: 写幂等、固定快照恢复、revision 与零 Engineering Attempt 测试**
 
 ```python
 def test_review_failure_only_retries_missing_review(fake_codex, node):
@@ -622,17 +623,17 @@ def test_revise_keeps_v1_and_publishes_v2(node):
     assert second.analysis_version == second.review_version == 2
 ```
 
-- [ ] **Step 2: 运行测试并确认轻量 CLI 缺失**
+- [x] **Step 2: 运行测试并确认轻量 CLI 缺失**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_analysis_cli.py tasks/greedylore_autoresearch/tests/test_analysis_recovery.py -v`
 
 Expected: FAIL，evidence resolver、fresh runners 和 Artifact 恢复逻辑尚不存在。
 
-- [ ] **Step 3: 从 Node 与 evaluation Artifact 固定 evidence**
+- [x] **Step 3: 从 Node 与 evaluation Artifact 固定 evidence**
 
-Research mode 绑定唯一 terminal Research SHA、contract hash、evaluation version 和 Node spec。Engineering mode 绑定相同 Research anchor，并从 `evaluation.md` 与原始 Attempts/logs **按提交时间固定该 Node 的全部 Engineering Attempts**，逐项保存 `commit_sha`、正式 efficiency run IDs/原始日志及可比性状态；`engineering_attempts: []` 表示没有工程提交。启动时固定完整 evidence manifest/hash，Analysis/Review 均引用该版本；后续新增工程 Attempt 不得悄悄改变已发布 Analysis 的证据集。没有 Engineering Attempt 时只分析 Research 实现、Research evaluation 和已有 profiling evidence，不得声称未测量的性能提升。analyze 不重跑正式训练。
+启动时先用 Task 6 deterministic rebuild 通过受限入口刷新 `evaluation.md`。Research mode 只绑定唯一 terminal Research SHA（包括如实记录的失败结果）、contract hash、Node spec，并生成不含 Engineering rows 的 deterministic evaluation snapshot；`engineering_attempts` 必须为空。Engineering mode 绑定相同 Research anchor，并从 `evaluation.md` 与原始 Attempts/logs **按提交时间固定该 Node 的全部 Engineering Attempts**，逐项保存 `commit_sha`、正式 efficiency run IDs/原始日志及可比性状态；`engineering_attempts: []` 表示没有工程提交。宿主把 evaluation 文本、spec hash、contract、attempt 列表以及实际存在的原始证据内容 hash 封装为完整 canonical evidence manifest；缺失的失败日志显式记录为 `missing`，不阻止分析。Analysis/Review 均引用该固定版本；每个 session 只把 manifest 中状态为 present 的具体证据文件复制到独立 `scratch/evidence`，不暴露可增长的 Node 目录或整个 eval log root。后续新增工程 Attempt、后补 missing 日志、目录新增文件或刷新可变 `evaluation.md` 都不会进入已发布 Analysis 的证据集。没有 Engineering Attempt 时只分析 Research 实现、Research evaluation 和已有 profiling evidence，不得声称未测量的性能提升。analyze 不重跑正式训练。
 
-- [ ] **Step 4: 实现两个独立 fresh Codex session**
+- [x] **Step 4: 实现两个独立 fresh Codex session**
 
 ```bash
 codex exec --ephemeral --ignore-user-config --sandbox read-only \
@@ -640,23 +641,23 @@ codex exec --ephemeral --ignore-user-config --sandbox read-only \
   --output-schema SCHEMA --output-last-message OUTPUT -
 ```
 
-Analyzer 与 Reviewer 使用不同 scratch 和全新命令；只读固定 checkout、已发布 evidence 和 references；不得 `resume`、复用 session/thread 或继承对话。
+Analyzer 与 Reviewer 使用不同 scratch 和全新命令；宿主从本地 Git object 按 Research SHA 及该 Analysis 固定的 Engineering SHAs 物化 `scratch/code/<sha>`，并只暴露这些 code snapshots、`scratch/evidence` 与 references。不得传入实时 Agent checkout（其中可能含共享 Artifact symlink）、原始宿主 Artifact 路径，不得 `resume`、复用 session/thread 或继承对话。
 
-- [ ] **Step 5: 校验并通过受限入口发布**
+- [x] **Step 5: 校验并通过受限入口发布**
 
-Analysis 匹配 node、mode、Research SHA、**固定且可为空的 Engineering Attempt 列表及各 run 引用**、evaluation version、evidence manifest hash 和 evidence paths；Review 必须引用完全相同的证据快照及 Analysis version，包含 workflow/evidence checks、issues/actions 和唯一 `decision: pass|warning|fail`。scratch 输出完整校验后才调用 `publish_artifact`；版本分配与 canonical target 检查在 trusted lock 内完成。
+Analyzer/Reviewer 的 schema 只要求模型生成分析正文；宿主在发布前注入并校验 node、mode、Research SHA、**固定且可为空的 Engineering Attempt 列表及各 run 引用**、evaluation snapshot/version、完整 evidence manifest/hash 和 evidence paths，避免模型重复输出大段可信元数据。Review 必须引用完全相同的证据快照及 Analysis version，包含 workflow/evidence checks、issues/actions 和唯一 `decision: pass|warning|fail`。scratch 输出完整校验后才调用 `publish_artifact`；版本号从已发布 Artifact 单调选择候选；trusted publication lock 与 immutable target 保证同一版本只有一个内容成功，并发冲突显式失败后重试。canonical target 检查仍在 trusted lock 内完成。
 
-- [ ] **Step 6: 实现 Artifact 驱动恢复规则**
+- [x] **Step 6: 实现 Artifact 驱动恢复规则**
 
-无 Analysis 时运行 Analyzer；有 Analysis、无 Review 时只运行 Reviewer；两者有效时幂等返回。`fail` 是 terminal Review 但不是通过，也不自动修订；`--revise` 才创建下一版本并保留历史。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
+无 Analysis 时运行 Analyzer；有 Analysis、无 Review 时先重算并校验已发布 manifest，再只运行 Reviewer。Reviewer 使用 Analysis 内嵌的 immutable evaluation snapshot 和独立 `scratch/evidence` 快照，不用可能已刷新的 `evaluation.md` 或整个共享 log root；已记录为 present 的原始证据内容变化会使恢复失败，已记录为 missing 的证据即使后来出现也不会加入旧版本。两者有效时幂等返回。`fail` 是 terminal Review 但不是通过，也不自动修订；`--revise` 才创建下一版本并保留历史。Research Review pass/warning 后即可扩展 Child，不等待 Engineering Analysis。
 
-- [ ] **Step 7: 运行 Analysis / Reviewer 测试**
+- [x] **Step 7: 运行 Analysis / Reviewer 测试**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_analysis_cli.py tasks/greedylore_autoresearch/tests/test_analysis_recovery.py -v`
 
-Expected: PASS；证明 session 分离、artifact-only recovery、零 Engineering Attempt、多个 Engineering Attempt 的完整固定历史及 Analysis/Review 引用一致。
+Expected: PASS；证明 session 分离、fixed-SHA code snapshot、artifact-only recovery、Research/Engineering 证据边界、immutable evaluation 快照、原始证据内容 hash、零 Engineering Attempt、多个 Engineering Attempt 的完整固定历史及 Analysis/Review 引用一致。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tasks/greedylore_autoresearch/autoresearch tasks/greedylore_autoresearch/tests

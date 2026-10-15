@@ -120,6 +120,13 @@ def _parser() -> argparse.ArgumentParser:
         "refresh-evaluation", help="rebuild and publish one Node evaluation"
     )
     refresh.add_argument("--node", required=True)
+
+    analyze_parser = commands.add_parser(
+        "analyze", help="publish a fixed-evidence Analysis and independent Review"
+    )
+    analyze_parser.add_argument("--node", required=True)
+    analyze_parser.add_argument("--mode", choices=("research", "engineering"), required=True)
+    analyze_parser.add_argument("--revise", action="store_true")
     return parser
 
 
@@ -131,6 +138,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         result = _create_node(args)
     elif args.command == "refresh-evaluation":
         result = _refresh_evaluation(args)
+    elif args.command == "analyze":
+        from autoresearch.analysis import analyze
+
+        analysis = analyze(args.node, args.mode, revise=args.revise)
+        result = {
+            "analysis_version": analysis.analysis_version,
+            "review_version": analysis.review_version,
+            "decision": analysis.decision,
+            "analysis_path": str(analysis.analysis_path),
+            "review_path": str(analysis.review_path),
+        }
     else:
         raise SystemExit("unsupported command")
     print(json.dumps(result, indent=2))
