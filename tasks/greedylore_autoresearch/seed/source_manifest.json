@@ -1,4 +1,22 @@
 {
+  "adaptations": {
+    "c4/run_llama_pretraining.py": {
+      "reason": "offline tokenizer and formal quality evidence schema",
+      "seed_sha256": "e18f6ff19ab5f165a4d9a08e08dc09673636ad502be21945816cc42b61f67e1a"
+    },
+    "c4/table_v_timing.py": {
+      "reason": "formal timing identity and hardware evidence schema",
+      "seed_sha256": "dca2c721748ad1d08542e431943e3ef47d1f7b8033c9cadead6cb1f69f4813db"
+    },
+    "tests/test_c4_model_setup.py": {
+      "reason": "quality entrypoint regression coverage",
+      "seed_sha256": "20cb03d3baeee9423b6e22af55b5b0dc5a96a38bc47e6944bd764b283911ae91"
+    },
+    "tests/test_table_v_timing.py": {
+      "reason": "formal timing evidence regression coverage",
+      "seed_sha256": "ba5f48b3c3691fe8f4202188f7e19769f059e2e217a2233e7359709e54f6d689"
+    }
+  },
   "files": {
     ".DS_Store": {
       "seed_path": ".DS_Store",

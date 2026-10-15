@@ -443,6 +443,35 @@ def test_submit_eval_tune_flag_marks_pending():
             sys.path.pop(0)
 
 
+def test_grader_receives_trusted_submission_metadata():
+    with tempfile.TemporaryDirectory() as d:
+        repo = _init_repo_and_coral(Path(d))
+        _write_grader(
+            repo,
+            "from coral.grader.task_grader import TaskGrader\n"
+            "class Grader(TaskGrader):\n"
+            "    def evaluate(self):\n"
+            "        metadata = self.tasks[0].metadata\n"
+            "        return 1.0 if metadata.get('mode') == 'research' and metadata.get('node_id') == 'N001' else 0.0\n",
+        )
+        (repo / "main.py").write_text("print('formal')\n")
+        pending = submit_eval(
+            message="formal", agent_id="agent-1", workdir=str(repo), wait=False
+        )
+        pending.metadata.update(
+            mode="research", node_id="N001", node_type="research",
+            base_commit="a" * 40, quality_anchor=None, contract_hash="contract",
+            submission_hash="submission",
+        )
+        write_attempt(repo / ".coral", pending)
+
+        process_pending_once(repo / ".coral")
+
+        final = read_attempt(repo / ".coral", pending.commit_hash)
+        assert final is not None
+        assert final.score == 1.0
+
+
 def test_grader_preserves_tune_class_through_finalization():
     """Successfully-graded tune attempt keeps budget_class=tune (not overwritten to 'real')."""
     with tempfile.TemporaryDirectory() as d:

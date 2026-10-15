@@ -120,6 +120,12 @@ class HardwareContract:
 
 
 @dataclass(frozen=True)
+class EfficiencyPlan:
+    cells: Mapping[str, Mapping[str, Any]]
+    run_order: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True)
 class EvalContract:
     path: Path
     contract_hash: str
@@ -127,6 +133,47 @@ class EvalContract:
     data: DataPaths
     hardware: HardwareContract
     raw: Mapping[str, Any]
+
+    @property
+    def quality(self) -> Mapping[str, Mapping[str, Any]]:
+        common = {
+            "contract_hash": self.contract_hash,
+            "c4_path": str(self.data.c4_path),
+            "tokenizer_path": str(self.data.tokenizer_path),
+            "workers": self.raw["data"]["dataloader_workers"],
+            "seed": self.raw["training"]["seed"],
+            "max_length": self.raw["training"]["sequence_length"],
+            "gpu_count": self.hardware.gpu_count,
+            "compressor": self.raw["compressor"],
+        }
+        return _freeze({
+            name: {"name": name, **dict(workload), **common}
+            for name, workload in self.raw["quality"]["workloads"].items()
+        })
+
+    @property
+    def efficiency(self) -> EfficiencyPlan:
+        raw = self.raw["efficiency"]
+        common = {
+            key: value for key, value in raw.items()
+            if key not in {"cells", "run_order"}
+        }
+        shared = {
+            **common,
+            "contract_hash": self.contract_hash,
+            "c4_path": str(self.data.c4_path),
+            "tokenizer_path": str(self.data.tokenizer_path),
+            "workers": self.raw["data"]["dataloader_workers"],
+            "seed": self.raw["training"]["seed"],
+            "max_length": self.raw["training"]["sequence_length"],
+            "gpu_count": self.hardware.gpu_count,
+            "compressor": self.raw["compressor"],
+        }
+        cells = _freeze({
+            name: {"name": name, **dict(cell), **shared}
+            for name, cell in raw["cells"].items()
+        })
+        return EfficiencyPlan(cells, tuple(tuple(row) for row in raw["run_order"]))
 
     @classmethod
     def load(cls, path: str | Path, *, validation: bool = False) -> EvalContract:

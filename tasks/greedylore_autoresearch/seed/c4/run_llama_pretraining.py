@@ -72,11 +72,34 @@ def wandb_run_url(run):
     return run.url
 
 
+def build_quality_result(
+    *, final_eval_loss, final_eval_tokens, best_eval_loss, best_eval_step,
+    update_step, args, world_size, wandb_link,
+):
+    return {
+        "status": "completed",
+        "final_eval_loss": final_eval_loss,
+        "final_eval_ppl": math.exp(final_eval_loss),
+        "final_eval_tokens": final_eval_tokens,
+        "best_eval_loss": best_eval_loss,
+        "best_eval_ppl": math.exp(best_eval_loss),
+        "best_eval_step": best_eval_step,
+        "update_step": update_step,
+        "dtype": args.dtype,
+        "optimizer": args.optimizer,
+        "world_size": world_size,
+        "contract_hash": args.contract_hash,
+        "wandb_link": wandb_link,
+    }
+
+
 def parse_args(args):
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--model_config", type=str, required=True)
     parser.add_argument("--dataset_path", type=str, default='./c4/c4_en')
+    parser.add_argument("--tokenizer_path", type=str, default="t5-base")
+    parser.add_argument("--contract_hash", type=str, default="")
     parser.add_argument("--use_hf_model", default=False, action="store_true")
     parser.add_argument("--continue_from", type=str, default=None)
     parser.add_argument("--batch_size", type=int, required=True)
@@ -263,7 +286,9 @@ def main(args):
 
     # it doesn't matter which tokenizer we use, because we train from scratch
     # T5 tokenizer was trained on C4 and we are also training on C4, so it's a good choice
-    tokenizer = AutoTokenizer.from_pretrained("t5-base", model_max_length=args.max_length)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.tokenizer_path, model_max_length=args.max_length, local_files_only=True
+    )
 
     def preprocess_batched(batch):
         batch = tokenizer(
@@ -609,16 +634,16 @@ def main(args):
         logger.info(f"Final eval loss: {total_loss}")
         
         if args.output_dir is not None :
-            all_results = {
-                "final_eval_loss": total_loss,
-                "final_eval_ppl": math.exp(total_loss),
-                "final_eval_tokens": evaluated_on_tokens,
-                "best_eval_loss": best_eval_loss,
-                "best_eval_ppl": math.exp(best_eval_loss),
-                "best_eval_step": best_eval_step,
-                "update_step": update_step,
-                "wandb_link": wandb_run_url(wandb.run)
-            }
+            all_results = build_quality_result(
+                final_eval_loss=total_loss,
+                final_eval_tokens=evaluated_on_tokens,
+                best_eval_loss=best_eval_loss,
+                best_eval_step=best_eval_step,
+                update_step=update_step,
+                args=args,
+                world_size=world_size,
+                wandb_link=wandb_run_url(wandb.run),
+            )
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump(all_results, f)
 

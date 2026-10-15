@@ -33,6 +33,52 @@ def summarize_timing(rank_elapsed, rank_steps, expected_steps):
     }
 
 
+def build_timing_result(gathered, args, parameter_count, run_metadata=None):
+    if any(
+        not math.isfinite(loss)
+        for rank in gathered
+        for loss in rank["losses"]
+    ):
+        raise ValueError("Nonfinite loss during measurement")
+    result = summarize_timing(
+        [rank["elapsed"] for rank in gathered],
+        [rank["steps"] for rank in gathered],
+        args.measured_iterations,
+    )
+    result.update(
+        status="completed", optimizer=args.optimizer, compressor=args.compressor,
+        dtype=args.dtype, contract_hash=args.contract_hash, repetition=args.repetition,
+        strict_blocking_communication=args.strict_blocking_communication,
+        bucket_layout_recorded=bool(gathered and "bucket_counts" in gathered[0]),
+        parameter_count=parameter_count, warmup_iterations=args.warmup_iterations,
+        first_measured_update=args.warmup_iterations + 1,
+        last_measured_update=args.warmup_iterations + args.measured_iterations,
+        rank_losses=[rank["losses"] for rank in gathered],
+        rank_peak_allocated_bytes=[rank["peak_allocated_bytes"] for rank in gathered],
+        rank_peak_reserved_bytes=[rank["peak_reserved_bytes"] for rank in gathered],
+        gpu_uuids=[value for value in args.gpu_uuids.split(",") if value],
+        topology_fingerprint=args.topology_fingerprint,
+        numa_nodes=[None if value == "none" else int(value)
+                    for value in args.numa_nodes.split(",") if value],
+    )
+    if args.strict_blocking_communication:
+        result.update(summarize_blocking_hook_timing(
+            [rank["hook_step_seconds"] for rank in gathered],
+            [rank["bucket_counts"] for rank in gathered],
+            [rank["bucket_bytes"] for rank in gathered],
+            args.measured_iterations,
+        ))
+    elif gathered and "bucket_counts" in gathered[0]:
+        result.update(summarize_bucket_layout(
+            [rank["bucket_counts"] for rank in gathered],
+            [rank["bucket_bytes"] for rank in gathered],
+            args.measured_iterations,
+        ))
+    if run_metadata:
+        result.update(run_metadata)
+    return result
+
+
 def summarize_blocking_hook_timing(
     rank_hook_step_seconds, rank_bucket_counts, rank_bucket_bytes, expected_steps
 ):
@@ -304,6 +350,11 @@ def parse_args():
     parser.add_argument('--grad_clipping', type=float, default=1.)
     parser.add_argument('--optimizer', choices=['adamw', 'muon'], default='muon')
     parser.add_argument('--output_dir', required=True)
+    parser.add_argument('--contract_hash', default='')
+    parser.add_argument('--repetition', type=int, default=0)
+    parser.add_argument('--gpu_uuids', default='')
+    parser.add_argument('--topology_fingerprint', default='')
+    parser.add_argument('--numa_nodes', default='')
     parser.add_argument('--dry-run', action='store_true')
     from comm_hooks.utils import add_comm_hook_args
     from optimizer import add_muon_args
@@ -454,29 +505,14 @@ def main():
     gathered = [None] * world_size
     dist.all_gather_object(gathered, local_result)
     if rank == 0:
-        result = summarize_timing([r['elapsed'] for r in gathered], [r['steps'] for r in gathered], args.measured_iterations)
-        result.update(status='completed', optimizer=args.optimizer, compressor=args.compressor,
-                      strict_blocking_communication=args.strict_blocking_communication,
-                      bucket_layout_recorded=timing_hook_state is not None,
-                      parameter_count=parameter_count, warmup_iterations=args.warmup_iterations,
-                      first_measured_update=args.warmup_iterations + 1,
-                      last_measured_update=args.warmup_iterations + args.measured_iterations,
-                      rank_losses=[r['losses'] for r in gathered],
-                      rank_peak_allocated_bytes=[r['peak_allocated_bytes'] for r in gathered],
-                      rank_peak_reserved_bytes=[r['peak_reserved_bytes'] for r in gathered])
-        if args.strict_blocking_communication:
-            result.update(summarize_blocking_hook_timing(
-                [r['hook_step_seconds'] for r in gathered],
-                [r['bucket_counts'] for r in gathered],
-                [r['bucket_bytes'] for r in gathered],
-                args.measured_iterations,
-            ))
-        elif timing_hook_state is not None:
-            result.update(summarize_bucket_layout(
-                [r['bucket_counts'] for r in gathered],
-                [r['bucket_bytes'] for r in gathered],
-                args.measured_iterations,
-            ))
+        result = build_timing_result(
+            gathered, args, parameter_count,
+            run_metadata={
+                "code_sha256": config["code_sha256"],
+                "nccl_environment": config["nccl_environment"],
+                "git_head": config["git_head"],
+            },
+        )
         (output / 'all_results.json').write_text(json.dumps(result, indent=2) + '\n')
         print(f'TIMING_COMPLETED mean_iteration_seconds={result["mean_iteration_seconds"]:.6f}', flush=True)
     dist.destroy_process_group()

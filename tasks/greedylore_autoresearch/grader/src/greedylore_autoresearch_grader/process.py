@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -20,6 +21,11 @@ class ProcessSpec:
     env_allowlist: tuple[str, ...]
     timeout: float | None
     terminate_grace: float = 15.0
+    cwd: Path | None = None
+
+    @property
+    def argv(self) -> tuple[str, ...]:
+        return self.command
 
 
 @dataclass(frozen=True)
@@ -45,12 +51,15 @@ def run_process_group(spec: ProcessSpec) -> ProcessResult:
     timed_out = False
     cleanup: list[str] = []
     process: subprocess.Popen[bytes] | None = None
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("NCCL_")}
+    environment.update(spec.env)
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
         process = subprocess.Popen(
             list(spec.command),
             stdout=stdout,
             stderr=stderr,
-            env={**os.environ, **dict(spec.env)},
+            env=environment,
+            cwd=spec.cwd,
             start_new_session=True,
         )
         try:
@@ -63,15 +72,20 @@ def run_process_group(spec: ProcessSpec) -> ProcessResult:
                 cleanup.append("SIGTERM")
             except ProcessLookupError:
                 pass
-            try:
-                process.wait(timeout=spec.terminate_grace)
-            except subprocess.TimeoutExpired:
+            deadline = time.monotonic() + spec.terminate_grace
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                     cleanup.append("SIGKILL")
                 except ProcessLookupError:
                     pass
-                process.wait()
+            process.wait()
     with stderr_path.open("rb") as stream:
         stream.seek(0, os.SEEK_END)
         size = stream.tell()

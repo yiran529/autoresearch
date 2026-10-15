@@ -212,6 +212,12 @@ git commit -m "feat: allow tasks to disable heartbeat"
 - Create: `tests/test_retry_attempt.py`
 - Modify: `tests/test_hooks.py`
 - Modify: `tests/test_grader_daemon.py`
+- Modify: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/contract.py`
+- Modify: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/process.py`
+- Modify: `tasks/greedylore_autoresearch/seed/source_manifest.json`
+- Modify: `tasks/greedylore_autoresearch/tests/conftest.py`
+- Modify: `tasks/greedylore_autoresearch/tests/test_process.py`
+- Modify: `tasks/greedylore_autoresearch/tests/test_seed_manifest.py`
 - Create: `tasks/greedylore_autoresearch/autoresearch/pyproject.toml`
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/client.py`
 - Create: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/submission.py`
@@ -417,6 +423,10 @@ git commit -m "feat: add deterministic evaluation primitives"
 **Files:**
 - Modify: `tasks/greedylore_autoresearch/seed/c4/run_llama_pretraining.py`
 - Modify: `tasks/greedylore_autoresearch/seed/c4/table_v_timing.py`
+- Modify: `tasks/greedylore_autoresearch/seed/tests/test_c4_model_setup.py`
+- Modify: `tasks/greedylore_autoresearch/seed/tests/test_table_v_timing.py`
+- Modify: `coral/grader/daemon.py`
+- Modify: `tests/test_grader_daemon.py`
 - Create: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/quality.py`
 - Create: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/efficiency.py`
 - Create: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/grader.py`
@@ -428,7 +438,7 @@ git commit -m "feat: add deterministic evaluation primitives"
 **Interfaces:**
 - Produces: `build_quality_command(profile, candidate, output, gpus) -> ProcessSpec`；`build_timing_command(cell, repetition, candidate, output, gpus) -> ProcessSpec`；`Grader(TaskGrader).evaluate() -> ScoreBundle`。
 
-- [ ] **Step 1: 写精确命令和 grader mode 的失败测试**
+- [x] **Step 1: 写精确命令和 grader mode 的失败测试**
 
 ```python
 def test_130m_quality_preserves_full_schedule_prefix(contract):
@@ -444,44 +454,44 @@ def test_efficiency_matrix_is_only_130m_adamw(contract):
     assert all(subsequence(cmd, ["--optimizer", "adamw", "--lr", "0.0025"]) for cmd in commands)
 ```
 
-- [ ] **Step 2: 运行命令测试并确认失败**
+- [x] **Step 2: 运行命令测试并确认失败**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_quality_commands.py tasks/greedylore_autoresearch/tests/test_efficiency_commands.py tasks/greedylore_autoresearch/tests/test_grader.py -v`
 
 Expected: FAIL，runner/grader 尚不存在。
 
-- [ ] **Step 3: 给训练入口增加显式离线 tokenizer**
+- [x] **Step 3: 给训练入口增加显式离线 tokenizer**
 
 `run_llama_pretraining.py` 新增 `--tokenizer_path`，训练和 validation 都调用 `AutoTokenizer.from_pretrained(args.tokenizer_path, local_files_only=True, model_max_length=args.max_length)`；结果 JSON 增加 `status=completed`、dtype、optimizer、world size、contract hash。不得改变 compressor 或训练数学逻辑。
 
-- [ ] **Step 4: 收紧 timing 结果 schema**
+- [x] **Step 4: 收紧 timing 结果 schema**
 
 保留当前 normal async hook；正式 runner 总是传 `--record_bucket_layout` 且绝不传 strict blocking。结果必须包含 measured steps 400、slowest-rank mean、全部 rank elapsed、bucket layouts、peak memory、GPU UUID 与 topo fingerprint、NUMA/NCCL env、代码 hash 和 loss finite 检查。
 
-- [ ] **Step 5: 实现 quality runner**
+- [x] **Step 5: 实现 quality runner**
 
 60M 命令固定 AdamW、8,393 updates、batch 128/card、activation checkpointing、BF16；130M 固定 Muon matrix/scalar LR 0.01/0.001、2,500/20,000 schedule、batch 128/card、activation checkpointing、BF16。两者 world size 4、seed 1243、data/tokenizer 固定路径、`WANDB_MODE=disabled`。
 
-- [ ] **Step 6: 实现 efficiency runner**
+- [x] **Step 6: 实现 efficiency runner**
 
 运行顺序固定为 round 1 BF16→FP32、round 2 FP32→BF16；每次重新 torchrun；两个 cell 都是 130M AdamW、batch 1/card、SHM env、101+400、bucket 1024 MiB、compression start 100。
 
-- [ ] **Step 7: 实现 Research/Engineering/validation 三种 grader 路径**
+- [x] **Step 7: 实现 Research/Engineering/validation 三种 grader 路径**
 
 `Task.metadata["coral_validation"]` 为 true 时只运行 3-step CPU/parser 或短 GPU smoke。Formal `submission.yaml.mode=research` 运行两项 quality 加两项 efficiency；engineering 只运行两项 efficiency并要求有效 `quality_anchor`。Named scores 包含两项 loss ratio/pass、两项 timing mean/spread、两项 speedup、quality gate 和 efficiency score；metadata 写 `failure_class`、contract hash、GPU topology/UUID comparability verdict 与 evidence paths；efficiency 分数只有与 dense reference 确认可比时才有效。
 
-- [ ] **Step 8: 运行 unit grader tests 和 GreedyLoRE 既有 timing tests**
+- [x] **Step 8: 运行 unit grader tests 和 GreedyLoRE 既有 timing tests**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_quality_commands.py tasks/greedylore_autoresearch/tests/test_efficiency_commands.py tasks/greedylore_autoresearch/tests/test_grader.py -v`
 
-Run: `/home/wyr/greedy_lore/.venv/bin/python -m pytest tasks/greedylore_autoresearch/seed/tests/test_table_v_timing.py -v`
+Run from `tasks/greedylore_autoresearch/seed`: `PYTHONPATH=. /home/wyr/greedy_lore/.venv/bin/python -m unittest tests.test_c4_model_setup tests.test_table_v_timing`
 
 Expected: PASS；不启动完整训练。
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
-git add tasks/greedylore_autoresearch/seed/c4 tasks/greedylore_autoresearch/grader tasks/greedylore_autoresearch/tests
+git add coral/grader/daemon.py tests/test_grader_daemon.py docs/superpowers/plans/2026-10-15-greedylore-autoresearch-coral-implementation.md tasks/greedylore_autoresearch/seed tasks/greedylore_autoresearch/grader tasks/greedylore_autoresearch/tests
 git commit -m "feat: add GreedyLoRE quality and timing grader"
 ```
 

@@ -36,3 +36,13 @@ def test_timeout_cleans_entire_process_group(tmp_path):
     else:
         # A killed child may remain briefly as a zombie, but must not be running.
         assert Path(f"/proc/{child}/stat").read_text().split()[2] == "Z"
+
+
+def test_process_drops_ambient_nccl_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("NCCL_ALGO", "Ring")
+    code = "import os; print(os.environ.get('NCCL_ALGO', 'unset')); print(os.environ['NCCL_SHM_DISABLE'])"
+    result = run_process_group(ProcessSpec(
+        (sys.executable, "-c", code), tmp_path,
+        {"NCCL_SHM_DISABLE": "0"}, ("NCCL_SHM_DISABLE",), 5,
+    ))
+    assert Path(result.stdout_log).read_text().splitlines() == ["unset", "0"]

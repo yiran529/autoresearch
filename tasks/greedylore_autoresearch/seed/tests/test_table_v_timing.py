@@ -6,11 +6,68 @@ from types import SimpleNamespace
 import torch
 
 import c4.table_v_timing as timing
-from c4.table_v_timing import build_timing_optimizer, summarize_timing
+from c4.table_v_timing import (
+    build_timing_optimizer,
+    build_timing_result,
+    summarize_timing,
+)
 from c4.scripts.run_table_v_adam_350m import cells
 
 
 class TimingSummaryTests(unittest.TestCase):
+
+    def test_result_records_contract_hardware_and_finite_losses(self):
+        args = SimpleNamespace(
+            measured_iterations=2, warmup_iterations=1, optimizer="adamw",
+            compressor="top_subspace", strict_blocking_communication=False,
+            contract_hash="contract", repetition=1, dtype="bfloat16",
+            gpu_uuids="GPU-a,GPU-b", topology_fingerprint="topology",
+            numa_nodes="0,0",
+        )
+        gathered = [
+            dict(elapsed=2.0, steps=[1.0, 1.0], losses=[2.0, 1.9],
+                 peak_allocated_bytes=10, peak_reserved_bytes=12,
+                 bucket_counts=[1, 1], bucket_bytes=[[100], [100]]),
+            dict(elapsed=2.2, steps=[1.1, 1.1], losses=[2.1, 2.0],
+                 peak_allocated_bytes=11, peak_reserved_bytes=13,
+                 bucket_counts=[1, 1], bucket_bytes=[[100], [100]]),
+        ]
+
+        result = build_timing_result(
+            gathered, args, parameter_count=123,
+            run_metadata={
+                "code_sha256": {"c4/table_v_timing.py": "abc"},
+                "nccl_environment": {"NCCL_SHM_DISABLE": "0"},
+            },
+        )
+
+        self.assertEqual(result["measured_steps"], 2)
+        self.assertEqual(result["contract_hash"], "contract")
+        self.assertEqual(result["repetition"], 1)
+        self.assertEqual(result["dtype"], "bfloat16")
+        self.assertEqual(result["gpu_uuids"], ["GPU-a", "GPU-b"])
+        self.assertEqual(result["topology_fingerprint"], "topology")
+        self.assertEqual(result["numa_nodes"], [0, 0])
+        self.assertEqual(result["rank_peak_allocated_bytes"], [10, 11])
+        self.assertEqual(result["code_sha256"]["c4/table_v_timing.py"], "abc")
+        self.assertEqual(result["nccl_environment"]["NCCL_SHM_DISABLE"], "0")
+        self.assertEqual(result["observed_bucket_bytes"], [[100]])
+
+    def test_result_rejects_nonfinite_loss(self):
+        args = SimpleNamespace(
+            measured_iterations=1, warmup_iterations=0, optimizer="adamw",
+            compressor="top_subspace", strict_blocking_communication=False,
+            contract_hash="contract", repetition=0, dtype="float32",
+            gpu_uuids="GPU-a", topology_fingerprint="topology", numa_nodes="0",
+        )
+        gathered = [dict(
+            elapsed=1.0, steps=[1.0], losses=[float("nan")],
+            peak_allocated_bytes=1, peak_reserved_bytes=2,
+            bucket_counts=[1], bucket_bytes=[[100]],
+        )]
+        with self.assertRaisesRegex(ValueError, "Nonfinite loss"):
+            build_timing_result(gathered, args, parameter_count=1)
+
     def test_uses_slowest_rank_continuous_wall_clock(self):
         result = summarize_timing([10.0, 12.0, 11.0, 10.5], [[1., 2.], [2., 3.], [1., 1.], [2., 2.]], 2)
         self.assertEqual(result['mean_iteration_seconds'], 6.0)

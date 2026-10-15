@@ -433,6 +433,14 @@ def _grade_one(
         name=config.task.name,
         description=config.task.description,
         metadata={
+            **{
+                key: attempt.metadata[key]
+                for key in (
+                    "mode", "node_id", "node_type", "base_commit",
+                    "quality_anchor", "contract_hash", "submission_hash",
+                )
+                if key in attempt.metadata
+            },
             "budget_class": budget_class,
             "agent_id": attempt.agent_id,
             "commit_hash": attempt.commit_hash,

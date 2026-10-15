@@ -39,8 +39,20 @@ def test_manifest_hashes_match_source_and_seed() -> None:
         seed_hash = hashlib.sha256(
             (SEED_DIR / record["seed_path"]).read_bytes()
         ).hexdigest()
-        assert record["sha256"] == source_hash == seed_hash
+        assert record["sha256"] == source_hash
+        adaptation = manifest["adaptations"].get(source_relative)
+        if adaptation is None:
+            assert seed_hash == source_hash
+        else:
+            assert adaptation["seed_sha256"] == seed_hash
+            assert adaptation["reason"]
 
+    assert set(manifest["adaptations"]) == {
+        "c4/run_llama_pretraining.py",
+        "c4/table_v_timing.py",
+        "tests/test_c4_model_setup.py",
+        "tests/test_table_v_timing.py",
+    }
     assert manifest["relocations"] == {
         "AGENTS.md": "docs/greedylore-agent-guidance.md"
     }
