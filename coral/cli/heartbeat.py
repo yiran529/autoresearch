@@ -22,6 +22,24 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         _cmd_heartbeat_show(args)
 
 
+_DISABLED_MESSAGE = "Heartbeat is disabled by agents.heartbeat_enabled=false."
+
+
+def _heartbeat_is_disabled(coral_dir: Path) -> bool:
+    config_path = Path(coral_dir) / "config.yaml"
+    if not config_path.exists():
+        return False
+    from coral.config import CoralConfig
+
+    return not CoralConfig.from_yaml(config_path).agents.heartbeat_enabled
+
+
+def _reject_disabled_heartbeat(coral_dir: Path) -> None:
+    if _heartbeat_is_disabled(coral_dir):
+        print(_DISABLED_MESSAGE, file=sys.stderr)
+        sys.exit(1)
+
+
 def _require_heartbeat_write_scope(coral_dir, island_id: str | int | None) -> None:
     """Reject ambiguous heartbeat mutations from aggregate multi-island views."""
     coral_dir = Path(coral_dir)
@@ -46,6 +64,9 @@ def _cmd_heartbeat_show(args: argparse.Namespace) -> None:
         getattr(args, "task", None),
         getattr(args, "run", None),
     )
+    if _heartbeat_is_disabled(coral_dir):
+        print(_DISABLED_MESSAGE)
+        return
     agent_id = read_agent_id()
 
     local_actions = read_agent_heartbeat(coral_dir, agent_id, island_id=island_id)
@@ -100,6 +121,7 @@ def _cmd_heartbeat_set(args: argparse.Namespace) -> None:
         getattr(args, "task", None),
         getattr(args, "run", None),
     )
+    _reject_disabled_heartbeat(coral_dir)
     _require_heartbeat_write_scope(coral_dir, island_id)
     agent_id = read_agent_id()
     name = args.name
@@ -224,6 +246,7 @@ def _cmd_heartbeat_remove(args: argparse.Namespace) -> None:
         getattr(args, "task", None),
         getattr(args, "run", None),
     )
+    _reject_disabled_heartbeat(coral_dir)
     _require_heartbeat_write_scope(coral_dir, island_id)
     agent_id = read_agent_id()
     name = args.name
@@ -268,6 +291,7 @@ def _cmd_heartbeat_reset(args: argparse.Namespace) -> None:
         getattr(args, "task", None),
         getattr(args, "run", None),
     )
+    _reject_disabled_heartbeat(coral_dir)
     _require_heartbeat_write_scope(coral_dir, island_id)
     agent_id = read_agent_id()
 

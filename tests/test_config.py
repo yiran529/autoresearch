@@ -607,3 +607,21 @@ def test_preset_runtime_in_preset_model_in_task():
     )
     assert config.agents.runtime == "opencode"
     assert config.agents.model == "claude/claude-sonnet-4-6"
+
+
+def test_heartbeat_disabled_preserves_empty_actions_and_roundtrips():
+    data = {
+        "task": {"name": "t", "description": "d"},
+        "agents": {
+            "heartbeat_enabled": False,
+            "heartbeat": [],
+            "reflect_every": 3,
+            "heartbeat_every": 5,
+        },
+    }
+
+    config = CoralConfig.from_dict(data)
+
+    assert config.agents.heartbeat_enabled is False
+    assert config.agents.heartbeat == []
+    assert config.to_dict()["agents"]["heartbeat_enabled"] is False

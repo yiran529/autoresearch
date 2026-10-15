@@ -238,6 +238,7 @@ class AgentConfig:
     # faster than the prior 3600s while still being well above legitimate quiet
     # periods (long tool calls, grader queue waits — the latter is exempted).
     timeout: int = 1200
+    heartbeat_enabled: bool = True
     heartbeat: list[HeartbeatActionConfig] = field(
         default_factory=lambda: [
             HeartbeatActionConfig(name="reflect", every=1),
@@ -670,8 +671,11 @@ def _preprocess(data: dict[str, Any]) -> dict[str, Any]:
     heartbeat_raw = agents_data.pop("heartbeat", None)
     old_reflect = agents_data.pop("reflect_every", None)
     old_heartbeat = agents_data.pop("heartbeat_every", None)
+    heartbeat_enabled = agents_data.get("heartbeat_enabled", True)
 
-    if heartbeat_raw is not None:
+    if not heartbeat_enabled:
+        agents_data["heartbeat"] = []
+    elif heartbeat_raw is not None:
         specified = {h["name"] for h in heartbeat_raw}
         for dflt in AgentConfig().heartbeat:
             if dflt.name not in specified:

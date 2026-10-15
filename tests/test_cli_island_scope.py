@@ -983,3 +983,75 @@ def test_heartbeat_reset_only_resets_worktree_island(
         (multi_island_layout / "islands" / "0" / "heartbeat" / "_global.json").read_text()
     )["actions"]
     assert any(a["name"] == "keep-me" for a in island0), "island 0's custom action was clobbered"
+
+
+def _write_disabled_heartbeat_config(coral_dir):
+    (coral_dir / "config.yaml").write_text(
+        textwrap.dedent(
+            """
+            task:
+              name: t
+              description: heartbeat disabled
+            agents:
+              heartbeat_enabled: false
+              heartbeat: []
+            """
+        ).strip()
+    )
+
+
+def test_heartbeat_show_reports_disabled(monkeypatch, tmp_path, capsys):
+    _write_disabled_heartbeat_config(tmp_path)
+    monkeypatch.setattr(
+        heartbeat_module,
+        "find_coral_dir_and_island",
+        lambda task=None, run=None: (tmp_path, None),
+    )
+    monkeypatch.setattr(heartbeat_module, "read_agent_id", lambda: "agent-1")
+
+    _cmd_heartbeat_show(argparse.Namespace(task=None, run=None))
+
+    assert capsys.readouterr().out.strip() == (
+        "Heartbeat is disabled by agents.heartbeat_enabled=false."
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        (
+            _cmd_heartbeat_set,
+            argparse.Namespace(
+                name="custom",
+                every=1,
+                prompt="custom prompt",
+                is_global=False,
+                trigger=None,
+                epsilon=None,
+                task=None,
+                run=None,
+            ),
+        ),
+        (
+            _cmd_heartbeat_remove,
+            argparse.Namespace(name="custom", task=None, run=None),
+        ),
+        (_cmd_heartbeat_reset, argparse.Namespace(task=None, run=None)),
+    ],
+)
+def test_heartbeat_mutations_reject_disabled_run(monkeypatch, tmp_path, capsys, command, args):
+    _write_disabled_heartbeat_config(tmp_path)
+    monkeypatch.setattr(
+        heartbeat_module,
+        "find_coral_dir_and_island",
+        lambda task=None, run=None: (tmp_path, None),
+    )
+    monkeypatch.setattr(heartbeat_module, "read_agent_id", lambda: "agent-1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        command(args)
+
+    assert exc_info.value.code == 1
+    assert capsys.readouterr().err.strip() == (
+        "Heartbeat is disabled by agents.heartbeat_enabled=false."
+    )

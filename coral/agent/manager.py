@@ -243,7 +243,7 @@ class AgentManager:
         # In multi-island mode, every island gets its own _global.json so
         # cadence reads the per-island eval_count for "global" actions like
         # consolidate.
-        if self.config.islands.count > 1:
+        if self.config.agents.heartbeat_enabled and self.config.islands.count > 1:
             for island_id in {s.island_id for s in self.specs if s.island_id is not None}:
                 if not read_global_heartbeat(self.paths.coral_dir, island_id=island_id):
                     write_global_heartbeat(
@@ -252,7 +252,7 @@ class AgentManager:
                         island_id=island_id,
                     )
                     logger.info(f"Seeded global heartbeat config for island {island_id}")
-        else:
+        elif self.config.agents.heartbeat_enabled:
             if not read_global_heartbeat(self.paths.coral_dir):
                 write_global_heartbeat(self.paths.coral_dir, default_global_actions(self.config))
                 logger.info("Seeded global heartbeat config")
@@ -667,7 +667,9 @@ class AgentManager:
             apply_runtime_mounts(worktree_path, mounts, self._mounts_base_dir())
 
         # Seed local heartbeat config from task YAML if not already present
-        if not read_agent_heartbeat(self.paths.coral_dir, agent_id, island_id=island_id):
+        if self.config.agents.heartbeat_enabled and not read_agent_heartbeat(
+            self.paths.coral_dir, agent_id, island_id=island_id
+        ):
             write_agent_heartbeat(
                 self.paths.coral_dir,
                 agent_id,
@@ -1419,6 +1421,8 @@ class AgentManager:
         """Build a HeartbeatRunner by merging local + global heartbeat configs."""
         from coral.agent.heartbeat import HeartbeatAction
 
+        if not self.config.agents.heartbeat_enabled:
+            return HeartbeatRunner([])
         if self.paths is None:
             raise RuntimeError("run paths are not initialized; start_all() has not run")
         shared_dir = self._runtime_for(agent_id).shared_dir_name

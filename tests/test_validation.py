@@ -694,3 +694,27 @@ def test_cmd_validate_preserves_static_validation_error_output(tmp_path, capsys)
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("Validation errors:\n  - No grader configured.")
+
+
+def test_run_validation_marks_baseline_task(tmp_path, monkeypatch):
+    task_dir = _make_task(tmp_path, '  entrypoint: "p.g:G"')
+    captured = {}
+
+    class FakeGrader:
+        async def grade(self, codebase_path, tasks):
+            captured.update(tasks[0].metadata)
+            return ScoreBundle(scores={}, aggregated=1.0)
+
+    monkeypatch.setattr(
+        "coral.workspace.grader_env.setup_grader_env",
+        lambda coral_dir, grader_config, config_dir: None,
+    )
+    monkeypatch.setattr(
+        "coral.grader.loader.load_grader",
+        lambda config, coral_dir: FakeGrader(),
+    )
+
+    result = task_validation.run_validation(task_dir)
+
+    assert result.successful
+    assert captured == {"coral_validation": True}

@@ -398,3 +398,41 @@ def test_parse_options_plateau_defaults_and_overrides():
     assert parse_options("plateau", None) == PlateauOptions(epsilon=0.0)
     assert parse_options("plateau", {}) == PlateauOptions(epsilon=0.0)
     assert parse_options("plateau", {"epsilon": 0.01}) == PlateauOptions(epsilon=0.01)
+
+
+def test_disabled_hub_writers_do_not_restore_protected_actions(tmp_path):
+    from coral.hub.heartbeat import (
+        read_agent_heartbeat,
+        read_global_heartbeat,
+        write_agent_heartbeat,
+        write_global_heartbeat,
+    )
+
+    write_agent_heartbeat(
+        tmp_path,
+        "agent-1",
+        [],
+        heartbeat_enabled=False,
+    )
+    write_global_heartbeat(tmp_path, [], heartbeat_enabled=False)
+
+    assert read_agent_heartbeat(tmp_path, "agent-1") == []
+    assert read_global_heartbeat(tmp_path) == []
+
+
+def test_disabled_manager_runner_has_no_actions_without_runtime_state():
+    from coral.agent.manager import AgentManager
+    from coral.config import CoralConfig
+
+    config = CoralConfig.from_dict(
+        {
+            "task": {"name": "t", "description": "d"},
+            "agents": {"heartbeat_enabled": False},
+        }
+    )
+    manager = AgentManager.__new__(AgentManager)
+    manager.config = config
+
+    runner = manager._get_heartbeat_runner("agent-1")
+
+    assert runner.actions == []

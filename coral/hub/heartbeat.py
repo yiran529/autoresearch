@@ -148,6 +148,8 @@ def write_agent_heartbeat(
     agent_id: str,
     actions: list[dict],
     island_id: str | int | None = None,
+    *,
+    heartbeat_enabled: bool = True,
 ) -> None:
     """Write local heartbeat actions for an agent.
 
@@ -155,6 +157,9 @@ def write_agent_heartbeat(
     """
     coral_dir = Path(coral_dir)
     _require_write_scope(coral_dir, island_id)
+    if not heartbeat_enabled:
+        _write_actions(_heartbeat_path(coral_dir, agent_id, island_id), actions)
+        return
     present = {a["name"] for a in actions}
     for name in PROTECTED_LOCAL:
         if name not in present:
@@ -211,6 +216,8 @@ def write_global_heartbeat(
     coral_dir: Path,
     actions: list[dict],
     island_id: str | int | None = None,
+    *,
+    heartbeat_enabled: bool = True,
 ) -> None:
     """Write global heartbeat actions.
 
@@ -218,6 +225,9 @@ def write_global_heartbeat(
     """
     coral_dir = Path(coral_dir)
     _require_write_scope(coral_dir, island_id)
+    if not heartbeat_enabled:
+        _write_actions(_heartbeat_path(coral_dir, _GLOBAL_ID, island_id), actions)
+        return
     present = {a["name"] for a in actions}
     for name in PROTECTED_GLOBAL:
         if name not in present:

@@ -373,6 +373,7 @@ async def run_validation_async(
             id=config.task.name,
             name=config.task.name,
             description=config.task.description,
+            metadata={"coral_validation": True},
         )
         target = "seed code" if has_seed else "empty workspace"
         emit("baseline", "started", f"Running grader against {target}...")
