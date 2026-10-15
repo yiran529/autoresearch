@@ -491,16 +491,16 @@ grader 为每个失败设置一个分类：
 - quality 10% 边界（等于 1.10 通过，超过失败）；
 - timing 两次算术平均、relative spread 和两 cell geometric mean；
 - incomplete/nonfinite/mismatched environment 拒绝；
-- efficiency 使用同 GPU UUID 集合或验证通过的 topology/NUMA/NCCL 等效对照；
-- Node 唯一 Research SHA，并发 reservation；
-- infra-only same-SHA retry、受保护 retry 上限、append-only run history 与 finalize/retry 并发；
-- 同 UID Agent 身份伪造、PID 复用与跨 Worktree SHA 提交被拒；
-- `evaluation.md` 删除后可完全重建；
-- Analysis/Review 幂等、partial recovery、`--revise` 版本化；
+- Node 唯一 Research SHA；
+- infra-only same-SHA retry、retry 上限和最小 append-only run history；
+- `evaluation.md` 删除后可从 Attempts/eval logs 重建；
+- Analysis/Review 幂等、缺 Review 恢复、`--revise` 版本化和 reviewer decision；
 - heartbeat disabled 后 start/resume 均无动作；
-- SRT deny-write、symlink、绝对路径和 sibling write 尝试；
+- SRT 对正式记录 deny-write、own-worktree 正常写权限、sibling worktree 非直接可写；
 - fixed trusted endpoint 不接受路径、任意命令、未知 operation 或未校验 Artifact；
 - grader process cleanup 与 GPU lock。
+
+V1 测试以正常科研流程中的可靠性与误操作隔离为目标。低概率并发竞态、复杂路径攻击矩阵和 GPU topology 等效性的专项测试延后；这不改变正式 Evaluation Contract、GPU allocator、环境指纹记录或分布式进程清理要求。
 
 ### 16.2 分阶段 smoke
 
@@ -511,7 +511,7 @@ grader 为每个失败设置一个分类：
 5. 动态预留 4 GPU、短 warmup + 3 measured step 的两 timing cell smoke，确认 SHM 和异步
    Future；
 6. 缩短版 60M/130M quality smoke，确认 final result schema；
-7. S1–S15 dummy acceptance；
+7. 核心 dummy acceptance；
 8. dense calibration；
 9. Root N000 正式 evaluation。
 
@@ -519,18 +519,19 @@ grader 为每个失败设置一个分类：
 grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；grader daemon
 中的真实 Attempt 没有该标记，始终执行 committed submission 对应的正式 contract。
 
-### 16.3 Handoff 验收映射
+### 16.3 V1 核心验收映射
 
-- S1/S2：trusted submit + retry history；
-- S3/S9/S11：Artifact 驱动 analyze 的幂等、missing-review recovery 和 revision；
-- S4/S5：child 引用固定 Analysis/Review 版本；
-- S6/S7：evaluation rebuild 覆盖多 Engineering/零 Engineering；
-- S8：Reviewer fixtures；
-- S10：GPU lock、max_workers=1、async formal timing、diagnostic 隔离；
-- S12：Root diff allowlist 和 S0/A0 双记录；
-- S13：reference prompts 和 evidence validation；
-- S14：selection rationale schema，不实现自动 selector；
-- S15：SRT + trusted endpoint adversarial filesystem tests。
+- trusted submit 保证单 Node 唯一 Research SHA；
+- retry 仅接受同 SHA 的 infra failure，并保留运行历史；
+- Evaluation Artifact 可由 CORAL Attempts/eval logs 恢复；
+- Analysis/Review 支持幂等、缺 Review 恢复、显式 revision 和 pass/warning/fail；
+- Child 固定引用创建时使用的 Analysis/Review 版本；
+- Engineering 可有零或多个正式 Attempt，Evidence 保持完整；
+- SRT 允许 Agent 正常写 own worktree，并阻止其误改正式记录和 sibling worktree；
+- trusted endpoint 保持固定 operation 和服务端校验；
+- GPU lock、max_workers、异步 formal timing、Root diff、Reference Evidence 和 Node Selection Rationale 继续由其所属 Task 的测试与 smoke 覆盖。
+
+低概率并发测试、复杂 symlink/absolute/dotdot 攻击测试和 GPU topology 等效性专项测试不属于 V1 核心 acceptance，后续按真实故障证据补充，不预建通用安全或工作流框架。
 
 ## 17. 实施顺序
 
@@ -541,8 +542,8 @@ grader 在 validation 时只跑便宜 smoke，不把它写成正式 Attempt；gr
 5. 实现极简 Node Artifact、evaluation rebuild 和幂等 Root bootstrap；
 6. 部署 prompts/references/templates；
 7. 实现 Artifact 驱动的 Analyzer/Reviewer fresh-session 发布；
-8. 完成 dummy S1–S15；
-9. 安装/验证 SRT 主机依赖并做权限攻击测试；
+8. 完成核心 dummy acceptance；
+9. 验证 SRT 主机依赖、正式记录写隔离及正常 Agent 命令兼容性；
 10. 做动态 4 GPU smoke、dense calibration、Root N000 正式 eval。
 
 实施时每完成一个可独立验证的大 step 就创建一个 Git commit。测试和检查在
@@ -558,7 +559,7 @@ V1 完成需要同时满足：
 - 锁定 CORAL 与 GreedyLoRE 来源可复核；
 - task validate/dummy acceptance 通过；
 - Research/Engineering 分流和完整 evidence 可重建；
-- 同 Node 不同 Research SHA 被拒绝，同 SHA infra retry 在预算内保留全部历史，且同 UID 不能伪造提交者；
+- 同 Node 不同 Research SHA 被拒绝，同 SHA infra retry 在预算内保留全部历史；
 - Analysis/Review fresh、版本化、幂等且受控发布；
 - heartbeat 确实关闭；
 - Agent 不能直接改写 protected shared artifacts，受控命令仍可工作；

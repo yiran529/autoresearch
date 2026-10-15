@@ -24,6 +24,7 @@ from coral.sandbox.srt import (
     AllowAllProxy,
     SrtSandbox,
     _cli_pythonpath_shim,
+    _protected_write_paths,
     _tls_cert_env,
     build_srt_settings,
     ensure_sandbox_supported,
@@ -184,10 +185,11 @@ def test_build_settings_writes(tmp_path):
     settings = build_srt_settings(SandboxConfig(enabled=True), proxy_port=12345, **paths)
 
     fs = settings["filesystem"]
-    private = str((tmp_path / ".coral" / "private").resolve())
-    assert private in fs["denyWrite"]
+    coral_dir = tmp_path / ".coral"
+    denied = set(fs["denyWrite"])
+    assert set(_protected_write_paths(coral_dir, None)) <= denied
     assert str((tmp_path / "agents" / "agent-1").resolve()) in fs["allowWrite"]
-    assert str((tmp_path / ".coral").resolve()) in fs["allowWrite"]
+    assert str(coral_dir.resolve()) in fs["allowWrite"]  # trusted socket remains reachable
     assert str((tmp_path / "repo" / ".git").resolve()) in fs["allowWrite"]
     # Home is NOT writable wholesale — only the toolchain dotdirs.
     assert str(Path.home()) not in fs["allowWrite"]

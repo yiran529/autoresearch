@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from coral.config import AgentConfig, SandboxConfig
+from coral.hub._island import island_root
 from coral.sandbox.protocol import AgentSandboxContext, AgentSandboxSpec
 
 logger = logging.getLogger(__name__)
@@ -359,6 +360,31 @@ def _tls_cert_env() -> dict[str, str]:
     return {}
 
 
+def _protected_write_paths(coral_dir: Path, island_id: str | None) -> list[str]:
+    """Formal run records that agents may read but only trusted services write."""
+    coral_dir = Path(coral_dir)
+    islands_dir = coral_dir / "islands"
+    if not islands_dir.exists():
+        roots = [island_root(coral_dir, island_id)]
+    else:
+        roots = sorted(path for path in islands_dir.iterdir() if path.is_dir())
+        if island_id is not None:
+            current_root = island_root(coral_dir, island_id)
+            if current_root not in roots:
+                roots.append(current_root)
+    protected = [coral_dir / "private", coral_dir / ".git"]
+    for root in roots:
+        protected.extend(
+            [
+                root / "attempts",
+                root / "eval_logs",
+                root / "notes" / "tree.md",
+                root / "notes" / "nodes",
+            ]
+        )
+    return [str(path.resolve()) for path in protected]
+
+
 def build_srt_settings(
     cfg: SandboxConfig,
     *,
@@ -379,6 +405,7 @@ def build_srt_settings(
     allow-listed to the same slice.
     """
     private_dir = str((coral_dir / "private").resolve())
+    protected_writes = _protected_write_paths(coral_dir, _worktree_island(worktree_path))
     home_paths = _runtime_home_paths(shared_dir_name)
 
     settings: dict[str, Any] = {
@@ -401,8 +428,8 @@ def build_srt_settings(
             ],
             "allowWrite": [
                 str(worktree_path.resolve()),
-                # Notes, attempts, eval logs, and the checkpoint repo all live
-                # under .coral/ and are written from agent-side `coral` commands.
+                # Keep the shared run directory reachable for CORAL commands
+                # and trusted-socket access; denyWrite below protects formal records.
                 str(coral_dir.resolve()),
                 # Worktree commits (coral eval) write objects/refs into the
                 # run repo's .git; srt's built-in protections still deny
@@ -413,7 +440,7 @@ def build_srt_settings(
                 "/private/tmp",  # macOS: /tmp resolves here
                 *cfg.allow_write,
             ],
-            "denyWrite": [private_dir],
+            "denyWrite": protected_writes,
         },
         # Runtime CLIs allocate ptys for their shell tools (macOS-only knob).
         "allowPty": True,

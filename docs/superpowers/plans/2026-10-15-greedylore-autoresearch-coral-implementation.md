@@ -736,74 +736,71 @@ git commit -m "feat: deploy autoresearch roles and artifact contracts"
 
 ---
 
-### Task 9: 收紧粗粒度 SRT 边界并完成 S1–S15 dummy acceptance
+### Task 9: 收紧粗粒度 SRT 边界并完成核心 acceptance
 
 **Files:**
 - Modify: `coral/sandbox/srt.py`
 - Modify: `tests/test_sandbox.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py`
-- Create: `tasks/greedylore_autoresearch/tests/test_acceptance_s1_s15.py`
-- Create: `tasks/greedylore_autoresearch/tests/fixtures/attempts/`
-- Create: `tasks/greedylore_autoresearch/tests/fixtures/analyses/`
-- Create: `tasks/greedylore_autoresearch/tests/fixtures/reviews/`
+- Modify: `docs/superpowers/specs/2026-10-15-greedylore-autoresearch-coral-design.md`
 
 **Interfaces:**
-- Consumes: Task 3 的 `trusted.sock` 和 Task 8 的 Agent commands。
-- Produces: `_protected_write_paths(coral_dir, island_id) -> list[str]`；read published evidence, write own worktree/scratch, publish explicitly；Agent 可完成 Git commit、`coral eval`、`autoresearch retry/analyze`，但不能改写 formal records、private data 或其他 Agent worktree。不增加角色权限矩阵或 Permission Manager。
+- Consumes: Task 3 的 `trusted.sock`、CORAL 原生 SRT 设置和 Task 6/7 的 Artifact 流程。
+- Produces: `_protected_write_paths(coral_dir, island_id) -> list[str]`；Agent 可读取已发布研究证据、写自己的 Worktree/Scratch，并通过可信入口发布；Agent 不能直接修改正式 Attempts、eval logs、Node 历史、private data 或其他 Agent 的 Worktree。不增加角色权限矩阵或 Permission Manager。
 
-- [ ] **Step 1: 写 settings 与真实边界攻击失败测试**
+- [ ] **Step 1: 写最小 settings 边界测试**
 
-```python
-def test_settings_deny_formal_records_but_keep_own_worktree(tmp_path):
-    settings = build_srt_settings(SandboxConfig(enabled=True), proxy_port=1, **_paths(tmp_path))
-    denied = set(settings["filesystem"]["denyWrite"])
-    assert str((tmp_path / ".coral/public/attempts").resolve()) in denied
-    assert str((tmp_path / ".coral/public/eval_logs").resolve()) in denied
-    assert str((tmp_path / ".coral/public/notes/tree.md").resolve()) in denied
-    assert str((tmp_path / ".coral/public/notes/nodes").resolve()) in denied
-    assert str((tmp_path / ".coral/.git").resolve()) in denied
-    assert str(_paths(tmp_path)["worktree_path"].resolve()) in settings["filesystem"]["allowWrite"]
-
-
-@pytest.mark.parametrize("attack", ["symlink", "absolute", "dotdot", "sibling_worktree"])
-def test_real_srt_blocks_protected_write(launched_sandbox, attack):
-    assert launched_sandbox.try_attack(attack).returncode != 0
-```
+验证 single/multi-island 下当前正式记录路径出现在 `denyWrite`；own worktree 和 candidate repository Git metadata 保持可写；同 island sibling worktree 不进入 `allowWrite`；已发布 evidence 保持可读。复用 CORAL 已有 dependency/preflight tests 验证 sandbox 不可用时 fail closed，不扩展复杂攻击矩阵。
 
 - [ ] **Step 2: 运行 sandbox tests 并确认新断言失败**
 
-Run: `uv run --frozen --extra dev pytest tests/test_sandbox.py tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py -v`
+Run: `uv run --frozen --extra dev pytest tests/test_sandbox.py tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py -q`
 
-Expected: FAIL，锁定 fork 仍允许写整个 `coral_dir`。
+Expected: FAIL，锁定 fork 尚未为 AutoResearch 正式记录生成 `denyWrite` 路径。
 
 - [ ] **Step 3: 实现最小 protected path 策略**
 
-Single/multi-island 不再 allow-write 整个 `.coral`；显式 deny Attempts、eval logs、`notes/tree.md`、`notes/nodes`、checkpoint repo 和 private，private 同时 deny-read。只保留 own worktree、candidate repo `.git`、scratch、必要 runtime home、`/tmp` 和 trusted socket connect；同 island sibling worktree 与已发布 evidence 可读但不可写，跨 island 不可读。不要建立角色矩阵，也不要依赖 Prompt 代替 OS 隔离。服务端仍验证 request，socket permission 不是授权。
+保持 `.coral` 可达，使 Agent 可以连接可信 socket 并使用 CORAL 原生命令；显式 deny-write private、checkpoint repository，以及当前和所有已存在 island 的 Attempts、eval logs、`notes/tree.md` 和 `notes/nodes`。own worktree、candidate repository Git metadata、Scratch 和必要 runtime path 延续 CORAL 原有写权限；sibling worktree 仍可读取但不可直接写入。服务端继续验证 request，Prompt 不代替 OS 写隔离。不要建立角色矩阵、通用 Permission Manager 或额外控制平面。
 
-- [ ] **Step 4: 验证 Git/eval/trusted commands 兼容和 fail-closed preflight**
+- [ ] **Step 4: 运行核心 Artifact/Analysis acceptance**
 
-真实 SRT test 在 sandbox 内依次完成普通修改、Git commit、`coral eval --no-wait`、`autoresearch retry` 请求和 `autoresearch analyze` 受限发布；同时证明直接写 Attempt/eval log/node、symlink escape、绝对路径和 sibling write 失败。**共享 Git 元数据单独验收**：记录 worktree `.git` 指向的 common dir，检验普通 `git commit` 必需的 ref/index 写入，且其他 Agent 不能直接覆盖兄弟工作文件；共享 `.git` 如允许写入，不宣称 Git refs 具有独立 OS 级写保护。受信任提交端须以固定 SHA 创建受保护 checkpoint/ref，并验证该 SHA 的树对象不受 Agent 后续分支移动影响。测试尝试移动其他 Agent 分支引用后，正式 Attempt 的 pinned SHA/评测内容仍可验证；无法保障时应明确失败，不得以 worktree 隔离替代 Git provenance 保护。保持 `ensure_sandbox_supported()` 对 `srt --version`、bubblewrap、socat、rg 的检查；任一缺失时在创建 Agent 前失败，不得静默 unsandboxed。mock 每个 dependency failure branch。
+复用既有真实测试验证：
 
-- [ ] **Step 5: 实现 S1–S15 dummy acceptance fixtures**
+- trusted submit 的单 Node 唯一 Research SHA；
+- 仅 infra failure 可进行同 SHA retry，保留最小 `grader_runs` 历史；
+- `evaluation.md` 可从 Attempts/eval logs 重建；
+- Analysis/Review 的幂等、缺 Review 恢复、`--revise` 和 reviewer decision；
+- SRT settings 的正式记录写保护、own-worktree 正常写权限与 fail-closed preflight。
 
-覆盖唯一 Research SHA/并发 reservation、同 UID 身份伪造、infra-only retry 上限及 finalize 并发、Analysis 幂等/缺 Review 恢复/revise、Engineering 零/多 Attempt 完整证据、child fixed refs、evaluation rebuild 多/零 Engineering、Reviewer pass/warning/fail、GPU lock max_workers=1、GPU 拓扑可比性、Root diff、reference citations、selection rationale、共享 Git refs 与 protected path attacks。Dummy tests 不运行 GPU 长训练。
+V1 暂缓低概率并发竞态、复杂 symlink/absolute/dotdot 攻击矩阵及 GPU topology 等效性的专项测试；Task 4/5 已定义的 Evaluation Contract、GPU allocator、可比性记录和分布式进程清理要求不变。
 
-- [ ] **Step 6: 运行 framework 与 task acceptance**
+Run:
 
-Run: `uv run --frozen --extra dev pytest tests/test_sandbox.py tests/test_config.py tests/test_heartbeat.py tests/test_hooks.py tests/test_grader_daemon.py tests/test_trusted_writes.py tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py tasks/greedylore_autoresearch/tests/test_acceptance_s1_s15.py -q`
+```bash
+uv run --frozen --extra dev pytest \
+  tests/test_sandbox.py \
+  tests/test_trusted_writes.py \
+  tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py \
+  tasks/greedylore_autoresearch/tests/test_evaluation_index.py \
+  tasks/greedylore_autoresearch/tests/test_analysis_recovery.py \
+  tasks/greedylore_autoresearch/tests/test_node_rules.py -q
+```
 
-Expected: PASS；真实 SRT case 仅可因明确记录的缺失 host dependency skip，`coral start` 对同一缺失必须 fail closed。
+Expected: PASS。
 
-- [ ] **Step 7: 运行全量非 GPU 回归**
+- [ ] **Step 5: 运行全量非 GPU 回归**
 
 Run: `uv run --frozen --extra dev pytest -q`
 
-Expected: PASS；GPU/host dependency 缺失导致的显式 skip 必须有原因，不允许 xfail 掩盖错误。
+Expected: PASS；host dependency 缺失导致的显式 skip 必须有原因，不允许静默退化为 unsandboxed execution。
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add coral/sandbox/srt.py tests tasks/greedylore_autoresearch/tests
+git add coral/sandbox/srt.py tests/test_sandbox.py \
+  tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py \
+  docs/superpowers/plans/2026-10-15-greedylore-autoresearch-coral-implementation.md \
+  docs/superpowers/specs/2026-10-15-greedylore-autoresearch-coral-design.md
 git commit -m "feat: enforce autoresearch sandbox boundaries"
 ```
 
