@@ -54,9 +54,7 @@ def _full_sha(value: Any, field: str) -> str:
     return value
 
 
-def _attempt_payloads(
-    coral_dir: Path, island_id: str | int | None
-) -> list[dict[str, Any]]:
+def _attempt_payloads(coral_dir: Path, island_id: str | int | None) -> list[dict[str, Any]]:
     if island_id is None:
         roots = [coral_dir / "public" / "attempts"]
     else:
@@ -102,9 +100,7 @@ def _safe_artifact(notes_root: Path, relative: str) -> Path:
     return candidate
 
 
-def _validate_node_provenance(
-    declaration: dict[str, Any], context: dict[str, Any]
-) -> None:
+def _validate_node_provenance(declaration: dict[str, Any], context: dict[str, Any]) -> None:
     notes_root = _notes_root(context)
     spec_path = notes_root / "nodes" / declaration["node_id"] / "spec.md"
     try:
@@ -229,6 +225,9 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
         contract_bytes = contract_path.read_bytes()
         contract = yaml.safe_load(contract_bytes)
         max_retries = contract["recovery"]["max_infra_retries"]
+        from greedylore_autoresearch_grader.contract import canonical_contract_hash
+
+        contract_hash = canonical_contract_hash(contract_path)
     except (OSError, TypeError, KeyError, yaml.YAMLError) as exc:
         raise SubmissionError("protected evaluation contract is unavailable or invalid") from exc
     if not isinstance(max_retries, int) or max_retries < 0:
@@ -240,7 +239,7 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
         "node_type": node_type,
         "base_commit": base,
         "quality_anchor": anchor,
-        "contract_hash": hashlib.sha256(contract_bytes).hexdigest(),
+        "contract_hash": contract_hash,
         "max_infra_retries": max_retries,
         "submission_hash": hashlib.sha256(raw_bytes).hexdigest(),
     }

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "greedylore-autoresearch-grader"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/greedylore_autoresearch_grader"]

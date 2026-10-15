@@ -22,6 +22,7 @@
 - Agent 不能直接写 Attempts、eval logs、Node history、Analysis/Review 或 private data；`coral eval`、`autoresearch retry` 和 task-local Artifact 命令通过固定用途的可信入口发布。
 - 每个下列 Task 是一个“大 step”：其测试通过后立即创建一次 commit；commit 本身不触发 push、长训练或 calibration。
 - 未实际执行的 GPU smoke、dense calibration、完整训练和 SRT 攻击测试不得标记为通过。
+- **防御性与复杂度成比例：** V1 只为会直接影响正式结果可信性、权限边界、GPU 资源冲突和分布式进程清理的常见故障路径增加强校验。对尚未观察到、极少见或高度平台相关的异常，不预先构建通用恢复层、复杂兼容解析或额外状态机；先清晰失败并保留日志，只有真实失败或验收测试证明必要时再增加最小处理。
 
 ---
 
@@ -339,6 +340,7 @@ git commit -m "feat: add minimal trusted attempt submission"
 - Create: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/gpu.py`
 - Create: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/process.py`
 - Create: `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/results.py`
+- Create: `tasks/greedylore_autoresearch/tests/conftest.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_contract.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_gpu_allocator.py`
 - Create: `tasks/greedylore_autoresearch/tests/test_gpu_comparability.py`
@@ -348,7 +350,7 @@ git commit -m "feat: add minimal trusted attempt submission"
 **Interfaces:**
 - Produces: immutable `EvalContract` dataclasses；`GpuInventory.from_nvidia_smi()`；`reserve_idle_gpus(count, lock_dir, policy) -> GpuReservation` context manager；`run_process_group(spec: ProcessSpec) -> ProcessResult`；`quality_gate()`、`timing_mean()`、`geometric_mean_speedup()`；`gpu_topology_fingerprint(gpu_uuids, nccl_env)` 与 `validate_efficiency_comparability(dense_env, candidate_env)`。
 
-- [ ] **Step 1: 写边界、GPU 选择和 cleanup 失败测试**
+- [x] **Step 1: 写边界、GPU 选择和 cleanup 失败测试**
 
 ```python
 def test_quality_gate_boundary():
@@ -373,35 +375,35 @@ def test_efficiency_rejects_noncomparable_topology(dense_env, candidate_env):
     assert not validate_efficiency_comparability(dense_env, candidate_env).valid
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_contract.py tasks/greedylore_autoresearch/tests/test_gpu_allocator.py tasks/greedylore_autoresearch/tests/test_gpu_comparability.py tasks/greedylore_autoresearch/tests/test_process.py tasks/greedylore_autoresearch/tests/test_results.py -v`
 
 Expected: FAIL，评测模块尚不存在。
 
-- [ ] **Step 3: 实现 contract 解析与稳定 hash**
+- [x] **Step 3: 实现 contract 解析与稳定 hash**
 
 只接受已知 YAML keys；所有路径 resolve 后必须存在；以 canonical JSON（sorted keys、UTF-8、紧凑 separators）计算 SHA-256。Validation mode 可把 iteration 数降为 smoke 值，但必须输出独立 `budget_class=validation`，不能伪装正式 contract hash。
 
-- [ ] **Step 4: 实现 GPU inventory 与原子多卡锁**
+- [x] **Step 4: 实现 GPU inventory 与原子多卡锁**
 
 先查询 GPU index/UUID/name/memory/utilization 和 compute-app UUID/PID；按 index 排序过滤 idle；尝试对 UUID lock files 逐一 `flock(LOCK_EX|LOCK_NB)`，拿齐 4 张后再次查询确认仍空闲，失败则释放全部并返回 `InfraFailure("fewer than four idle GPUs")`。环境中记录 index、UUID、name、选定四卡的互联拓扑指纹（如 `nvidia-smi topo -m` 中的对应关系）、NUMA 信息及 NCCL 相关配置。选择任意空闲四卡仍允许，但**正式 efficiency 与对应 dense reference 优先使用完全相同的 GPU UUID 集合**；若不同，必须有可验证的相同 GPU 类型、互联拓扑与 NUMA/NCCL 环境等效性，否则禁止计算可比较的 speedup，并在可比卡组重新测量 dense。
 
-- [ ] **Step 5: 实现 process-group 生命周期**
+- [x] **Step 5: 实现 process-group 生命周期**
 
 `subprocess.Popen(..., start_new_session=True)`，stdout/stderr 直接写 immutable log files。正常、timeout 和异常均执行 `SIGTERM -> wait 15s -> SIGKILL -> wait`；结果记录 command、env allowlist、return code、started/finished、timeout、cleanup 信号和 stderr tail。
 
-- [ ] **Step 6: 实现结果聚合与无效输入拒绝**
+- [x] **Step 6: 实现结果聚合与无效输入拒绝**
 
 两次 repetition 必须均为 finite positive 且 contract/bucket layout/hardware 一致；否则 cell 为 invalid，不使用单次结果替代。speedup 计算还须比较 dense 与 candidate 的 GPU UUID 集合或经验证的 topology fingerprint、NUMA 与 NCCL 配置，不可比时标记 `incomparable_hardware`，不发布有效 speedup。`relative_spread = abs(a-b) / ((a+b)/2)` 只报告，不触发第三次运行。
 
-- [ ] **Step 7: 运行 primitive 测试**
+- [x] **Step 7: 运行 primitive 测试**
 
 Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests/test_contract.py tasks/greedylore_autoresearch/tests/test_gpu_allocator.py tasks/greedylore_autoresearch/tests/test_gpu_comparability.py tasks/greedylore_autoresearch/tests/test_process.py tasks/greedylore_autoresearch/tests/test_results.py -v`
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tasks/greedylore_autoresearch/grader tasks/greedylore_autoresearch/tests
