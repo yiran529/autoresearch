@@ -16,6 +16,8 @@ def generate_coral_md(
     single_agent: bool = False,
     shared_dir: str = ".claude",
     island_id: str | int | None = None,
+    workflow_role: str | None = None,
+    node_id: str | None = None,
 ) -> str:
     """Produce the CORAL.md file that agents read at startup.
 
@@ -26,6 +28,34 @@ def generate_coral_md(
         shared_dir: Name of the shared state directory (e.g. ".claude", ".codex", ".opencode")
         island_id: Agent's island in multi-island mode (formats a provenance hint)
     """
+    if config.agents.dynamic.enabled:
+        if workflow_role == "research" and node_id:
+            scope = (
+                f"You own Research Node `{node_id}`. Choose a Parent, then run "
+                "`autoresearch node initialize` before changing the code base. "
+                "Run one formal Research evaluation, publish Research Analysis, "
+                "then `autoresearch node complete --mode research` and exit."
+            )
+        elif workflow_role == "engineering":
+            scope = (
+                "Inspect the Tree and evidence, choose one eligible Research Node, "
+                "then atomically run `autoresearch engineering claim <node-id>`. "
+                "Optimize from its Research commit, publish Engineering Analysis, "
+                "then `autoresearch node complete --mode engineering` and exit. "
+                "If no target is eligible, run `autoresearch engineering cancel` and exit."
+            )
+        else:
+            raise ValueError("dynamic instructions require a valid workflow role and Node")
+        return (
+            f"# {config.task.name}: {agent_id}\n\n"
+            f"{config.task.description}\n\n"
+            f"Read your role at `{shared_dir}/roles/{agent_id}.md` and follow its task rules.\n\n"
+            f"{scope}\n\n"
+            "Use only your own Worktree for code edits; publish shared results through "
+            "the documented task commands. On an interrupted run, resume this "
+            "same assignment and Codex Session.\n"
+        )
+
     template_path = _SINGLE_TEMPLATE_PATH if single_agent else _TEMPLATE_PATH
     template = template_path.read_text(encoding="utf-8")
 

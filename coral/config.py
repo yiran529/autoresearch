@@ -197,10 +197,26 @@ class AgentAssignmentConfig:
     model: str = ""  # empty -> inherit from agents.model (or runtime default)
     count: int = 1
     runtime_options: dict[str, Any] = field(default_factory=dict)
+    role: str = ""  # dynamic mode: research or engineering template
 
     def __post_init__(self) -> None:
         if self.count < 1:
             raise ValueError(f"agents.assignments[].count must be >= 1, got {self.count}")
+
+
+@dataclass
+class DynamicAgentConfig:
+    """Optional task-owned assignment roster with bounded role capacities."""
+
+    enabled: bool = False
+    max_researchers: int = 1
+    max_engineers: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.max_researchers, int) or self.max_researchers < 1:
+            raise ValueError("agents.dynamic.max_researchers must be >= 1")
+        if not isinstance(self.max_engineers, int) or self.max_engineers < 0:
+            raise ValueError("agents.dynamic.max_engineers must be >= 0")
 
 
 @dataclass
@@ -229,6 +245,7 @@ class AgentConfig:
     # combo. ``agents.count`` is ignored (total = sum of assignment counts).
     # Empty fields on an assignment inherit the agents.* defaults below.
     assignments: list[AgentAssignmentConfig] = field(default_factory=list)
+    dynamic: DynamicAgentConfig = field(default_factory=DynamicAgentConfig)
     # Max agent turns per session before the runtime exits and the manager
     # restarts the agent (preserving context via --resume). 0 = no cap, let
     # the underlying CLI run until it exits naturally.
@@ -275,6 +292,8 @@ class AgentConfig:
         # leave nested sandbox config as a plain dict; coerce like RunConfig.stop.
         if isinstance(self.sandbox, dict):
             self.sandbox = SandboxConfig(**self.sandbox)
+        if isinstance(self.dynamic, dict):
+            self.dynamic = DynamicAgentConfig(**self.dynamic)
         if self.sandbox.enabled and self.isolate_user:
             raise ValueError(
                 "agents.sandbox and agents.isolate_user are mutually exclusive — "
@@ -449,6 +468,15 @@ class CoralConfig:
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     run: RunConfig = field(default_factory=RunConfig)
     task_dir: Path | None = None  # internal: directory containing task.yaml
+
+    def __post_init__(self) -> None:
+        if not self.agents.dynamic.enabled:
+            return
+        if self.islands.count != 1:
+            raise ValueError("dynamic agents currently require a single island")
+        roles = [item.role for item in self.agents.assignments]
+        if sorted(roles) != ["engineering", "research"]:
+            raise ValueError("dynamic agents require one research and one engineering template")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> CoralConfig:

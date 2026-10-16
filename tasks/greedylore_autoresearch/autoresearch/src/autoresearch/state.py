@@ -316,6 +316,11 @@ class WorkflowStore:
             if isinstance(worker, dict):
                 if worker["status"] != "reserved" or worker.get("node_id") is not None:
                     raise WorkflowError("only an unstarted reservation can be cancelled")
+                if any(
+                    self._qualified_research_unlocked(state, node_id) is not None
+                    for node_id in state["nodes"]
+                ):
+                    raise WorkflowError("an eligible Engineering target still exists")
                 worker["status"] = "cancelled"
                 self._save_unlocked(state)
                 return {"agent_id": agent_id, "node_id": None, "status": "cancelled"}

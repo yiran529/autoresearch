@@ -492,15 +492,13 @@ class TrustedWriteService:
         if set(payload) != _WORKFLOW_FIELDS[operation]:
             raise TrustedWriteError(f"{operation} contains unknown or missing fields")
         dynamic = getattr(getattr(self.config, "agents", None), "dynamic", None)
-        workspace = getattr(self.config, "workspace", None)
-        repo_path = getattr(workspace, "repo_path", None)
         context = {
             "coral_dir": str(self.coral_dir),
             "agent_id": binding.agent_id if binding else None,
             "island_id": binding.island_id if binding else None,
             "max_engineering_runs_per_node": (getattr(getattr(self.config, "grader", None), "args", {}) or {}).get("max_engineering_runs_per_node", 1),
             "is_manager": binding is None,
-            "repo_path": str(Path(repo_path).resolve()) if repo_path else None,
+            "repo_path": str(self.coral_dir.parent / "repo"),
             "max_researchers": getattr(dynamic, "max_researchers", 0),
             "max_engineers": getattr(dynamic, "max_engineers", 0),
         }

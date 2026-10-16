@@ -28,11 +28,15 @@ grader:
 agents:
   runtime: codex
   heartbeat_enabled: false
+  dynamic:
+    enabled: true
+    max_researchers: 2
+    max_engineers: 1
   assignments:
-  - count: 1
+  - role: research
     runtime_options:
       role_file: ./roles/researcher.md
-  - count: 1
+  - role: engineering
     runtime_options:
       role_file: ./roles/engineer.md
   sandbox:

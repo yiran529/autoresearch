@@ -14,6 +14,7 @@ from coral.config import (
     AgentAssignmentConfig,
     AgentConfig,
     CoralConfig,
+    DynamicAgentConfig,
     TaskConfig,
 )
 
@@ -36,6 +37,18 @@ def test_uniform_default_single_agent():
     assert specs[0].runtime == "claude_code"
     assert specs[0].model == "sonnet"
     assert specs[0].assignment_index is None
+
+
+def test_dynamic_assignments_are_templates_not_static_agents():
+    config = _make_config(AgentConfig(
+        runtime="codex",
+        dynamic=DynamicAgentConfig(enabled=True, max_researchers=2, max_engineers=1),
+        assignments=[
+            AgentAssignmentConfig(role="research", runtime_options={"role_file": "researcher.md"}),
+            AgentAssignmentConfig(role="engineering", runtime_options={"role_file": "engineer.md"}),
+        ],
+    ))
+    assert resolve_agent_specs(config) == []
 
 
 def test_uniform_count_n():

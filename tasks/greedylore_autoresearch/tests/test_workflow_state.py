@@ -263,14 +263,21 @@ def test_two_engineers_cannot_claim_the_same_node(engineering_ready):
     assert len(state["nodes"]["N001"]["engineering_claims"]) == 1
 
 
-def test_unbound_engineer_can_cancel_and_is_not_reused(engineering_ready):
+def test_unbound_engineer_cancels_only_when_no_eligible_target(engineering_ready):
     coral_dir, repo, _ = engineering_ready
     store = _store(coral_dir, repo)
     first = store.reconcile(0, 1)[0]
     assert first.agent_id == "engineer-E0001"
+    with pytest.raises(ValueError, match="eligible"):
+        store.cancel_assignment(first.agent_id)
+    state = _state(coral_dir)
+    state["nodes"]["N001"]["engineering_claims"].append({
+        "agent_id": "engineer-E0000", "status": "active", "research_sha": "a" * 40,
+    })
+    store.state_path.write_text(json.dumps(state))
     store.cancel_assignment(first.agent_id)
-    second = store.reconcile(0, 1)[0]
-    assert second.agent_id == "engineer-E0002"
+    assert store.reconcile(0, 1) == ()
+    assert _state(coral_dir)["next_engineer_seq"] == 2
 
 
 def test_claimed_engineer_does_not_block_new_eligible_target(engineering_ready):

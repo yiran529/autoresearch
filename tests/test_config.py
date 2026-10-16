@@ -50,6 +50,37 @@ def test_config_from_dict():
     assert config.agents.count == 1  # default
 
 
+def test_dynamic_config_has_bounded_role_templates():
+    config = CoralConfig.from_dict({
+        "task": {"name": "dynamic", "description": "test"},
+        "agents": {
+            "runtime": "codex",
+            "dynamic": {"enabled": True, "max_researchers": 2, "max_engineers": 1},
+            "assignments": [
+                {"role": "research", "runtime_options": {"role_file": "researcher.md"}},
+                {"role": "engineering", "runtime_options": {"role_file": "engineer.md"}},
+            ],
+        },
+    })
+    assert config.agents.dynamic.max_researchers == 2
+    assert config.agents.dynamic.max_engineers == 1
+    assert [item.role for item in config.agents.assignments] == ["research", "engineering"]
+
+
+def test_dynamic_config_rejects_multiple_islands():
+    with pytest.raises(ValueError, match="single island"):
+        CoralConfig.from_dict({
+            "task": {"name": "dynamic", "description": "test"},
+            "islands": {"count": 2},
+            "agents": {
+                "dynamic": {"enabled": True, "max_researchers": 2, "max_engineers": 1},
+                "assignments": [
+                    {"role": "research"}, {"role": "engineering"},
+                ],
+            },
+        })
+
+
 def test_legacy_grader_type_rejected():
     """Removed grader.type field raises a ValueError with migration guidance."""
     data = {

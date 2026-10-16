@@ -597,6 +597,7 @@ def test_workflow_reconcile_accepts_only_manager_peer(tmp_path, monkeypatch):
     monkeypatch.setattr("coral.grader.trusted_writes.os.getppid", lambda: 4242)
     assert service.handle("reconcile_workflow", {}, peer_pid=4242) == {"assignments": []}
     assert calls[0][0:2] == ("reconcile_workflow", {})
+    assert calls[0][2]["repo_path"] == str(tmp_path / "repo")
     with pytest.raises(TrustedWriteError, match="manager"):
         service.handle("reconcile_workflow", {}, peer_pid=4243)
     with pytest.raises(TrustedWriteError, match="manager"):

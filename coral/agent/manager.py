@@ -25,6 +25,7 @@ from coral.agent.assignments import (
     partition_into_islands,
     resolve_agent_specs,
 )
+from coral.agent.dynamic import DynamicAssignmentClient, spec_for_assignment
 from coral.agent.exit_classifier import (
     classify_by_uptime,
 )
@@ -88,6 +89,7 @@ from coral.workspace import (
     write_agent_id,
     write_coral_dir,
 )
+from coral.workspace.worktree import retire_agent_worktree
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +109,7 @@ class AgentManager:
         # Resolve concrete per-agent specs, then (when multi-island) partition them
         # across islands round-robin. Single-island (count=1) returns specs unchanged.
         base_specs = resolve_agent_specs(config)
-        if config.islands.count > len(base_specs):
+        if not config.agents.dynamic.enabled and config.islands.count > len(base_specs):
             raise ValueError(
                 "islands.count cannot exceed the number of agents "
                 f"(got islands.count={config.islands.count}, agents={len(base_specs)})"
@@ -122,7 +124,11 @@ class AgentManager:
         # Default runtime used for run-level operations that aren't tied to a
         # specific agent (warmstart fallback prompts, validating resumed
         # runs whose worktrees still exist). Falls back to the first spec.
-        self.runtime: AgentRuntime = self.runtimes[self.specs[0].agent_id]
+        if self.specs:
+            self.runtime: AgentRuntime = self.runtimes[self.specs[0].agent_id]
+        else:
+            template = config.agents.assignments[0]
+            self.runtime = get_runtime(template.runtime or config.agents.runtime)
         self.handles: list[AgentHandle] = []
         self.paths: ProjectPaths | None = None
         self.verbose = verbose
@@ -190,6 +196,7 @@ class AgentManager:
         # every cycle. Persisted at public/migration_state.json so the guard
         # survives `coral resume`.
         self._last_migrated_eval: dict[str, int] = {}
+        self._dynamic_client: DynamicAssignmentClient | None = None
 
     def _runtime_for(self, agent_id: str) -> AgentRuntime:
         """Return the runtime instance for an agent_id, creating one on demand.
@@ -203,6 +210,51 @@ class AgentManager:
             runtime = self.runtime
             self.runtimes[agent_id] = runtime
         return runtime
+
+    def _reconcile_dynamic_agents(
+        self, resume_sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Diff the trusted task roster against live CORAL handles."""
+        if not self.config.agents.dynamic.enabled:
+            return
+        if self.paths is None:
+            raise RuntimeError("dynamic reconcile requires run paths")
+        if self._dynamic_client is None:
+            self._dynamic_client = DynamicAssignmentClient(self.paths.coral_dir)
+        desired = self._dynamic_client.reconcile()
+        desired_by_id = {item.agent_id: item for item in desired}
+        desired_specs = {
+            item.agent_id: spec_for_assignment(self.config, item) for item in desired
+        }
+        for handle in list(self.handles):
+            if handle.agent_id in desired_by_id:
+                continue
+            handle.stop()
+            self.handles.remove(handle)
+            self._write_trusted_agent_registry()
+            self.specs_by_id.pop(handle.agent_id, None)
+            self.runtimes.pop(handle.agent_id, None)
+            retire_agent_worktree(
+                self.paths.repo_dir,
+                self.paths.agents_dir / handle.agent_id,
+            )
+        live_ids = {handle.agent_id for handle in self.handles}
+        self.specs = [desired_specs[item.agent_id] for item in desired]
+        self.specs_by_id.update(desired_specs)
+        for item in desired:
+            spec = desired_specs[item.agent_id]
+            if item.agent_id in live_ids:
+                continue
+            self.runtimes[item.agent_id] = get_runtime(spec.runtime)
+            handle = self._setup_and_start_agent(
+                item.agent_id,
+                resume_session_id=(resume_sessions or {}).get(item.agent_id),
+            )
+            self.handles.append(handle)
+            live_ids.add(item.agent_id)
+            self._write_trusted_agent_registry()
+        self._write_agent_pids()
+        self._persist_agent_state()
 
     def _mounts_base_dir(self) -> Path:
         """Return the directory used to resolve relative ``runtime_options.mounts`` sources.
@@ -222,6 +274,7 @@ class AgentManager:
 
         # 1. Create project structure
         self.paths = create_project(self.config, config_dir=self.config_dir)
+        self._dynamic_client = None
         logger.info(f"Run directory: {self.paths.run_dir}")
         logger.info(f"  coral_dir: {self.paths.coral_dir}")
         logger.info(f"  repo_dir:  {self.paths.repo_dir}")
@@ -238,6 +291,17 @@ class AgentManager:
         #     the daemon picks them up, grades inside an isolated worktree,
         #     and writes the score back. Must be running before agents start.
         self._start_grader_daemon()
+
+        if self.config.agents.dynamic.enabled:
+            try:
+                self._reconcile_dynamic_agents()
+            except Exception:
+                self.stop_all()
+                raise
+            self._running = True
+            self._write_pid_file()
+            atexit.register(self._atexit_cleanup)
+            return self.handles
 
         # 2. Seed global heartbeat config if not already present.
         # In multi-island mode, every island gets its own _global.json so
@@ -706,6 +770,8 @@ class AgentManager:
             single_agent=single_agent,
             shared_dir=shared_dir_name,
             island_id=island_id,
+            workflow_role=spec.workflow_role if spec else None,
+            node_id=spec.node_id if spec else None,
         )
         (worktree_path / instruction_file).write_text(coral_md, encoding="utf-8")
 
@@ -872,6 +938,7 @@ class AgentManager:
         """Resume agents into an existing run's worktrees."""
         self._start_time = datetime.now(UTC)
         self.paths = paths
+        self._dynamic_client = None
         self._last_migrated_eval = _read_last_migrated_evals(paths.coral_dir)
 
         # Start gateway if configured
@@ -894,6 +961,21 @@ class AgentManager:
         # Kill any leftover agent processes from a previous run so they
         # don't hold session locks and block the new agents.
         self._kill_old_agent_processes()
+
+        if self.config.agents.dynamic.enabled:
+            saved_sessions = self._load_saved_sessions()
+            validated_sessions = _validate_sessions(
+                saved_sessions, coral_dir=paths.coral_dir
+            )
+            try:
+                self._reconcile_dynamic_agents(resume_sessions=validated_sessions)
+            except Exception:
+                self.stop_all()
+                raise
+            self._running = True
+            self._write_pid_file()
+            atexit.register(self._atexit_cleanup)
+            return self.handles
 
         # Load saved sessions
         saved_sessions = self._load_saved_sessions()
@@ -2359,6 +2441,10 @@ class AgentManager:
         logger.info(f"Monitoring {len(self.handles)} agent(s) (check every {check_interval}s)...")
 
         while self._running:
+            if self.config.agents.dynamic.enabled:
+                # The existing monitor cadence observes task-local state changes;
+                # no new scheduler or timer is required.
+                self._reconcile_dynamic_agents()
             # Check for new attempts
             current_attempts = self._get_seen_attempts()
             new_attempts = current_attempts - seen_attempts

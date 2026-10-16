@@ -39,6 +39,8 @@ class AgentSpec:
     # suffix on ``agent_id`` always reflects birth island, while this field can
     # be repointed in Phase 3 if needed.
     island_id: str | None = None
+    workflow_role: str | None = None
+    node_id: str | None = None
 
 
 def resolve_agent_specs(config: CoralConfig) -> list[AgentSpec]:
@@ -50,6 +52,8 @@ def resolve_agent_specs(config: CoralConfig) -> list[AgentSpec]:
     ``agents.assignments`` is empty the function falls back to
     ``agents.count`` copies of the top-level defaults.
     """
+    if config.agents.dynamic.enabled:
+        return []  # assignments are role templates; the trusted roster supplies IDs
     base_runtime = config.agents.runtime
     base_model = config.agents.model
     base_options = dict(config.agents.runtime_options)

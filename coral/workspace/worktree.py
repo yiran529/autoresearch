@@ -96,6 +96,24 @@ def create_agent_worktree(repo_path: Path, agent_id: str, agents_dir: Path) -> P
     return worktree_path
 
 
+def retire_agent_worktree(repo_path: Path, worktree_path: Path) -> bool:
+    """Remove a clean completed worktree; retain its branch and any dirty tree."""
+    worktree_path = Path(worktree_path)
+    if not worktree_path.is_dir():
+        return True
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    if status.returncode != 0 or status.stdout.strip():
+        return False
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "worktree", "remove", str(worktree_path)],
+        capture_output=True, text=True, check=False,
+    )
+    return result.returncode == 0
+
+
 def setup_git_exclude(worktree_path: Path) -> None:
     """Register CORAL-managed files in the repo's git exclude file.
 
