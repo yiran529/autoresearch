@@ -4,7 +4,7 @@
 
 **Goal:** 在当前已实现的 GreedyLoRE AutoResearch V1 上，移除固定 Reviewer，将 Research workflow 改成一 Node 一 Researcher Agent，并为合格 Node 按需启动独立 Engineer Agent，同时保证共享状态并发安全和 Global Memory 低频更新。
 
-**Architecture:** 保留现有 Commit → Attempt → Grader、可信 Artifact 发布、Sandbox、Worktree 和 Runtime。Task-local authoritative workflow store负责 Node ID、Research生命周期和Engineering claim；CORAL `AgentManager`只增加动态 assignment的启动、恢复、停止和补位能力。Research Node始终对应唯一 Research Attempt，Engineering归属原 Node而不创建新 Tree Node。
+**Architecture:** 保留现有 Commit → Attempt → Grader、可信 Artifact 发布、Sandbox、Worktree 和 Runtime。Task-local authoritative workflow store 负责 Node ID、Research 生命周期和 Engineering claim；CORAL `AgentManager` 只增加动态 assignment 的启动、恢复、停止和补位能力。动态启动前完成可信 Root Analysis bootstrap；Tree/Spec 由权威入口写入，Node Artifact 按 owner 发布，同一 Node 的 Evaluation 在锁内重建。Research Node 始终对应唯一 Research Attempt，Engineering 归属原 Node 而不创建新 Tree Node。
 
 **Tech Stack:** Python 3.11、pytest、PyYAML、Codex CLI、Unix domain socket / `SO_PEERCRED`、`flock`、Git worktree、SRT/bubblewrap。
 
@@ -18,7 +18,8 @@
 - Tree Node只表示Research单元：每个普通 Node有且仅有一个Researcher Agent和一个正式Research Attempt；Engineer是该 Node可选的独立Agent，不创建新Node。
 - Node ID与Agent ID单调分配且永不复用；允许取消reservation留下编号空洞。
 - 所有共享workflow mutation使用同一个`.coral/private/trusted_writes.lock`；取锁后必须重新读取，不以缓存状态分配ID。
-- `tree.md`、`evaluation.md`和Summary是派生Artifact；Git、Attempts、eval logs、Node Spec和versioned Analysis保留研究事实。
+- `tree.md`、`evaluation.md` 和 Summary 是派生 Artifact；Git、Attempts、eval logs、Node Spec 和 versioned Analysis 保留研究事实。不同 Node 的 Artifact 路径互不覆盖；仅同一 Node 的 Evaluation 刷新需要防旧快照倒退。
+- 动态启动前须通过固定宿主路径发布 N000 Research Analysis；缺失时明确报错，不静默运行零 Agent。Tree/Spec 不经普通 Agent Artifact 发布入口修改。
 - 默认静态CORAL agents完全兼容；V1动态模式仅支持单island并在其他配置下明确拒绝。
 - Subagent是Researcher、Engineer和Analyzer遇到实质不确定性时的可选能力，不是固定阶段。
 - 不新增timer、heartbeat action、常驻Memory服务、candidate pool、LLM target scheduler或通用workflow engine。
@@ -168,11 +169,14 @@ git commit -m "feat: simplify autoresearch to analyzer-only workflow"
 - Create: `tasks/greedylore_autoresearch/tests/test_workflow_state.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/nodes.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/bootstrap.py`
+- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/submission.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/artifacts.py`
 - Modify: `tasks/greedylore_autoresearch/tests/test_node_rules.py`
 - Modify: `tasks/greedylore_autoresearch/tests/test_root_bootstrap.py`
+- Modify: `tasks/greedylore_autoresearch/tests/test_analysis_cli.py`
+- Modify: `tasks/greedylore_autoresearch/tests/test_evaluation_index.py`
 - Modify: `tasks/greedylore_autoresearch/tests/test_submission.py`
 - Modify: `tasks/greedylore_autoresearch/task.yaml`
 - Modify: `coral/grader/trusted_writes.py`
@@ -189,7 +193,9 @@ git commit -m "feat: simplify autoresearch to analyzer-only workflow"
   - `cancel_assignment(agent_id: str) -> dict[str, Any]`
 - Produces `handle_workflow(operation: str, payload: dict, context: dict) -> dict` configured as `grader.args.trusted_workflow_handler`.
 - Produces `authorize_attempt(canonical: dict, context: dict) -> dict` configured as `grader.args.trusted_workflow_authorizer`; this read-only callback runs while the existing trusted Attempt lock is held.
-- Extends trusted operations only with `reconcile_workflow`, `initialize_research`, `claim_engineering`, `complete_assignment`, `cancel_assignment`.
+- Produces `authorize_artifact(kind: str, context: dict) -> dict` configured as `grader.args.trusted_artifact_authorizer`; it reads workflow state under the existing trusted lock and checks Node/mode ownership.
+- Produces host-only `bootstrap_root_analysis(coral_dir: Path, root_worktree: Path, runner=run_fresh_codex) -> Path` and `autoresearch bootstrap-root-analysis`; the run owner invokes this outside Agent Sandbox after the formal Root Attempt. It reuses Analyzer with a fixed N000 host publisher and is not a socket operation.
+- Extends trusted workflow operations only with `reconcile_workflow`, `initialize_research`, `claim_engineering`, `complete_assignment`, `cancel_assignment`; Task 4 adds one fixed Memory launch operation.
 
 - [ ] **Step 1: Write state allocation and recovery tests**
 
@@ -230,8 +236,9 @@ def test_root_is_registered_once_before_child_allocation(store, root_artifacts):
     assert first[0].node_id == "N001"
 
 
-def test_no_child_is_reserved_before_root_analysis(store, root_without_analysis):
-    assert store.reconcile(2, 1) == ()
+def test_missing_root_analysis_fails_before_allocation(store, root_without_analysis):
+    with pytest.raises(WorkflowError, match="Root Analysis bootstrap"):
+        store.reconcile(2, 1)
     assert read_state(store).next_node_seq == 1
 
 
@@ -264,7 +271,7 @@ def test_engineering_claim_rechecks_every_eligibility_fact(store, node, missing)
         store.claim_engineering("engineer-E0001", node.node_id)
 ```
 
-Also test that V1 policy `max_engineering_runs_per_node=1` rejects a second completed flow while the JSON schema stores an appendable `engineering_claims` list.
+Also test that V1 policy `max_engineering_runs_per_node=1` rejects a second completed flow while the JSON schema stores an appendable `engineering_claims` list. Add submission tests: Research still requires the fixed Spec Parent/Base; Engineering based on this Node's Research SHA passes with that SHA as `quality_anchor`, and a later Engineering Commit may have the previous Engineering Commit as its direct parent. A wrong anchor or another Node's Research SHA fails.
 
 - [ ] **Step 3: Write transition, provenance and projection tests**
 
@@ -314,6 +321,18 @@ def test_tree_projection_rebuilds_from_state_and_artifacts(store):
     store.tree_path.unlink()
     store.rebuild_tree()
     assert "N001" in store.tree_path.read_text()
+
+
+def test_host_root_analysis_unblocks_first_child(root_run, fake_analyzer):
+    publish_terminal_root_attempt(root_run)
+    # Existing bootstrap_root() may leave spec.md absent without a publisher callback.
+    bootstrap_root_analysis(root_run.coral_dir, root_run.worktree,
+                            runner=fake_analyzer)
+    assert (root_run.notes_root / "nodes/N000/spec.md").is_file()
+    assert (root_run.notes_root / "nodes/N000/evaluation.md").is_file()
+    assert WorkflowStore(root_run.coral_dir).reconcile(1, 0)[0].node_id == "N001"
+    bootstrap_root_analysis(root_run.coral_dir, root_run.worktree,
+                            runner=FailIfCalled())  # existing valid v1 is reused
 ```
 
 Also test that pending Attempts and retryable infra failures prevent completion. Engineering completion accepts a terminal negative-speedup evaluation. State stores only refs, ownership and status, not copied metrics.
@@ -322,11 +341,9 @@ Also test that pending Attempts and retryable infra failures prevent completion.
 
 ```python
 def test_only_manager_peer_can_reconcile(service, manager_pid, agent_binding):
-    assert service.handle_peer(
-        "reconcile_workflow", capacities(), peer_pid=manager_pid
-    )["assignments"]
+    assert service.handle("reconcile_workflow", {}, peer_pid=manager_pid)["assignments"]
     with pytest.raises(TrustedWriteError):
-        service.handle_authenticated("reconcile_workflow", capacities(), agent_binding)
+        service.handle_authenticated("reconcile_workflow", {}, agent_binding)
 
 
 def test_agent_can_only_mutate_its_assignment(service, researcher_binding):
@@ -336,7 +353,7 @@ def test_agent_can_only_mutate_its_assignment(service, researcher_binding):
         )
 ```
 
-Test that unknown fields, arbitrary paths, caller-supplied agent IDs/status/counters and unconfigured workflow handlers are rejected. Existing three trusted operations remain unchanged.
+Test that unknown fields, arbitrary paths, caller-supplied agent IDs/status/counters and unconfigured workflow handlers are rejected. Add Artifact tests: Agent `publish_artifact` cannot write `tree` or `spec`, N001 owner cannot publish N002 Analysis/Evaluation, Researcher cannot publish Engineering Analysis, and completed owner loses publication rights. Two same-Node refreshes interleaved around a Grader finalization must leave `evaluation.md` equal to a rebuild from the latest Attempts. Existing static-mode trusted operations retain their behavior.
 
 - [ ] **Step 5: Run focused tests and verify RED**
 
@@ -347,10 +364,13 @@ uv run --frozen --extra dev pytest \
   tasks/greedylore_autoresearch/tests/test_workflow_state.py \
   tasks/greedylore_autoresearch/tests/test_node_rules.py \
   tasks/greedylore_autoresearch/tests/test_submission.py \
+  tasks/greedylore_autoresearch/tests/test_root_bootstrap.py \
+  tasks/greedylore_autoresearch/tests/test_analysis_cli.py \
+  tasks/greedylore_autoresearch/tests/test_evaluation_index.py \
   tests/test_trusted_writes.py -q
 ```
 
-Expected: FAIL because state store and workflow operations do not exist and `_next_node_id()` still scans directories.
+Expected: FAIL because state store, Root host Analysis publication, ownership checks and workflow operations do not exist and `_next_node_id()` still scans directories.
 
 - [ ] **Step 6: Implement the minimal authoritative store**
 
@@ -363,7 +383,9 @@ Store `.coral/private/autoresearch_state.json` with `version`、`revision`、`ne
 5. writes temp + flush/fsync + replace + directory fsync;
 6. rebuilds `tree.md` from committed state and immutable Artifacts.
 
-`reconcile()` first verifies and registers the existing `N000` Root spec, terminal Research Attempt and Research Analysis as a fixed completed Root record. Repeat calls are idempotent; conflicting Root evidence is an error. Until Root Analysis exists, it returns no ordinary assignments. It then atomically fills missing Research slots. It creates unbound Engineer workers only when eligible unclaimed Node count exceeds active/reserved workers, but never chooses a target. Delete `_next_node_id()` and reject caller-selected IDs. The existing `bootstrap_root()` remains responsible for creating A0 and the Root Artifact; it never allocates an ordinary Node ID.
+`autoresearch bootstrap-root-analysis` invokes `bootstrap_root_analysis()` as a trusted-host preparatory step after the existing N000 formal Attempt becomes terminal: verify fixed Root policy, A0/S0 commit and unique Attempt; idempotently create or validate N000 `spec.md` from that fixed evidence (current `bootstrap_root()` can omit Spec without a publisher callback); refresh N000 Evaluation; then return an already valid `research_analysis_v1.md` without starting Codex or call the existing Analyzer with a fixed N000 host publisher and atomically publish v1. It is not exposed as an Agent socket operation and does not run formal evaluation. A repeat command is idempotent; after this host step the run owner can start/resume dynamic Agents. A fake-runner integration test covers host bootstrap through first N001 allocation.
+
+`reconcile()` first verifies and registers the existing `N000` Root spec, terminal Research Attempt and Research Analysis as a fixed completed Root record. Repeat calls are idempotent; conflicting Root evidence is an error. If Root Analysis is missing, it raises an actionable bootstrap error rather than silently returning an empty roster. It then atomically fills missing Research slots. It creates unbound Engineer workers only when eligible unclaimed Node count exceeds active/reserved workers, but never chooses a target. Delete `_next_node_id()` and reject caller-selected IDs. The existing `bootstrap_root()` remains responsible for A0; the host helper repairs a missing Root Spec when bootstrap had no publisher callback. Neither allocates an ordinary Node ID.
 
 `initialize_research()` validates Parent Research Analysis and writes the immutable `nodes/Nxxx/spec.md` directly with the existing task-local atomic text helper while holding the workflow lock, then marks active. It must not call `publish_artifact` through the socket from inside the lock. Retry with byte-identical content is idempotent; a spec-written/reserved-state interruption is repaired by repeating the same call. `tree.md` is regenerated after the state commit and may be repaired by the next reconcile if that projection write is interrupted.
 
@@ -375,11 +397,15 @@ Do not add a second socket, dynamic Provider, arbitrary operation names or path 
 
 - [ ] **Step 8: Bind Attempts and CLI commands to ownership**
 
-The existing `_submit()` keeps its pre-lock commit/schema validation, then calls the configured task-local ownership authorizer **inside** `trusted_writes.lock` immediately before Attempt creation. The authorizer only reads state; it never acquires the lock again. It checks:
+The existing `_submit()` keeps its pre-lock commit/schema validation, then calls the configured task-local ownership authorizer **inside** `trusted_writes.lock` immediately before ordinary Attempt creation. The authorizer only reads state; it never acquires the lock again. The fixed host-only N000 `submit_root_attempt()` keeps its Root policy exception. Ordinary authorization checks:
 
 - research mode: authenticated Agent is the Node's active Researcher;
 - engineering mode: authenticated Agent owns the Node's active Engineering claim;
 - completed/cancelled/stale assignments cannot submit.
+
+Update `validate_submission()` by mode: Research keeps the Spec Parent/Base checks; Engineering requires this Node's unique terminal Research SHA as both `quality_anchor` and `base_commit`, plus a candidate chain descending from that SHA. The active Engineer claim is rechecked by the lock-held Attempt authorizer; do not require an Engineering candidate's direct parent to equal the Node Spec's Parent Commit; consecutive Engineering Attempts may use the preceding Engineering Commit as parent.
+
+For dynamic mode, `_publish()` keeps canonical target validation, then under `trusted_writes.lock` re-reads workflow state via `authorize_artifact()`. Ordinary Agent publication rejects `tree` and `spec`; only the Workflow Store rebuilds Tree and creates normal Spec, while the fixed Root host path owns N000 Spec. Research/Engineering Analysis publication requires the matching active Node owner and mode, with existing immutable-version behavior. Node Evaluation refresh requires the active Researcher or currently claimed Engineer for that same Node; within the lock, ignore the caller's precomputed Evaluation text and rebuild from the latest Attempts/eval logs before atomic replacement. This is per-Node freshness protection, not a global Artifact transaction. Root Evaluation uses the fixed host bootstrap path. Static CORAL behavior remains unchanged.
 
 Replace free Node creation with:
 
@@ -470,7 +496,7 @@ def test_manager_starts_exact_desired_assignments(manager, state_client):
     assert {handle.agent_id for handle in manager.handles} == {
         "research-N001", "research-N002", "engineer-E0001",
     }
-    assert state_client.last_capacities == (2, 1)
+    assert state_client.last_payload == {}  # capacities come from trusted config
 ```
 
 Assert every Agent gets its own Worktree, log, registry binding and fresh session; assignment context written into generated instructions includes only role/node/commands, not private state or locks.
@@ -540,7 +566,7 @@ Expected: FAIL because CORAL currently expands static specs only and restarts ev
 
 Add `agents.dynamic` and assignment `role`. In static mode, `resolve_agent_specs()` and nickname behavior remain byte-for-byte compatible. In dynamic mode, assignments become immutable runtime/model/options templates; `count` is not used for concurrency, and the explicit max fields are authoritative.
 
-`DynamicAssignmentClient` requests `reconcile_workflow` with an empty payload over existing UDS and validates the bounded response schema before building `AgentSpec`; the trusted service supplies capacities from its loaded config. Task responses cannot supply runtime, model, role file, mounts or Sandbox options. The manager must start grader/trusted endpoint before its first reconcile. If no Root Analysis is published, the desired roster is empty.
+`DynamicAssignmentClient` requests `reconcile_workflow` with an empty payload over existing UDS and validates the bounded response schema before building `AgentSpec`; the trusted service supplies capacities from its loaded config. Task responses cannot supply runtime, model, role file, mounts or Sandbox options. The manager must start grader/trusted endpoint before its first reconcile. If Root Analysis is missing, dynamic start fails with the explicit host-bootstrap instruction from Task 2; it does not silently run with an empty roster.
 
 - [ ] **Step 7: Integrate reconcile into AgentManager**
 
@@ -551,7 +577,7 @@ Refactor setup so grader and trusted server start before the first dynamic recon
 - no longer desired: stop handle, revoke registry entry, remove in-memory spec/runtime maps and attempt safe Worktree retirement;
 - desired dead: let existing `_restart_agent()` and circuit breaker resume it.
 
-Call reconcile at initial start, resume, after a terminal Attempt, after an Agent exit and when workflow state revision changes. Update PID/registry/state files after every batch, not between individual additions/removals.
+Call reconcile at initial start, resume, after a terminal Attempt, after an Agent exit and when workflow state revision changes. As in current CORAL, publish each Agent's trusted PID registry binding immediately after its handle starts, before starting the next Agent; otherwise the first Agent or its startup Hook can reach the socket before authentication is registered. Revoke each retired binding before reusing its slot. Update only public PID/agent-state snapshots after the batch.
 
 In dynamic resume, authoritative assignments determine which Agent IDs return. Existing Worktrees are implementation resources, not the desired roster. Static resume keeps current directory discovery.
 
@@ -564,6 +590,7 @@ grader:
   args:
     trusted_workflow_handler: autoresearch.state:handle_workflow
     trusted_workflow_authorizer: autoresearch.state:authorize_attempt
+    trusted_artifact_authorizer: autoresearch.state:authorize_artifact
     max_engineering_runs_per_node: 1
 agents:
   dynamic:
@@ -605,7 +632,7 @@ git commit -m "feat: add node-bound dynamic agent lifecycle"
 - Create: `tasks/greedylore_autoresearch/autoresearch/schemas/memory.schema.json`
 - Create: `tasks/greedylore_autoresearch/prompts/global_memory_manager.md`
 - Create: `tasks/greedylore_autoresearch/tests/test_memory.py`
-- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/artifacts.py`
+- Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/state.py`
 - Modify: `tasks/greedylore_autoresearch/autoresearch/src/autoresearch/cli.py`
 - Modify: `tasks/greedylore_autoresearch/task.yaml`
 - Modify: `tasks/greedylore_autoresearch/tests/test_analysis_cli.py`
@@ -615,6 +642,7 @@ git commit -m "feat: add node-bound dynamic agent lifecycle"
 - Modify: `coral/agent/builtin/codex.py`
 - Create: `tests/test_codex_startup_hook.py`
 - Modify: `coral/grader/trusted_writes.py`
+- Modify: `coral/grader/trusted_worker.py`
 - Modify: `tests/test_trusted_writes.py`
 - Modify: `coral/sandbox/srt.py`
 - Modify: `tests/test_sandbox.py`
@@ -625,8 +653,8 @@ git commit -m "feat: add node-bound dynamic agent lifecycle"
 - Produces `memory_due(notes_root, threshold=3) -> MemoryGate`, where `MemoryGate.due` and `MemoryGate.trigger_research_refs` are immutable.
 - Produces `validate_summary(content, notes_root, required_refs=frozenset()) -> frozenset[str]`.
 - Produces `consolidate_memory(*, if_due, context=None, runner=run_fresh_codex, publisher=None) -> MemoryResult`.
-- Adds CLI `autoresearch consolidate-memory [--if-due] [--async]`.
-- Adds Codex reserved `runtime_options.startup_hook: list[str]` and Artifact kinds `research_summary` / `engineering_summary`.
+- Adds CLI `autoresearch consolidate-memory [--if-due] [--async]`; the startup `--async` call requests one fixed `start_memory_if_due` operation with empty payload from the existing trusted socket and returns promptly.
+- Adds `authorize_memory_start(agent_id: str, context: dict) -> bool` as a read-only active-Researcher check, a one-shot grader-owned Memory worker entrypoint, host-only fixed-target Summary publication, and Codex reserved `runtime_options.startup_hook: list[str]`. The two Summary targets are not Agent-writable `publish_artifact` kinds.
 
 - [ ] **Step 1: Write gate and minimal completeness tests**
 
@@ -676,7 +704,7 @@ def test_processed_set_skips_manager(memory_context):
     assert runner.calls == 0
 ```
 
-Mock `subprocess.Popen` and assert `--async` starts a hidden worker with `start_new_session=True`, returns immediately, and the worker—not launcher—takes `LOCK_EX | LOCK_NB`. Occupied lock returns `locked`; runner/publisher failure leaves Analysis、Evaluation和Reference unchanged; next check remains due.
+Test that the CLI returns immediately without a socket call below the three-Node gate, and that an authenticated active Researcher CLI request uses an empty payload when due: the existing grader daemon launches one bounded child from a fixed task entrypoint and returns immediately; the worker—not the socket handler—takes `LOCK_EX | LOCK_NB`. Use a real short-lived subprocess with a fake Codex runner to prove both Summaries can be published after the Hook CLI exits, without a registered Agent ancestor. Occupied lock returns `locked`; runner/publisher failure leaves Analysis、Evaluation和Reference unchanged; next check remains due. Do not rely only on mocked `Popen`.
 
 - [ ] **Step 3: Write startup Hook, fixed-target and Sandbox tests**
 
@@ -695,7 +723,7 @@ def test_hook_failure_still_execs_runtime(monkeypatch):
     assert calls == [("hook",), ("exec", ("codex", "exec"))]
 ```
 
-Trusted writer tests require two exact replaceable targets. SRT denies direct writes to both Summary paths while the run-scoped `memory-consolidation.lock` remains writable. No arbitrary notes-root target is accepted.
+Trusted writer tests require a fixed `start_memory_if_due` operation with empty payload, callable only from a currently registered Researcher, and a host-only writer for the two exact replaceable Summary targets. Ordinary Agent `publish_artifact` must reject both Summary kinds. SRT denies direct writes to both Summary paths while the run-scoped `memory-consolidation.lock` remains writable. No arbitrary notes-root target is accepted.
 
 - [ ] **Step 4: Run focused tests and verify RED**
 
@@ -711,13 +739,13 @@ uv run --frozen --extra dev pytest \
   tests/test_sandbox.py tests/test_dynamic_agents.py -q
 ```
 
-Expected: FAIL because Memory CLI, Summary targets and startup Hook do not exist.
+Expected: FAIL because Memory CLI, fixed launch operation, host Summary targets and startup Hook do not exist.
 
 - [ ] **Step 5: Implement file-reference gate and independent worker**
 
 Accept only `nodes/Nddd/(research|engineering)_analysis_vN.md`. The processed baseline is the intersection of both Summary lists so partial publication never suppresses retry. Gate deduplicates unprocessed Research refs by Node; Engineering refs never count.
 
-At worker start, acquire `<island_root>/memory-consolidation.lock`, recompute the gate and freeze `trigger_research_refs`. Run one ephemeral read-only Codex session. The prompt delegates discovery of new/revised Analyses, evidence selection, semantic deduplication, conflict handling and uncertainty. Output is exactly:
+The grader-owned one-shot worker acquires `<island_root>/memory-consolidation.lock`, recomputes the gate and freezes `trigger_research_refs`. It runs one ephemeral read-only Codex session over staged public Tree/Analysis/Evaluation inputs and selected logs, not `.coral/private` or credentials. The prompt delegates discovery of new/revised Analyses, evidence selection, semantic deduplication, conflict handling and uncertainty. Output is exactly:
 
 ```json
 {
@@ -730,11 +758,11 @@ Validate both outputs before publishing either: nonempty Markdown, canonical exi
 
 - [ ] **Step 6: Add fixed Summary publication and startup Hook**
 
-`validate_artifact()` maps Summary kinds to fixed root filenames only when node/mode/version are null. They are replaceable by temp/fsync/replace; Analysis and spec remain immutable.
+The existing trusted socket adds only `start_memory_if_due`. The authenticated Researcher request has `{}` payload; `authorize_memory_start()` re-reads workflow state to reject Engineer/completed callers. Configure `grader.args.trusted_memory_worker: autoresearch.memory:run_worker`; the grader starts one bounded subprocess in its existing private Python environment and replies immediately. The worker rechecks the gate under its non-blocking flock, so two near-simultaneous start requests cannot duplicate a session. The worker validates both outputs, then calls a host-only writer that replaces only `research_summary.md` and `engineering_summary.md` via separate atomic writes under `trusted_writes.lock`. Partial publication remains recoverable through the processed-list intersection. Do not add a second socket, generic provider or daemon; manual host invocation can run the same one-shot worker synchronously.
 
 Codex runtime removes `startup_hook` before building Codex `-c` options and wraps the runtime command with `python -m coral.agent.startup_hook --hook-json '<argv JSON>' -- '<codex argv>'`. The wrapper executes argv without shell, logs failure, and always `execvpe()`s the runtime. Every dynamic Researcher start/resume/restart therefore checks Memory; Engineering never does.
 
-The detached bounded worker may fail if the owning Researcher dies before publication; it performs no retry loop. The unchanged processed refs keep the gate due, and the next start/restart retries. Tests must prove launcher exit does not terminate the worker and failure is recoverable; do not claim a daemon-like lifecycle.
+The worker no longer depends on the Hook CLI or Researcher staying alive for publication. If the grader stops mid-run or the worker fails, it performs no retry loop; unchanged processed refs keep the gate due for the next Researcher start/restart. A real-subprocess test must prove successful host publication after the Hook CLI exits, plus failure recovery.
 
 - [ ] **Step 7: Add Memory prompt and verify GREEN**
 
@@ -789,6 +817,10 @@ git commit -m "feat: add startup-triggered autoresearch memory"
 - [ ] Run: `uv run --frozen --extra dev pytest -q`
 - [ ] Run: `uv run --frozen --extra dev pytest tasks/greedylore_autoresearch/tests -q`
 - [ ] Run: `uv run --frozen --extra dev coral validate tasks/greedylore_autoresearch --json`
+- [ ] Confirm trusted Root Analysis bootstrap reaches the first N001 reservation without changing Root formal evaluation.
+- [ ] Confirm Engineering submissions from the Node Research SHA and later Engineer commits pass mode-specific provenance checks.
+- [ ] Confirm Agents cannot publish Tree/Spec, other Node Artifacts, or Summary; same-Node concurrent Evaluation refreshes preserve the newest Attempt state.
+- [ ] Confirm a real one-shot Memory child publishes after its Hook CLI exits, while failure keeps the gate due.
 - [ ] Confirm two concurrent reconcile calls cannot allocate duplicate Node IDs.
 - [ ] Confirm two Engineer claims for one Node yield exactly one winner.
 - [ ] Confirm completed Agent is retired/refilled while crashed active Agent resumes the same Session.

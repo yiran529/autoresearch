@@ -72,7 +72,7 @@ Engineering 使用可追加的 claim 记录，每条 claim 有 `reserved / activ
 }
 ```
 
-Root `N000` 由现有 host bootstrap 创建；第一次 reconcile 在验证其 Spec、terminal Research Attempt和Research Analysis后幂等登记为 completed。Root Analysis发布前不分配普通Node。Node ID 与 Agent ID 单调分配且永不复用；取消的 reservation 可以留下编号空洞。`tree.md` 是从 state、Node Specs 与 Analysis 重建的公开投影，不接受独立编辑。
+Root `N000` 由现有 host bootstrap 创建并完成正式评测。动态 Agent 启动前，run owner 在 Agent Sandbox 外调用 `autoresearch bootstrap-root-analysis`：可信宿主确认固定 Root policy 和唯一 terminal Research Attempt，按固定 A0/S0 证据幂等发布或校验 N000 `spec.md`、重建 `evaluation.md`；已有有效 `research_analysis_v1.md` 时直接返回；否则调用现有 Analyzer 并经仅限 N000 Research Analysis 的 host-only 发布方法生成该文件；该方法不暴露为 Agent socket operation，不改变 Root 评测。第一次 reconcile 再验证这些证据并幂等登记 Root 为 completed。Root Analysis 未就绪时，动态启动明确报出所缺前置步骤，不进入零 Agent 的静默等待；普通 Node 不提前分配。Node ID 与 Agent ID 单调分配且永不复用；取消的 reservation 可以留下编号空洞。`tree.md` 是从 state、Node Specs 与 Analysis 重建的公开投影，不接受独立编辑。
 
 所有读改写均在现有 `.coral/private/trusted_writes.lock` 的同一个 `flock` 临界区内完成：取锁后重新读取、校验当前状态、修改、递增 revision，并以 temp file + `fsync` + `os.replace` 发布。不得基于进程内缓存分配 ID。State handler自己持锁；trusted service调用该handler时不重复持锁，handler持锁时也不通过socket调用Publisher。Spec由handler用现有task-local原子写入helper直接发布；若Spec已写但state尚未转active，相同内容的initialize重试可修复。Tree投影若中断，下次reconcile重建。
 
@@ -86,9 +86,11 @@ Root `N000` 由现有 host bootstrap 创建；第一次 reconcile 在验证其 S
 - `complete_assignment`：验证调用者归属、Attempt/Evaluation/Analysis 和无 pending run，再完成 Research 或 Engineering；
 - `cancel_assignment`：只取消尚未产生正式 Attempt 的 reservation/claim，保留 ID 和历史记录。
 
-Task handler 由 `grader.args.trusted_workflow_handler` 固定配置；另配置只读的`trusted_workflow_authorizer`。Agent payload 不能指定任意路径、Agent 身份、计数器或最终状态。Manager operation 通过 `SO_PEERCRED` 匹配 grader daemon 的 parent PID；Agent operation 继续使用现有 registered process-root binding。容量只从可信task config读取，不接受Manager或Agent请求覆盖。
+Task handler 由 `grader.args.trusted_workflow_handler` 固定配置；另配置只读的 `trusted_workflow_authorizer` 和 Artifact 归属校验。Agent payload 不能指定任意路径、Agent 身份、计数器或最终状态。Manager operation 通过 `SO_PEERCRED` 匹配 grader daemon 的 parent PID；Agent operation 继续使用现有 registered process-root binding。容量只从可信 task config 读取，不接受 Manager 或 Agent 请求覆盖。
 
-现有 `submit_attempt` 在同一Attempt锁内、创建Attempt之前调用只读authorizer校验 workflow ownership：Research Attempt 必须来自该 Node 的 Researcher；Engineering Attempt 必须来自当前有效 claim 的 Engineer。这样旧 Session、错误 Worktree 或其他 Agent 无法把结果归属到该 Node。
+现有 `submit_attempt` 在同一 Attempt 锁内、创建 Attempt 之前调用只读 authorizer 校验 workflow ownership：Research Attempt 必须来自该 Node 的 Researcher；Engineering Attempt 必须来自当前有效 claim 的 Engineer。固定 N000 的 `submit_root_attempt()` 保留宿主特例，不经过普通 Node 的 owner 校验。这样旧 Session、错误 Worktree 或其他 Agent 无法把结果归属到该 Node。
+
+动态模式下，普通 `publish_artifact` 不接受 Agent 写 `tree.md` 或创建 `spec.md`：Tree 只由 Workflow Store 重建，普通 Spec 只由 `initialize_research` 发布，Root Spec 保留现有可信宿主特例。Node 级 Analysis 仅由该 Node 当前 Researcher 发布 Research 版本，或由当前认领该 Node 的 Engineer 发布 Engineering 版本；Node 级 Evaluation 仅允许这两种当前 owner 请求刷新。校验在同一 `trusted_writes.lock` 内重读 workflow state，完成或取消的旧 Agent 不再有发布权。Root Analysis/Evaluation 使用固定 N000 的宿主路径。Summary 只由下述一次性 Memory worker 的可信宿主路径发布，Agent 不能借普通 Artifact 入口代写。
 
 ## 5. 并发与一致性
 
@@ -112,7 +114,7 @@ Scheduler 只判断是否至少存在未认领的合格 Node，不排序候选�
 
 ### 5.3 防止旧结果覆盖
 
-Agent ID 每次 workflow 唯一，trusted registry 只认证当前进程根。状态转换检查 expected current status 和 owner；immutable Node Spec / versioned Analysis 不覆盖；Attempt 仍以 commit SHA 为键。完成后的 Agent 从 desired assignments 中移除，后续写入被 ownership 检查拒绝。
+Agent ID 每次 workflow 唯一，trusted registry 只认证当前进程根。状态转换检查 expected current status 和 owner；immutable Node Spec / versioned Analysis 不覆盖；Attempt 仍以 commit SHA 为键。完成后的 Agent 从 desired assignments 中移除，后续写入被 ownership 检查拒绝。不同 Node 的 Spec/Evaluation 有不同路径，不需要跨 Node 事务。对同一 Node 的 `evaluation.md`，可信写入端在 `trusted_writes.lock` 内重新读取最新 Attempts 和 eval logs、调用现有 deterministic rebuild、再原子替换该 Node 文件；不发布客户端在锁外计算的旧文本。Grader 对 Attempt 的提交与终结也使用该锁，因此并发刷新不能让旧快照覆盖新快照。
 
 ### 5.4 Artifact 与状态恢复
 
@@ -137,7 +139,7 @@ Research quality 无论通过或失败都可完成；只有通过者满足 Engin
 2. Manager 为其创建独立 Agent ID、Worktree和 Session。
 3. Engineer 自主比较全局 evidence 并调用 `autoresearch engineering claim Nxxx`。
 4. 可信入口原子认领并返回固定 Research Commit；CLI 将干净 Engineer Worktree定位到该 commit。
-5. Engineer实施系统优化，通过 `coral eval`提交属于原 Node的 Engineering Attempts。
+5. Engineer实施系统优化，通过 `coral eval`提交属于原 Node的 Engineering Attempts。提交验证按 mode 区分：Research 继续匹配 Node Spec 固定的 Parent/Base；Engineering 必须把本 Node 唯一 terminal Research SHA 同时固定为 `quality_anchor` 和 `base_commit`，验证该 SHA 和候选提交链；有效 claim 由 Attempt 创建前的锁内 authorizer 重查，不再把 Node Spec 的 Parent Commit 当作 Engineering 提交的直接父提交；后续 Engineering Attempt 可以接续该 Engineer 的前次提交。
 6. Grader执行固定 Efficiency Evaluation；Analyzer发布 Engineering Analysis。
 7. `autoresearch node complete --mode engineering` 完成 claim，Manager释放资源并按需补位。
 8. 崩溃恢复同一 Engineer Agent、claim、Worktree和 Session；不得创建新的 Engineering 流程。
@@ -163,7 +165,7 @@ agents:
 
 Assignments 在动态模式下是角色 templates，不是长期 Agent。`AgentManager` 继续负责 Worktree provisioning、Runtime启动、Sandbox、PID registry、Session提取、crash circuit breaker、pause/resume 和 grader lifecycle；task-local handler 只返回 desired assignments，不启动进程。
 
-Manager 在 start/resume、workflow state改变和 Agent退出后 reconcile：
+Manager 在 start/resume、workflow state改变和 Agent退出后 reconcile；每启动一个 Agent 后立即写入其可信 PID registry binding，保持现有 Agent 可立即使用 `coral eval` 和启动 Hook 的行为，批次结束才更新公开 PID/状态快照：
 
 - desired 且未运行：从对应 template 构造 `AgentSpec` 并启动；
 - desired 且异常退出：使用现有 `_restart_agent()` 恢复 Session；
@@ -188,7 +190,7 @@ autoresearch consolidate-memory --if-due --async
 
 CLI不构建 Evidence Bundle/hash或解释知识差异，但必须记录本次 gate 使用的 Research Analysis引用，并要求两份输出的 `processed_analyses` 都覆盖这些引用。Memory Manager负责筛选、去重、冲突分析和完整 processed list。简单非阻塞 flock防并发；失败不阻塞研究，下次 Researcher启动重试。
 
-异步 worker测试覆盖：launcher立即返回、worker持锁完成两份发布、Researcher启动包装器退出后worker仍可完成，以及worker失败后下一次检查仍 due。不新增 timer、heartbeat action或常驻调度器。
+`--async` 不从短命 CLI 进程直接 `Popen` 一个再经 Agent socket 发布的孤儿 worker：该进程会失去 registered Agent 祖先。CLI 可先按文件名计算三 Node 门槛以便未到期时立即退出；到期才向现有 trusted socket 发一个固定、空 payload 的 Memory 启动请求。Worker 持锁后必须重算门槛，避免并发重复启动；服务端只接受当前 Researcher，并从现有 grader daemon 启动一次性 worker 后立即返回。Worker 自己持非阻塞 Memory `flock`、检查三 Node 门槛、运行独立 Codex session，并通过只允许替换两份固定 Summary 的宿主发布方法写入；不增加第二个 socket、常驻服务或通用控制面。Grader 停止时 worker 若失败则保持旧 processed refs，下次 Researcher 启动重新检查。测试覆盖 CLI 立即返回、真实子进程不依赖 Researcher 祖先也能发布两份 Summary、失败后仍 due；不只 mock `Popen`。
 
 ## 10. 完成条件与资源回收
 
@@ -208,5 +210,7 @@ Worktree仅在 workflow completed/cancelled且 `git status --porcelain`为空时
 - manager restart只恢复 authoritative active/reserved assignments；
 - 动态并发不超过 `max_researchers` / `max_engineers`，完成后自动补位；
 - stale Agent不能提交 Attempt、完成状态或覆盖 Artifact；
+- Agent 无法绕过 Workflow Store 改 Tree/建 Spec，也无法发布其他 Node 的 Analysis/Evaluation；同一 Node 的并发 Evaluation 刷新不会回退；
+- 新 run 可经可信 Root Analysis bootstrap 到达 N001；Engineering 从本 Node Research Commit 出发的提交可通过正式验证；
 - Analyzer-only、Memory三 Node gate、最小 completeness检查和Summary幂等成立；
 - 原有静态 Agent、Attempt/Retry、Grader、Sandbox、GPU协议和Root流程回归通过。
