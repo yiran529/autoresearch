@@ -14,6 +14,10 @@ grader:
   timeout: 0
   direction: maximize
   args:
+    trusted_workflow_handler: autoresearch.state:handle_workflow
+    trusted_workflow_authorizer: autoresearch.state:authorize_attempt
+    trusted_artifact_authorizer: autoresearch.state:authorize_artifact
+    max_engineering_runs_per_node: 1
     trusted_submission_validator: autoresearch.submission:validate_submission
     trusted_artifact_validator: autoresearch.artifacts:validate_artifact
   parallel:

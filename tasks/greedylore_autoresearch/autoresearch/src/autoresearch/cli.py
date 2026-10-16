@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
 from autoresearch.client import request_trusted
 from autoresearch.evaluation import refresh_node_evaluation
-from autoresearch.nodes import NodeError, create_node
 from coral.hub._island import island_root
 from coral.hub.attempts import read_attempts
-from coral.workspace.breadcrumbs import find_coral_breadcrumb, read_island_breadcrumb
+from coral.workspace.breadcrumbs import (
+    find_breadcrumb_file,
+    find_coral_breadcrumb,
+    read_island_breadcrumb,
+)
 
 
 def _workflow_context() -> tuple[Path, Path, str | None]:
@@ -43,39 +47,74 @@ def _publish(coral_dir: Path, kind: str, content: str, context: dict) -> dict:
     )
 
 
-def _create_node(args: argparse.Namespace) -> dict:
-    coral_dir, notes_root, island_id = _workflow_context()
-    attempts = [
-        attempt
-        for attempt in read_attempts(coral_dir, island_id=island_id)
-        if attempt.metadata.get("mode") == "research"
-        and attempt.metadata.get("node_id") == args.parent
-        and attempt.status not in {"pending", "crashed", "timeout"}
-    ]
-    commits = {attempt.commit_hash for attempt in attempts}
-    if len(commits) != 1:
-        raise NodeError(f"parent {args.parent} must have exactly one terminal Research SHA")
-    parent_commit = next(iter(commits))
-    version = args.analysis_version
-    evidence = {
-        "notes_root": notes_root,
-        "parent_node": args.parent,
-        "parent_commit": parent_commit,
-        "base_commit": parent_commit,
-        "analysis_ref": f"nodes/{args.parent}/research_analysis_v{version}.md",
-        "publish": lambda kind, text, context: _publish(coral_dir, kind, text, context),
-    }
-    path = create_node(
+def _agent_id() -> str:
+    breadcrumb = find_breadcrumb_file(".coral_agent_id")
+    if breadcrumb is None:
+        raise SystemExit("No CORAL Agent identity found in this Worktree")
+    return breadcrumb.read_text(encoding="utf-8").strip()
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _require_clean_worktree() -> None:
+    if _git("status", "--porcelain", "--untracked-files=all"):
+        raise SystemExit("Worktree must be clean before changing its Git base")
+
+
+def _checkout_base(commit_sha: str) -> None:
+    _require_clean_worktree()
+    branch = f"autoresearch-{_agent_id()}"
+    current = _git("branch", "--show-current")
+    if current == branch:
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit_sha, "HEAD"],
+            check=True, capture_output=True,
+        )
+        return
+    exists = subprocess.run(
+        ["git", "show-ref", "--verify", f"refs/heads/{branch}"],
+        capture_output=True, check=False,
+    ).returncode == 0
+    if exists:
+        _git("switch", branch)
+    else:
+        _git("switch", "-c", branch, commit_sha)
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit_sha, "HEAD"],
+        check=True, capture_output=True,
+    )
+
+
+def _initialize_node(args: argparse.Namespace) -> dict:
+    agent_id = _agent_id()
+    if not agent_id.startswith("research-N") or len(agent_id) != len("research-N001"):
+        raise SystemExit("node initialize requires a reserved Researcher Agent")
+    _require_clean_worktree()
+    result = request_trusted(
+        _coral_dir(), "initialize_research",
         {
+            "node_id": agent_id.removeprefix("research-"),
+            "parent_node": args.parent,
             "hypothesis": args.hypothesis,
             "selection_rationale": args.selection_rationale,
             "delta": args.delta,
             "risk": args.risk,
             "falsification_criteria": args.falsification_criteria,
         },
-        evidence,
     )
-    return {"path": str(path.relative_to(notes_root))}
+    _checkout_base(result["base_commit"])
+    return result
+
+
+def _claim_engineering(node_id: str) -> dict:
+    _require_clean_worktree()
+    result = request_trusted(_coral_dir(), "claim_engineering", {"node_id": node_id})
+    _checkout_base(result["research_sha"])
+    return result
 
 
 def _refresh_evaluation(args: argparse.Namespace) -> dict:
@@ -102,18 +141,30 @@ def _parser() -> argparse.ArgumentParser:
     retry = commands.add_parser("retry", help="retry one same-SHA infrastructure failure")
     retry.add_argument("commit_hash")
 
+    root = commands.add_parser(
+        "bootstrap-root-analysis", help="publish fixed N000 Analysis from the host"
+    )
+    root.add_argument("--coral-dir", type=Path, required=True)
+    root.add_argument("--root-worktree", type=Path, required=True)
+
     node = commands.add_parser("node", help="manage Research Tree Nodes")
     node_commands = node.add_subparsers(dest="node_command", required=True)
-    create = node_commands.add_parser(
-        "create", help="create a child from a published Research Analysis"
-    )
-    create.add_argument("--parent", required=True)
-    create.add_argument("--analysis-version", type=int, required=True)
-    create.add_argument("--hypothesis", required=True)
-    create.add_argument("--selection-rationale", required=True)
-    create.add_argument("--delta", required=True)
-    create.add_argument("--risk", required=True)
-    create.add_argument("--falsification-criteria", required=True)
+    initialize = node_commands.add_parser("initialize", help="initialize this reserved Node")
+    initialize.add_argument("--parent", required=True)
+    initialize.add_argument("--hypothesis", required=True)
+    initialize.add_argument("--selection-rationale", required=True)
+    initialize.add_argument("--delta", required=True)
+    initialize.add_argument("--risk", required=True)
+    initialize.add_argument("--falsification-criteria", required=True)
+    complete = node_commands.add_parser("complete", help="complete this Node assignment")
+    complete.add_argument("--mode", choices=("research", "engineering"), required=True)
+    node_commands.add_parser("cancel", help="cancel an unstarted assignment")
+
+    engineering = commands.add_parser("engineering", help="manage Engineering claims")
+    engineering_commands = engineering.add_subparsers(dest="engineering_command", required=True)
+    claim = engineering_commands.add_parser("claim", help="atomically claim one Research Node")
+    claim.add_argument("node_id")
+    engineering_commands.add_parser("cancel", help="cancel an unbound Engineer assignment")
 
     refresh = commands.add_parser(
         "refresh-evaluation", help="rebuild and publish one Node evaluation"
@@ -133,8 +184,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     if args.command == "retry":
         result = request_trusted(_coral_dir(), "retry_attempt", {"commit_hash": args.commit_hash})
-    elif args.command == "node" and args.node_command == "create":
-        result = _create_node(args)
+    elif args.command == "bootstrap-root-analysis":
+        from autoresearch.bootstrap import bootstrap_root_analysis
+
+        path = bootstrap_root_analysis(args.coral_dir, args.root_worktree)
+        result = {"analysis_path": str(path)}
+    elif args.command == "node" and args.node_command == "initialize":
+        result = _initialize_node(args)
+    elif args.command == "node" and args.node_command == "complete":
+        result = request_trusted(_coral_dir(), "complete_assignment", {"mode": args.mode})
+    elif args.command == "node" and args.node_command == "cancel":
+        result = request_trusted(_coral_dir(), "cancel_assignment", {})
+    elif args.command == "engineering" and args.engineering_command == "claim":
+        result = _claim_engineering(args.node_id)
+    elif args.command == "engineering" and args.engineering_command == "cancel":
+        result = request_trusted(_coral_dir(), "cancel_assignment", {})
     elif args.command == "refresh-evaluation":
         result = _refresh_evaluation(args)
     elif args.command == "analyze":

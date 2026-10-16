@@ -25,6 +25,7 @@ def test_child_freezes_selected_parent_versions(tmp_path):
     evidence = _parent(tmp_path / "notes")
     path = create_node(
         {
+            "node_id": "N002",
             "hypothesis": "Compress only stable gradients.",
             "selection_rationale": "The parent Analysis identified communication as the bottleneck.",
             "delta": "Gate compression by stability.",
@@ -48,6 +49,7 @@ def test_child_requires_existing_parent_research_analysis(tmp_path):
     with pytest.raises(NodeError, match="does not exist"):
         create_node(
             {
+                "node_id": "N002",
                 "hypothesis": "h",
                 "selection_rationale": "s",
                 "delta": "d",
@@ -64,6 +66,7 @@ def test_child_rejects_analysis_from_different_parent(tmp_path):
     with pytest.raises(NodeError, match="selected Node"):
         create_node(
             {
+                "node_id": "N002",
                 "hypothesis": "h",
                 "selection_rationale": "s",
                 "delta": "d",
@@ -77,39 +80,27 @@ def test_child_rejects_analysis_from_different_parent(tmp_path):
 def test_node_cli_publishes_spec_through_trusted_entry(tmp_path, monkeypatch):
     from autoresearch import cli
 
-    from coral.types import Attempt
 
     notes = tmp_path / "notes"
-    _parent(notes)
-    research = Attempt(
-        commit_hash="a" * 40,
-        agent_id="researcher",
-        title="research",
-        score=1.0,
-        status="improved",
-        parent_hash=None,
-        timestamp="2026-01-01T00:00:00+00:00",
-        metadata={"mode": "research", "node_id": "N001"},
-    )
     calls = []
     monkeypatch.setattr(cli, "_workflow_context", lambda: (tmp_path / ".coral", notes, None))
-    monkeypatch.setattr(cli, "read_attempts", lambda *_args, **_kwargs: [research])
+    monkeypatch.setattr(cli, "_agent_id", lambda: "research-N002")
+    monkeypatch.setattr(cli, "_checkout_base", lambda _sha: None)
+    monkeypatch.setattr(cli, "_require_clean_worktree", lambda: None)
     monkeypatch.setattr(
         cli,
         "request_trusted",
         lambda _coral, operation, payload: (
-            calls.append((operation, payload)) or {"path": "nodes/N002/spec.md"}
+            calls.append((operation, payload)) or {"status": "active", "base_commit": "a" * 40}
         ),
     )
 
     cli.main(
         [
             "node",
-            "create",
+            "initialize",
             "--parent",
             "N001",
-            "--analysis-version",
-            "2",
             "--hypothesis",
             "h",
             "--selection-rationale",
@@ -123,6 +114,6 @@ def test_node_cli_publishes_spec_through_trusted_entry(tmp_path, monkeypatch):
         ]
     )
 
-    assert calls[0][0] == "publish_artifact"
-    assert calls[0][1]["kind"] == "spec"
+    assert calls[0][0] == "initialize_research"
+    assert calls[0][1]["parent_node"] == "N001"
     assert calls[0][1]["node_id"] == "N002"

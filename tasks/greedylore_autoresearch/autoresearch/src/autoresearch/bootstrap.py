@@ -150,3 +150,99 @@ def bootstrap_root(
         raise BootstrapError("Root bootstrap changed files other than submission.yaml")
     _publish_root(manifest, seed_commit)
     return submission_path
+
+
+def bootstrap_root_analysis(
+    coral_dir: Path,
+    root_worktree: Path,
+    *,
+    runner: Any = None,
+    code_snapshotter: Any = None,
+) -> Path:
+    """Complete fixed N000 public evidence on the host after its formal Attempt."""
+    from coral.hub.attempts import read_attempts
+
+    from .analysis import AnalysisContext, analyze
+
+    coral_dir = Path(coral_dir).resolve()
+    root_worktree = Path(root_worktree).resolve()
+    policy_path = coral_dir / "private" / "root_bootstrap.json"
+    try:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BootstrapError("fixed Root bootstrap policy is unavailable") from exc
+    if (
+        not isinstance(policy, dict)
+        or policy.get("version") != 1
+        or policy.get("node_id") != "N000"
+        or policy.get("mode") != "research"
+        or not isinstance(policy.get("source_commit"), str)
+        or not _SHA.fullmatch(policy["source_commit"])
+        or not isinstance(policy.get("submission_hash"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", policy["submission_hash"])
+    ):
+        raise BootstrapError("fixed Root bootstrap policy is invalid")
+    attempts = tuple(
+        attempt for attempt in read_attempts(coral_dir)
+        if attempt.metadata.get("node_id") == "N000"
+        and attempt.metadata.get("mode") == "research"
+        and attempt.budget_class == "real"
+    )
+    if (
+        len(attempts) != 1
+        or attempts[0].status in {"pending", "crashed", "timeout"}
+        or attempts[0].parent_hash != policy["source_commit"]
+    ):
+        raise BootstrapError("Root Analysis bootstrap requires one terminal N000 Research Attempt")
+    if attempts[0].metadata.get("submission_hash") != policy["submission_hash"]:
+        raise BootstrapError("Root Attempt conflicts with the fixed Root policy")
+
+    node_root = coral_dir / "public" / "notes" / "nodes" / "N000"
+    spec_path = node_root / "spec.md"
+    expected_spec = _root_spec(policy["source_commit"])
+    if spec_path.is_file():
+        try:
+            current_spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise BootstrapError("existing Root Spec is invalid") from exc
+        if (
+            not isinstance(current_spec, dict)
+            or current_spec.get("node_id") != "N000"
+            or current_spec.get("base_commit") != policy["source_commit"]
+            or current_spec.get("parent_node") is not None
+        ):
+            raise BootstrapError("existing Root Spec conflicts with fixed policy")
+    else:
+        atomic_write_text(spec_path, yaml.safe_dump(expected_spec, sort_keys=False))
+
+    context = AnalysisContext(
+        coral_dir=coral_dir,
+        notes_root=coral_dir / "public" / "notes",
+        island_id=None,
+        attempts=attempts,
+        log_root=coral_dir / "public" / "eval_logs",
+        checkout_root=root_worktree,
+    )
+
+    def publish(kind: str, content: str, metadata: dict[str, Any]) -> dict[str, str]:
+        if metadata.get("node_id") != "N000":
+            raise BootstrapError("Root host publisher received a non-Root target")
+        if kind == "evaluation" and metadata.get("mode") is None:
+            target = node_root / "evaluation.md"
+        elif kind == "analysis" and metadata.get("mode") == "research" and metadata.get("version") == 1:
+            target = node_root / "research_analysis_v1.md"
+            if target.exists():
+                if target.read_text(encoding="utf-8") != content:
+                    raise BootstrapError("Root Analysis v1 is immutable")
+                return {"path": "nodes/N000/research_analysis_v1.md"}
+        else:
+            raise BootstrapError("Root host publisher received an unsupported target")
+        atomic_write_text(target, content)
+        return {"path": f"nodes/N000/{target.name}"}
+
+    options: dict[str, Any] = {"context": context, "publisher": publish}
+    if runner is not None:
+        options["runner"] = runner
+    if code_snapshotter is not None:
+        options["code_snapshotter"] = code_snapshotter
+    return analyze("N000", "research", **options).analysis_path

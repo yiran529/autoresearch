@@ -44,20 +44,6 @@ def _existing_reference(
     return value, int(match.group(2))
 
 
-def _next_node_id(notes_root: Path) -> str:
-    nodes = notes_root / "nodes"
-    numbers: list[int] = []
-    if nodes.is_dir():
-        for path in nodes.iterdir():
-            match = _NODE.fullmatch(path.name)
-            if match:
-                numbers.append(int(match.group(1)))
-    number = max(numbers, default=0) + 1
-    if number > 999:
-        raise NodeError("Node ID space is exhausted")
-    return f"N{number:03d}"
-
-
 def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path:
     """Create one child spec with frozen parent evidence references."""
     notes_root = Path(evidence["notes_root"])
@@ -74,9 +60,8 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
         notes_root, evidence.get("analysis_ref"), _ANALYSIS, parent_node
     )
 
-    requested_id = request.get("node_id")
-    node_id = _next_node_id(notes_root) if requested_id is None else str(requested_id)
-    if not _NODE.fullmatch(node_id) or node_id == "N000":
+    node_id = request.get("node_id")
+    if not isinstance(node_id, str) or not _NODE.fullmatch(node_id) or node_id == "N000":
         raise NodeError("invalid child Node ID")
     spec = {
         "node_id": node_id,

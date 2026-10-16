@@ -299,3 +299,68 @@ def test_engineering_anchor_is_scoped_to_authenticated_island(tmp_path):
                 "island_id": "A",
             },
         )
+
+
+def test_engineering_provenance_uses_same_node_research_sha_and_allows_commit_chain(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / "model.py").write_text("research = True\n")
+    _git(repo, "add", "model.py")
+    _git(repo, "commit", "-m", "research result")
+    research_sha = _git(repo, "rev-parse", "HEAD")
+    coral_dir = tmp_path / ".coral"
+    _write_node_spec(coral_dir, base)
+    attempts = coral_dir / "public" / "attempts"
+    attempts.mkdir(parents=True)
+    (attempts / f"{research_sha}.json").write_text(json.dumps({
+        "commit_hash": research_sha,
+        "status": "improved",
+        "metadata": {"mode": "research", "node_id": "N023"},
+    }))
+    declaration = _submission(research_sha)
+    declaration.update(mode="engineering", quality_anchor=research_sha)
+    (repo / "submission.yaml").write_text(yaml.safe_dump(declaration, sort_keys=False))
+    _git(repo, "add", "submission.yaml")
+    _git(repo, "commit", "-m", "first engineering candidate")
+    first = _git(repo, "rev-parse", "HEAD")
+    assert validate_submission(first, {
+        "worktree": str(repo), "coral_dir": str(coral_dir),
+        "contract_path": str(_contract(tmp_path)), "parent_hash": research_sha,
+        "island_id": None,
+    })["quality_anchor"] == research_sha
+
+    (repo / "model.py").write_text("research = True\noptimized = True\n")
+    _git(repo, "add", "model.py")
+    _git(repo, "commit", "-m", "second engineering candidate")
+    second = _git(repo, "rev-parse", "HEAD")
+    assert validate_submission(second, {
+        "worktree": str(repo), "coral_dir": str(coral_dir),
+        "contract_path": str(_contract(tmp_path)), "parent_hash": first,
+        "island_id": None,
+    })["base_commit"] == research_sha
+
+
+def test_engineering_rejects_spec_base_instead_of_research_sha(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / "model.py").write_text("research = True\n")
+    _git(repo, "add", "model.py")
+    _git(repo, "commit", "-m", "research result")
+    research_sha = _git(repo, "rev-parse", "HEAD")
+    declaration = _submission(base)
+    declaration.update(mode="engineering", quality_anchor=research_sha)
+    (repo / "submission.yaml").write_text(yaml.safe_dump(declaration, sort_keys=False))
+    _git(repo, "add", "submission.yaml")
+    _git(repo, "commit", "-m", "wrong engineering base")
+    coral_dir = tmp_path / ".coral"
+    _write_node_spec(coral_dir, base)
+    attempts = coral_dir / "public" / "attempts"
+    attempts.mkdir(parents=True)
+    (attempts / f"{research_sha}.json").write_text(json.dumps({
+        "commit_hash": research_sha, "status": "improved",
+        "metadata": {"mode": "research", "node_id": "N023"},
+    }))
+    with pytest.raises(SubmissionError, match="Research SHA"):
+        validate_submission(_git(repo, "rev-parse", "HEAD"), {
+            "worktree": str(repo), "coral_dir": str(coral_dir),
+            "contract_path": str(_contract(tmp_path)), "parent_hash": research_sha,
+            "island_id": None,
+        })

@@ -119,10 +119,13 @@ def _validate_node_provenance(declaration: dict[str, Any], context: dict[str, An
         raise SubmissionError("canonical Node spec is unavailable or invalid")
     if spec["node_id"] != declaration["node_id"]:
         raise SubmissionError("Node spec node_id does not match submission")
-    if spec["base_commit"] != declaration["base_commit"]:
-        raise SubmissionError("Node spec base_commit does not match submission")
-    if spec["parent_commit"] != context.get("parent_hash"):
-        raise SubmissionError("Node spec parent_commit does not match candidate parent")
+    if declaration["mode"] == "research":
+        if spec["base_commit"] != declaration["base_commit"]:
+            raise SubmissionError("Node spec base_commit does not match submission")
+        if spec["parent_commit"] != context.get("parent_hash"):
+            raise SubmissionError("Node spec parent_commit does not match candidate parent")
+    elif declaration["base_commit"] != declaration["quality_anchor"]:
+        raise SubmissionError("Engineering base_commit must equal the Node Research SHA")
     if spec["analysis_refs"] != declaration["analysis_refs"]:
         raise SubmissionError("Node spec analysis_refs do not match submission")
     for group in (spec["analysis_refs"],):
@@ -203,12 +206,14 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
         matches = [
             attempt
             for attempt in _attempt_payloads(coral_dir, context.get("island_id"))
-            if attempt.get("commit_hash") == anchor
-            and attempt.get("status") not in {"pending", "crashed", "timeout"}
-            and attempt.get("metadata", {}).get("mode") == "research"
+            if attempt.get("metadata", {}).get("mode") == "research"
             and attempt.get("metadata", {}).get("node_id") == node_id
         ]
-        if len(matches) != 1:
+        if (
+            len(matches) != 1
+            or matches[0].get("commit_hash") != anchor
+            or matches[0].get("status") in {"pending", "crashed", "timeout"}
+        ):
             raise SubmissionError("quality_anchor is not the unique terminal Research SHA")
 
     if node_type == "seed":

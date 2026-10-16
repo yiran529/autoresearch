@@ -419,9 +419,30 @@ def test_retry_rechecks_bound_worktree_and_head_inside_transaction(tmp_path):
         service.handle("retry_attempt", {"commit_hash": commit}, os.getpid())
 
 
+def test_retry_rechecks_active_assignment_before_reset(tmp_path):
+    coral_dir = tmp_path / ".coral"
+    repo, _base = _init_repo(tmp_path / "agent")
+    commit, parent = _commit(repo, "research")
+    binding = AgentBinding(
+        "researcher-0", os.getpid(), process_start_time(os.getpid()), str(repo), None
+    )
+    service = _service(coral_dir, binding)
+    service.handle("submit_attempt", _payload(binding, commit, parent), os.getpid())
+    attempt = read_attempt(coral_dir, commit)
+    attempt.status = "crashed"
+    attempt.metadata["failure_class"] = "infra"
+    write_attempt(coral_dir, attempt)
+    service.attempt_authorizer = lambda *_: (_ for _ in ()).throw(
+        TrustedWriteError("assignment completed")
+    )
+
+    with pytest.raises(TrustedWriteError, match="assignment completed"):
+        service.handle("retry_attempt", {"commit_hash": commit}, os.getpid())
+    assert read_attempt(coral_dir, commit).status == "crashed"
+
+
 def test_incomplete_trusted_connection_times_out_without_unbounded_thread(tmp_path):
     import socket
-    import time
 
     coral_dir = tmp_path / ".coral"
     repo, _ = _init_repo(tmp_path / "agent")
@@ -559,3 +580,84 @@ def test_publish_immutable_artifact_is_idempotent_for_same_content(tmp_path):
     second = service.handle("publish_artifact", payload, os.getpid())
 
     assert first == second == {"path": "nodes/N001/spec.md"}
+
+
+
+def test_workflow_reconcile_accepts_only_manager_peer(tmp_path, monkeypatch):
+    coral_dir = tmp_path / ".coral"
+    calls = []
+    config = SimpleNamespace(grader=SimpleNamespace(args={}))
+    service = TrustedWriteService(
+        coral_dir, config,
+        identity_resolver=lambda *_: (_ for _ in ()).throw(AssertionError("not an Agent")),
+        workflow_handler=lambda op, payload, context: (
+            calls.append((op, payload, context)) or {"assignments": []}
+        ),
+    )
+    monkeypatch.setattr("coral.grader.trusted_writes.os.getppid", lambda: 4242)
+    assert service.handle("reconcile_workflow", {}, peer_pid=4242) == {"assignments": []}
+    assert calls[0][0:2] == ("reconcile_workflow", {})
+    with pytest.raises(TrustedWriteError, match="manager"):
+        service.handle("reconcile_workflow", {}, peer_pid=4243)
+    with pytest.raises(TrustedWriteError, match="manager"):
+        service.handle_authenticated(
+            "reconcile_workflow", {},
+            AgentBinding("research-N001", 1, 1, str(tmp_path), None),
+        )
+
+
+def test_agent_workflow_operation_cannot_supply_identity_or_state(tmp_path):
+    binding = AgentBinding("research-N001", 1, 1, str(tmp_path), None)
+    service = TrustedWriteService(
+        tmp_path / ".coral",
+        SimpleNamespace(grader=SimpleNamespace(args={})),
+        workflow_handler=lambda op, payload, context: {
+            "operation": op, "owner": context["agent_id"], "payload": payload,
+        },
+    )
+    result = service.handle_authenticated(
+        "claim_engineering", {"node_id": "N001"}, binding
+    )
+    assert result["owner"] == "research-N001"
+    with pytest.raises(TrustedWriteError, match="unknown"):
+        service.handle_authenticated(
+            "claim_engineering", {"agent_id": "research-N999", "node_id": "N001"},
+            binding,
+        )
+
+
+
+def test_submit_authorizer_blocks_foreign_assignment_before_attempt(tmp_path):
+    repo, _ = _init_repo(tmp_path / "agent")
+    commit, parent = _commit(repo, "research")
+    binding = AgentBinding("research-N001", 1, 1, str(repo), None)
+    service = TrustedWriteService(
+        tmp_path / ".coral",
+        SimpleNamespace(grader=SimpleNamespace(args={})),
+        submission_validator=lambda *_: _canonical(),
+        attempt_authorizer=lambda *_: (_ for _ in ()).throw(
+            TrustedWriteError("Attempt owner is not active")
+        ),
+        checkpoint_fn=lambda *_args, **_kwargs: "shared-state",
+    )
+    with pytest.raises(TrustedWriteError, match="owner"):
+        service.handle_authenticated("submit_attempt", _payload(binding, commit, parent), binding)
+    assert read_attempt(tmp_path / ".coral", commit) is None
+
+
+def test_artifact_authorizer_rebuilds_stale_evaluation_before_replace(tmp_path):
+    binding = AgentBinding("research-N001", 1, 1, str(tmp_path), None)
+    service = TrustedWriteService(
+        tmp_path / ".coral",
+        SimpleNamespace(grader=SimpleNamespace(args={})),
+        artifact_validator=lambda *_: {"relative_path": "nodes/N001/evaluation.md"},
+        artifact_authorizer=lambda *_: {"content": "fresh from latest Attempts\n"},
+    )
+    result = service.handle_authenticated("publish_artifact", {
+        "kind": "evaluation", "node_id": "N001", "mode": None,
+        "version": None, "content": "stale snapshot\n",
+    }, binding)
+    assert result == {"path": "nodes/N001/evaluation.md"}
+    assert (tmp_path / ".coral/public/notes/nodes/N001/evaluation.md").read_text() == (
+        "fresh from latest Attempts\n"
+    )

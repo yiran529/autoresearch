@@ -27,7 +27,18 @@ from coral.types import BUDGET_CLASS_REAL, BUDGET_CLASS_TUNE, Attempt
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 64 * 1024
-OPERATIONS = frozenset({"submit_attempt", "retry_attempt", "publish_artifact"})
+WORKFLOW_OPERATIONS = frozenset({
+    "reconcile_workflow", "initialize_research", "claim_engineering",
+    "complete_assignment", "cancel_assignment",
+})
+OPERATIONS = frozenset({"submit_attempt", "retry_attempt", "publish_artifact"}) | WORKFLOW_OPERATIONS
+_WORKFLOW_FIELDS = {
+    "reconcile_workflow": frozenset(),
+    "initialize_research": frozenset({"node_id", "parent_node", "hypothesis", "selection_rationale", "delta", "risk", "falsification_criteria"}),
+    "claim_engineering": frozenset({"node_id"}),
+    "complete_assignment": frozenset({"mode"}),
+    "cancel_assignment": frozenset(),
+}
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _NODE_ARTIFACT = re.compile(
     r"^nodes/N[0-9]{3}/(?:spec|evaluation|(?:research|engineering)_(?:analysis|review)_v[1-9][0-9]*)\.md$"
@@ -204,10 +215,13 @@ def retry_attempt(
     expected_contract_hash: str,
     max_infra_retries: int,
     expected_source_worktree: str | Path | None = None,
+    authorize: Callable[[], Any] | None = None,
 ) -> Attempt:
     """Atomically reset one terminal infrastructure failure to pending."""
     with trusted_writes_lock(coral_dir):
         attempt = _read_attempt_unlocked(coral_dir, commit_hash, island_id)
+        if authorize is not None:
+            authorize()
         if expected_source_worktree is not None:
             worktree = Path(expected_source_worktree).resolve()
             recorded = attempt.metadata.get("source_worktree")
@@ -392,6 +406,9 @@ class TrustedWriteService:
         submission_validator: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
         artifact_validator: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
         checkpoint_fn: Callable[..., str | None] = checkpoint,
+        workflow_handler: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+        attempt_authorizer: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+        artifact_authorizer: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self.coral_dir = Path(coral_dir).resolve()
         self.config = config
@@ -399,6 +416,9 @@ class TrustedWriteService:
         self.submission_validator = submission_validator
         self.artifact_validator = artifact_validator
         self.checkpoint_fn = checkpoint_fn
+        self.workflow_handler = workflow_handler
+        self.attempt_authorizer = attempt_authorizer
+        self.artifact_authorizer = artifact_authorizer
 
     def _validator_entrypoint(self, name: str) -> str:
         args = getattr(getattr(self.config, "grader", None), "args", {}) or {}
@@ -406,6 +426,25 @@ class TrustedWriteService:
         if not isinstance(value, str) or not value:
             raise TrustedWriteError(f"{name} is not configured")
         return value
+
+    def _authorize(
+        self, name: str, callback: Callable[..., dict[str, Any]] | None,
+        *arguments: Any,
+    ) -> dict[str, Any] | None:
+        configured = getattr(getattr(self.config, "grader", None), "args", {}) or {}
+        entrypoint = configured.get(name)
+        if callback is None and not entrypoint:
+            return None
+        if callback is not None:
+            result = callback(*arguments)
+        else:
+            from coral.grader.trusted_worker import invoke_task_validator
+
+            result = invoke_task_validator(self.coral_dir, self._validator_entrypoint(name), *arguments)
+        if not isinstance(result, dict):
+            raise TrustedWriteError(f"{name} returned a non-object result")
+        return result
+
 
     def _validate_submission(
         self,
@@ -446,7 +485,46 @@ class TrustedWriteService:
             raise TrustedWriteError("submission validator returned incomplete metadata")
         return result
 
+    def _workflow(
+        self, operation: str, payload: dict[str, Any],
+        binding: AgentBinding | None,
+    ) -> dict[str, Any]:
+        if set(payload) != _WORKFLOW_FIELDS[operation]:
+            raise TrustedWriteError(f"{operation} contains unknown or missing fields")
+        dynamic = getattr(getattr(self.config, "agents", None), "dynamic", None)
+        workspace = getattr(self.config, "workspace", None)
+        repo_path = getattr(workspace, "repo_path", None)
+        context = {
+            "coral_dir": str(self.coral_dir),
+            "agent_id": binding.agent_id if binding else None,
+            "island_id": binding.island_id if binding else None,
+            "max_engineering_runs_per_node": (getattr(getattr(self.config, "grader", None), "args", {}) or {}).get("max_engineering_runs_per_node", 1),
+            "is_manager": binding is None,
+            "repo_path": str(Path(repo_path).resolve()) if repo_path else None,
+            "max_researchers": getattr(dynamic, "max_researchers", 0),
+            "max_engineers": getattr(dynamic, "max_engineers", 0),
+        }
+        if self.workflow_handler is not None:
+            result = self.workflow_handler(operation, payload, context)
+        else:
+            from coral.grader.trusted_worker import invoke_task_validator
+
+            result = invoke_task_validator(
+                self.coral_dir,
+                self._validator_entrypoint("trusted_workflow_handler"),
+                operation, payload, context,
+            )
+        if not isinstance(result, dict):
+            raise TrustedWriteError("workflow handler returned a non-object result")
+        return result
+
     def handle(self, operation: str, payload: dict[str, Any], peer_pid: int) -> dict[str, Any]:
+        if operation == "reconcile_workflow":
+            if peer_pid != os.getppid():
+                raise TrustedWriteError("only the manager peer may reconcile workflow")
+            if not isinstance(payload, dict):
+                raise TrustedWriteError("trusted payload must be an object")
+            return self._workflow(operation, payload, None)
         binding = self.identity_resolver(self.coral_dir, peer_pid)
         return self.handle_authenticated(operation, payload, binding)
 
@@ -460,6 +538,10 @@ class TrustedWriteService:
             raise TrustedWriteError(f"unsupported trusted operation: {operation}")
         if not isinstance(payload, dict):
             raise TrustedWriteError("trusted payload must be an object")
+        if operation == "reconcile_workflow":
+            raise TrustedWriteError("only the manager peer may reconcile workflow")
+        if operation in WORKFLOW_OPERATIONS:
+            return self._workflow(operation, payload, binding)
         if operation == "submit_attempt":
             return self._submit(payload, binding).to_dict()
         if operation == "retry_attempt":
@@ -585,6 +667,17 @@ class TrustedWriteService:
         with trusted_writes_lock(self.coral_dir):
             if _git(worktree, "rev-parse", "HEAD") != commit_hash:
                 raise TrustedWriteError("authenticated worktree HEAD moved during submission")
+            if root_source_commit is None:
+                self._authorize(
+                    "trusted_workflow_authorizer",
+                    self.attempt_authorizer,
+                    canonical,
+                    {
+                        "coral_dir": str(self.coral_dir),
+                        "agent_id": binding.agent_id,
+                        "island_id": binding.island_id,
+                    },
+                )
             existing_same = read_attempt(
                 self.coral_dir, commit_hash, island_id=binding.island_id
             )
@@ -660,6 +753,20 @@ class TrustedWriteService:
         parents = _git(worktree, "show", "-s", "--format=%P", commit_hash).split()
         parent_hash = parents[0] if parents else None
         canonical = self._validate_submission(commit_hash, binding, parent_hash)
+        def authorize_retry() -> None:
+            if canonical.get("node_id") == "N000":
+                return
+            self._authorize(
+                "trusted_workflow_authorizer",
+                self.attempt_authorizer,
+                canonical,
+                {
+                    "coral_dir": str(self.coral_dir),
+                    "agent_id": binding.agent_id,
+                    "island_id": binding.island_id,
+                },
+            )
+
         return retry_attempt(
             self.coral_dir,
             commit_hash,
@@ -668,6 +775,7 @@ class TrustedWriteService:
             expected_contract_hash=str(canonical["contract_hash"]),
             max_infra_retries=int(canonical["max_infra_retries"]),
             expected_source_worktree=worktree,
+            authorize=authorize_retry,
         )
 
     def _publish(self, payload: dict[str, Any], binding: AgentBinding) -> dict[str, Any]:
@@ -704,6 +812,21 @@ class TrustedWriteService:
         notes_root = island_root(self.coral_dir, binding.island_id) / "notes"
         target = notes_root / relative
         with trusted_writes_lock(self.coral_dir):
+            authorized = self._authorize(
+                "trusted_artifact_authorizer",
+                self.artifact_authorizer,
+                payload["kind"],
+                {
+                    **context,
+                    "coral_dir": str(self.coral_dir),
+                    "relative_path": relative,
+                },
+            )
+            if authorized is not None and payload["kind"] == "evaluation":
+                fresh = authorized.get("content")
+                if not isinstance(fresh, str) or not fresh.strip():
+                    raise TrustedWriteError("Evaluation authorizer returned invalid fresh content")
+                content = fresh
             notes_root.mkdir(parents=True, exist_ok=True)
             resolved_root = notes_root.resolve()
             if target.is_symlink() or any(parent.is_symlink() for parent in target.parents if parent != notes_root.parent):
@@ -823,11 +946,10 @@ class TrustedWriteServer:
                     peer_pid, peer_uid, _peer_gid = struct.unpack("3i", credentials)
                     if peer_uid != os.getuid():
                         raise TrustedWriteError("trusted peer uid does not own this run")
-                    binding = self.service.identity_resolver(self.coral_dir, peer_pid)
                     connection.settimeout(self.read_timeout)
                     request = self._read_request(connection)
-                    result = self.service.handle_authenticated(
-                        request["operation"], request["payload"], binding
+                    result = self.service.handle(
+                        request["operation"], request["payload"], peer_pid
                     )
                     response = {"ok": True, "result": result}
                 except Exception as exc:
