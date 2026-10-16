@@ -13,9 +13,7 @@ import yaml
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _NODE = re.compile(r"^N[0-9]{3}$")
-_EVIDENCE_REF = re.compile(
-    r"^nodes/N[0-9]{3}/(?:research|engineering)_(?:analysis|review)_v[1-9][0-9]*\.md$"
-)
+_EVIDENCE_REF = re.compile(r"^nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.md$")
 _FIELDS = {
     "mode",
     "node_id",
@@ -116,7 +114,7 @@ def _validate_node_provenance(declaration: dict[str, Any], context: dict[str, An
         spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise SubmissionError("canonical Node spec is unavailable or invalid") from exc
-    required = {"node_id", "base_commit", "parent_commit", "analysis_refs", "review_refs"}
+    required = {"node_id", "base_commit", "parent_commit", "analysis_refs"}
     if not isinstance(spec, dict) or not required.issubset(spec):
         raise SubmissionError("canonical Node spec is unavailable or invalid")
     if spec["node_id"] != declaration["node_id"]:
@@ -127,7 +125,7 @@ def _validate_node_provenance(declaration: dict[str, Any], context: dict[str, An
         raise SubmissionError("Node spec parent_commit does not match candidate parent")
     if spec["analysis_refs"] != declaration["analysis_refs"]:
         raise SubmissionError("Node spec analysis_refs do not match submission")
-    for group in (spec["analysis_refs"], spec["review_refs"]):
+    for group in (spec["analysis_refs"],):
         if not isinstance(group, dict) or set(group) != {
             "parent_research",
             "parent_engineering",

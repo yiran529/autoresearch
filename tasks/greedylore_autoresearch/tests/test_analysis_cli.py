@@ -74,15 +74,14 @@ def test_cli_exposes_analyze_command(monkeypatch, capsys):
 
     result = SimpleNamespace(
         analysis_version=2,
-        review_version=2,
-        decision="warning",
         analysis_path=Path("/notes/nodes/N001/research_analysis_v2.md"),
-        review_path=Path("/notes/nodes/N001/research_review_v2.md"),
     )
     monkeypatch.setattr(analysis, "analyze", lambda node, mode, revise=False: result)
 
     cli.main(["analyze", "--node", "N001", "--mode", "research", "--revise"])
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["analysis_version"] == 2
-    assert payload["decision"] == "warning"
+    assert payload == {
+        "analysis_version": 2,
+        "analysis_path": "/notes/nodes/N001/research_analysis_v2.md",
+    }

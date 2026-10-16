@@ -79,7 +79,6 @@ def _root_spec(seed_commit: str) -> dict[str, Any]:
         "risk": "The baseline may not satisfy every quality or efficiency target.",
         "falsification_criteria": "Formal Root evaluation defines the baseline evidence.",
         "analysis_refs": {"parent_research": None, "parent_engineering": None},
-        "review_refs": {"parent_research": None, "parent_engineering": None},
     }
 
 

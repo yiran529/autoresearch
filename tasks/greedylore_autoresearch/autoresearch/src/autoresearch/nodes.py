@@ -14,7 +14,6 @@ from .atomic import atomic_write_text
 _NODE = re.compile(r"^N([0-9]{3})$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _ANALYSIS = re.compile(r"^nodes/(N[0-9]{3})/research_analysis_v([1-9][0-9]*)\.md$")
-_REVIEW = re.compile(r"^nodes/(N[0-9]{3})/research_review_v([1-9][0-9]*)\.md$")
 
 
 class NodeError(ValueError):
@@ -71,20 +70,9 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
         raise NodeError("invalid parent commit")
     if not isinstance(base_commit, str) or not _SHA.fullmatch(base_commit):
         raise NodeError("invalid base commit")
-    analysis_ref, analysis_version = _existing_reference(
+    analysis_ref, _ = _existing_reference(
         notes_root, evidence.get("analysis_ref"), _ANALYSIS, parent_node
     )
-    review_ref, review_version = _existing_reference(
-        notes_root, evidence.get("review_ref"), _REVIEW, parent_node
-    )
-    if analysis_version != review_version:
-        raise NodeError("Analysis and Review versions must match")
-    try:
-        review = yaml.safe_load((notes_root / review_ref).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise NodeError("research review is unavailable") from exc
-    if not isinstance(review, dict) or review.get("decision") not in {"pass", "warning"}:
-        raise NodeError("research review must be pass or warning")
 
     requested_id = request.get("node_id")
     node_id = _next_node_id(notes_root) if requested_id is None else str(requested_id)
@@ -103,10 +91,6 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
         "analysis_refs": {
             "parent_research": analysis_ref,
             "parent_engineering": evidence.get("engineering_analysis_ref"),
-        },
-        "review_refs": {
-            "parent_research": review_ref,
-            "parent_engineering": evidence.get("engineering_review_ref"),
         },
     }
     content = yaml.safe_dump(spec, sort_keys=False)

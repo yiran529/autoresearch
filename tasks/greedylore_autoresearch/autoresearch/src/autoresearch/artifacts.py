@@ -26,9 +26,9 @@ def validate_artifact(kind: str, content: str, context: dict[str, Any]) -> dict[
             if mode is not None or version is not None:
                 raise ValueError(f"{kind} does not accept mode or version")
             relative = f"nodes/{node_id}/{kind}.md"
-        elif kind in {"analysis", "review"}:
+        elif kind == "analysis":
             if mode not in _MODES or not isinstance(version, int) or version < 1:
-                raise ValueError("analysis/review requires a valid mode and positive version")
+                raise ValueError("analysis requires a valid mode and positive version")
             relative = f"nodes/{node_id}/{mode}_{kind}_v{version}.md"
         else:
             raise ValueError(f"unsupported artifact kind: {kind}")

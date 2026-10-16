@@ -35,7 +35,6 @@ def test_required_handoff_assets_exist_and_are_nonempty():
         "roles/engineer.md",
         "prompts/research_analysis.md",
         "prompts/engineering_analysis.md",
-        "prompts/reviewer.md",
         "references/algorithm_ref.md",
         "references/system_ref.md",
         "references/semantic_criteria.md",
@@ -43,12 +42,20 @@ def test_required_handoff_assets_exist_and_are_nonempty():
         "templates/evaluation.md",
         "templates/research_analysis.md",
         "templates/engineering_analysis.md",
-        "templates/review.md",
         "templates/submission.yaml",
     ]
     for relative in relative_paths:
         content = (TASK_ROOT / relative).read_text()
         assert len(content.strip()) > 80, relative
+
+
+def test_reviewer_assets_are_removed():
+    for relative in (
+        "prompts/reviewer.md",
+        "templates/review.md",
+        "autoresearch/schemas/review.schema.json",
+    ):
+        assert not (TASK_ROOT / relative).exists()
 
 
 def test_prompts_expose_workflow_not_transport():

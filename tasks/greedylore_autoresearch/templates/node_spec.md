@@ -3,7 +3,6 @@ node_type: research         # research | seed；仅预先给定的 Root 使用 s
 parent_node: NYYY           # seed Root: null
 base_commit: "<full_git_sha>"
 parent_research_analysis: "NYYY/research_analysis_v1.md"   # seed Root: null
-parent_research_review: "NYYY/research_review_v1.md"      # seed Root: null，普通 child 要求 pass/warning
 parent_engineering_analysis: null                          # 可以晚到
 ---
 # Node: <short name>

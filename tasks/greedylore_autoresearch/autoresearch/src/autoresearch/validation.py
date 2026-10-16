@@ -1,4 +1,4 @@
-"""Validation for versioned Analysis and Review artifacts."""
+"""Validation for versioned Analysis artifacts."""
 
 from __future__ import annotations
 
@@ -23,15 +23,6 @@ _COMMON_FIELDS = {
     "evaluation_snapshot",
 }
 _ANALYSIS_FIELDS = _COMMON_FIELDS | {"summary", "findings", "limitations"}
-_REVIEW_FIELDS = _COMMON_FIELDS | {
-    "analysis_version",
-    "workflow_checks",
-    "evidence_checks",
-    "issues",
-    "actions",
-    "decision",
-}
-
 
 def load_document(path: str | Path) -> dict[str, Any]:
     try:
@@ -87,26 +78,4 @@ def validate_analysis(document: dict[str, Any], evidence: Any) -> dict[str, Any]
         raise ArtifactValidationError("summary must be non-empty text")
     _string_list(document["findings"], "findings")
     _string_list(document["limitations"], "limitations")
-    return document
-
-
-def validate_review(
-    document: dict[str, Any],
-    evidence: Any,
-    analysis_version: int,
-) -> dict[str, Any]:
-    if set(document) != _REVIEW_FIELDS:
-        raise ArtifactValidationError("Review has an invalid schema")
-    _common(document, evidence)
-    if document.get("analysis_version") != analysis_version:
-        raise ArtifactValidationError("Review analysis_version does not match")
-    for field in ("workflow_checks", "evidence_checks"):
-        _string_list(document[field], field)
-    for field in ("issues", "actions"):
-        if not isinstance(document[field], list) or not all(
-            isinstance(item, str) for item in document[field]
-        ):
-            raise ArtifactValidationError(f"{field} must be a list of strings")
-    if document.get("decision") not in {"pass", "warning", "fail"}:
-        raise ArtifactValidationError("Review decision must be pass, warning, or fail")
     return document

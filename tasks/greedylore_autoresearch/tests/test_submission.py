@@ -59,7 +59,6 @@ def _write_node_spec(
     *,
     parent_commit: str | None = None,
     analysis_refs: dict[str, str | None] | None = None,
-    review_refs: dict[str, str | None] | None = None,
     island_id: str | None = None,
 ) -> None:
     if island_id is None:
@@ -73,8 +72,6 @@ def _write_node_spec(
         "base_commit": base,
         "parent_commit": parent_commit or base,
         "analysis_refs": analysis_refs
-        or {"parent_research": None, "parent_engineering": None},
-        "review_refs": review_refs
         or {"parent_research": None, "parent_engineering": None},
     }
     (node_dir / "spec.md").write_text(yaml.safe_dump(spec, sort_keys=False))
@@ -173,7 +170,7 @@ def test_validator_rejects_node_provenance_mismatch(tmp_path):
         )
 
 
-def test_validator_requires_existing_fixed_analysis_and_review_refs(tmp_path):
+def test_validator_requires_existing_fixed_analysis_refs(tmp_path):
     repo, base = _repo(tmp_path)
     declaration = _submission(base)
     declaration["analysis_refs"] = {
@@ -188,10 +185,6 @@ def test_validator_requires_existing_fixed_analysis_and_review_refs(tmp_path):
         coral_dir,
         base,
         analysis_refs=declaration["analysis_refs"],
-        review_refs={
-            "parent_research": "nodes/N000/research_review_v1.md",
-            "parent_engineering": None,
-        },
     )
 
     with pytest.raises(SubmissionError, match="referenced Artifact does not exist"):
@@ -204,6 +197,42 @@ def test_validator_requires_existing_fixed_analysis_and_review_refs(tmp_path):
                 "parent_hash": base,
                 "island_id": None,
             },
+        )
+
+
+def test_validator_accepts_fixed_parent_analysis_without_review(tmp_path):
+    repo, base = _repo(tmp_path)
+    declaration = _submission(base)
+    reference = "nodes/N000/research_analysis_v1.md"
+    declaration["analysis_refs"] = {
+        "parent_research": reference,
+        "parent_engineering": None,
+    }
+    (repo / "submission.yaml").write_text(yaml.safe_dump(declaration, sort_keys=False))
+    _git(repo, "add", "submission.yaml")
+    _git(repo, "commit", "-m", "research")
+    coral_dir = tmp_path / ".coral"
+    _write_node_spec(coral_dir, base, analysis_refs=declaration["analysis_refs"])
+    parent = coral_dir / "public" / "notes" / reference
+    parent.parent.mkdir(parents=True)
+    parent.write_text("fixed Analysis")
+    result = validate_submission(
+        _git(repo, "rev-parse", "HEAD"),
+        {
+            "worktree": str(repo),
+            "coral_dir": str(coral_dir),
+            "contract_path": str(_contract(tmp_path)),
+            "parent_hash": base,
+            "island_id": None,
+        },
+    )
+    assert result["node_id"] == "N023"
+
+
+def test_review_artifact_kind_is_removed():
+    with pytest.raises(ValueError, match="unsupported artifact kind"):
+        validate_artifact(
+            "review", "{}", {"node_id": "N001", "mode": "research", "version": 1}
         )
 
 

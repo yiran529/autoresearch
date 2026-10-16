@@ -7,20 +7,17 @@ import yaml
 from autoresearch.nodes import NodeError, create_node
 
 
-def _parent(notes: Path, decision: str = "pass") -> dict[str, object]:
+def _parent(notes: Path) -> dict[str, object]:
     node = notes / "nodes" / "N001"
     node.mkdir(parents=True)
     analysis = node / "research_analysis_v2.md"
-    review = node / "research_review_v2.md"
     analysis.write_text("analysis\n")
-    review.write_text(yaml.safe_dump({"decision": decision}))
     return {
         "notes_root": notes,
         "parent_node": "N001",
         "parent_commit": "a" * 40,
         "base_commit": "b" * 40,
         "analysis_ref": "nodes/N001/research_analysis_v2.md",
-        "review_ref": "nodes/N001/research_review_v2.md",
     }
 
 
@@ -29,7 +26,7 @@ def test_child_freezes_selected_parent_versions(tmp_path):
     path = create_node(
         {
             "hypothesis": "Compress only stable gradients.",
-            "selection_rationale": "The parent review identified communication as the bottleneck.",
+            "selection_rationale": "The parent Analysis identified communication as the bottleneck.",
             "delta": "Gate compression by stability.",
             "risk": "The gate may reduce compression.",
             "falsification_criteria": "Reject if either quality workload exceeds the 10% gate.",
@@ -41,13 +38,14 @@ def test_child_freezes_selected_parent_versions(tmp_path):
     assert spec["node_id"] == "N002"
     assert spec["parent_commit"] == "a" * 40
     assert spec["analysis_refs"]["parent_research"].endswith("research_analysis_v2.md")
-    assert spec["review_refs"]["parent_research"].endswith("research_review_v2.md")
+    assert "review_refs" not in spec
     assert spec["selection_rationale"]
 
 
-@pytest.mark.parametrize("decision", ["fail", "unknown"])
-def test_child_requires_accepted_research_review(tmp_path, decision):
-    with pytest.raises(NodeError, match="review"):
+def test_child_requires_existing_parent_research_analysis(tmp_path):
+    evidence = _parent(tmp_path / "notes")
+    (tmp_path / "notes/nodes/N001/research_analysis_v2.md").unlink()
+    with pytest.raises(NodeError, match="does not exist"):
         create_node(
             {
                 "hypothesis": "h",
@@ -56,7 +54,23 @@ def test_child_requires_accepted_research_review(tmp_path, decision):
                 "risk": "r",
                 "falsification_criteria": "f",
             },
-            _parent(tmp_path / "notes", decision),
+            evidence,
+        )
+
+
+def test_child_rejects_analysis_from_different_parent(tmp_path):
+    evidence = _parent(tmp_path / "notes")
+    evidence["analysis_ref"] = "nodes/N002/research_analysis_v2.md"
+    with pytest.raises(NodeError, match="selected Node"):
+        create_node(
+            {
+                "hypothesis": "h",
+                "selection_rationale": "s",
+                "delta": "d",
+                "risk": "r",
+                "falsification_criteria": "f",
+            },
+            evidence,
         )
 
 

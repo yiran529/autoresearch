@@ -1,4 +1,4 @@
-"""Artifact-driven Analyzer and Reviewer workflow."""
+"""Artifact-driven Analyzer workflow."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from .validation import (
     load_document,
     seal_document,
     validate_analysis,
-    validate_review,
 )
 
 _NODE = re.compile(r"^N[0-9]{3}$")
@@ -114,10 +113,7 @@ class AnalysisContext:
 class AnalysisResult:
     evidence: EvidenceBundle
     analysis_version: int
-    review_version: int
     analysis_path: Path
-    review_path: Path
-    decision: str
 
 
 Runner = Callable[[str, Sequence[Path], Path, Path], Path]
@@ -528,35 +524,20 @@ def _prepare_code_snapshot(
     return root
 
 
-def _prompt(
-    role: str,
-    evidence: EvidenceBundle,
-    analysis: dict[str, Any] | None = None,
-) -> str:
-    prompt_name = "reviewer.md" if role == "reviewer" else f"{evidence.mode}_analysis.md"
-    prompt_path = _task_root() / "prompts" / prompt_name
+def _prompt(evidence: EvidenceBundle) -> str:
+    prompt_path = _task_root() / "prompts" / f"{evidence.mode}_analysis.md"
     role_prompt = (
         prompt_path.read_text(encoding="utf-8")
         if prompt_path.is_file()
-        else f"You are the independent {role}."
-    )
-    payload = {
-        "role": role,
-        "fixed_evidence": evidence.to_dict(),
-        "analysis": analysis,
-    }
-    snapshot_rule = (
-        "For review, use the published Analysis evaluation_snapshot and the supplied "
-        "evidence/evaluation.md; do not substitute the mutable node evaluation.md. "
-        if role == "reviewer"
-        else ""
+        else "You are the independent Analyzer."
     )
     return (
         role_prompt + "\n\nProduce only the JSON document required by the supplied schema. "
         "Inspect code only in the supplied code snapshots named by fixed commit SHA. "
         "Every claim must cite the fixed evidence paths. "
-        + snapshot_rule
-        + json.dumps(payload, indent=2, sort_keys=True)
+        + json.dumps(
+            {"role": "analyzer", "fixed_evidence": evidence.to_dict()}, indent=2, sort_keys=True
+        )
     )
 
 
@@ -587,20 +568,8 @@ def analyze(
     evidence = resolve_evidence(node_id, mode, context=ctx)
     node_root = ctx.notes_root / "nodes" / node_id
     analysis_versions = _versions(node_root, mode, "analysis")
-    review_versions = _versions(node_root, mode, "review")
-    if revise:
-        version = max(analysis_versions | review_versions, default=0) + 1
-    else:
-        incomplete = sorted(analysis_versions - review_versions)
-        if incomplete:
-            version = incomplete[0]
-        elif analysis_versions & review_versions:
-            version = max(analysis_versions & review_versions)
-        else:
-            version = 1
-
+    version = max(analysis_versions, default=0) + 1 if revise else max(analysis_versions, default=1)
     analysis_path = node_root / f"{mode}_analysis_v{version}.md"
-    review_path = node_root / f"{mode}_review_v{version}.md"
     if analysis_path.exists() and not revise:
         analysis_document = load_document(analysis_path)
         evidence = _artifact_evidence(analysis_document, evidence, ctx)
@@ -613,7 +582,7 @@ def analyze(
         if references.is_dir():
             analyzer_roots.append(references)
         output = runner(
-            _prompt("analyzer", evidence),
+            _prompt(evidence),
             analyzer_roots,
             _schema("analysis"),
             analyzer_scratch,
@@ -624,32 +593,8 @@ def analyze(
         content = json.dumps(analysis_document, indent=2, sort_keys=True) + "\n"
         analysis_path = _publish(publish, ctx, "analysis", mode, version, content)
 
-    if review_path.exists() and not revise:
-        review_document = validate_review(load_document(review_path), evidence, version)
-    else:
-        reviewer_scratch = Path(tempfile.mkdtemp(prefix="autoresearch-reviewer-"))
-        reviewer_snapshot = _prepare_evidence_snapshot(evidence, ctx, reviewer_scratch)
-        reviewer_code = code_snapshotter(evidence, ctx, reviewer_scratch)
-        reviewer_roots = [reviewer_code, reviewer_snapshot]
-        if references.is_dir():
-            reviewer_roots.append(references)
-        output = runner(
-            _prompt("reviewer", evidence, analysis_document),
-            reviewer_roots,
-            _schema("review"),
-            reviewer_scratch,
-        )
-        review_document = validate_review(
-            seal_document(load_document(output), evidence), evidence, version
-        )
-        content = json.dumps(review_document, indent=2, sort_keys=True) + "\n"
-        review_path = _publish(publish, ctx, "review", mode, version, content)
-
     return AnalysisResult(
         evidence=evidence,
         analysis_version=version,
-        review_version=version,
         analysis_path=analysis_path,
-        review_path=review_path,
-        decision=str(review_document["decision"]),
     )

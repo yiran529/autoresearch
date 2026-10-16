@@ -63,7 +63,6 @@ def _create_node(args: argparse.Namespace) -> dict:
         "parent_commit": parent_commit,
         "base_commit": parent_commit,
         "analysis_ref": f"nodes/{args.parent}/research_analysis_v{version}.md",
-        "review_ref": f"nodes/{args.parent}/research_review_v{version}.md",
         "publish": lambda kind, text, context: _publish(coral_dir, kind, text, context),
     }
     path = create_node(
@@ -106,7 +105,7 @@ def _parser() -> argparse.ArgumentParser:
     node = commands.add_parser("node", help="manage Research Tree Nodes")
     node_commands = node.add_subparsers(dest="node_command", required=True)
     create = node_commands.add_parser(
-        "create", help="create a child from an accepted Research Review"
+        "create", help="create a child from a published Research Analysis"
     )
     create.add_argument("--parent", required=True)
     create.add_argument("--analysis-version", type=int, required=True)
@@ -122,7 +121,7 @@ def _parser() -> argparse.ArgumentParser:
     refresh.add_argument("--node", required=True)
 
     analyze_parser = commands.add_parser(
-        "analyze", help="publish a fixed-evidence Analysis and independent Review"
+        "analyze", help="publish a fixed-evidence Analysis"
     )
     analyze_parser.add_argument("--node", required=True)
     analyze_parser.add_argument("--mode", choices=("research", "engineering"), required=True)
@@ -144,10 +143,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         analysis = analyze(args.node, args.mode, revise=args.revise)
         result = {
             "analysis_version": analysis.analysis_version,
-            "review_version": analysis.review_version,
-            "decision": analysis.decision,
             "analysis_path": str(analysis.analysis_path),
-            "review_path": str(analysis.review_path),
         }
     else:
         raise SystemExit("unsupported command")

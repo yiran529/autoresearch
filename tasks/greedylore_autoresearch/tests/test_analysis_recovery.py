@@ -66,10 +66,6 @@ def _context(tmp_path: Path, engineering_count: int = 0) -> AnalysisContext:
                     "parent_research": None,
                     "parent_engineering": None,
                 },
-                "review_refs": {
-                    "parent_research": None,
-                    "parent_engineering": None,
-                },
             }
         )
     )
@@ -101,23 +97,11 @@ def _analysis_payload(_evidence):
     }
 
 
-def _review_payload(_evidence, version, decision="pass"):
-    return {
-        "analysis_version": version,
-        "workflow_checks": ["fresh analyzer and reviewer sessions"],
-        "evidence_checks": ["fixed evidence manifest"],
-        "issues": [],
-        "actions": [],
-        "decision": decision,
-    }
-
-
 class FakeCodex:
     def __init__(self, context, outputs=None):
         self.context = context
         self.outputs = list(outputs or [])
         self.analysis_calls = 0
-        self.review_calls = 0
         self.scratch = []
         self.prompts = []
         self.read_roots = []
@@ -126,23 +110,14 @@ class FakeCodex:
         self.prompts.append(prompt)
         self.read_roots.append(tuple(Path(root) for root in read_roots))
         evidence = resolve_evidence("N001", self.mode, context=self.context)
-        is_review = Path(output_schema).name.startswith("review")
-        if is_review:
-            self.review_calls += 1
-            default = _review_payload(evidence, self.version)
-        else:
-            self.analysis_calls += 1
-            default = _analysis_payload(evidence)
+        self.analysis_calls += 1
+        default = _analysis_payload(evidence)
         self.scratch.append(Path(scratch))
         value = self.outputs.pop(0) if self.outputs else default
         if isinstance(value, Exception):
             raise value
         if value == "analysis":
             value = _analysis_payload(evidence)
-        elif value == "review":
-            value = _review_payload(evidence, self.version)
-        elif value == "review_fail":
-            value = _review_payload(evidence, self.version, decision="fail")
         output = Path(scratch) / "output.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(value))
@@ -153,7 +128,7 @@ def _publisher(notes_root):
     def publish(kind, content, context):
         node = notes_root / "nodes" / context["node_id"]
         node.mkdir(parents=True, exist_ok=True)
-        if kind in {"analysis", "review"}:
+        if kind == "analysis":
             target = node / f"{context['mode']}_{kind}_v{context['version']}.md"
             if target.exists():
                 raise RuntimeError("immutable artifact already exists")
@@ -183,32 +158,12 @@ def _run(tmp_path, mode="research", engineering_count=0, outputs=None, revise=Fa
     return result, runner, context
 
 
-def test_review_failure_only_retries_missing_review(tmp_path):
-    context = _context(tmp_path)
-    runner = FakeCodex(context, ["analysis", RuntimeError("review crashed"), "review"])
-    runner.mode = "research"
-    runner.version = 1
-    publisher = _publisher(context.notes_root)
-
-    with pytest.raises(RuntimeError, match="review crashed"):
-        _analyze(
-            "N001",
-            "research",
-            context=context,
-            runner=runner,
-            publisher=publisher,
-        )
-    result = _analyze(
-        "N001",
-        "research",
-        context=context,
-        runner=runner,
-        publisher=publisher,
-    )
+def test_analyze_runs_one_session_and_publishes_no_review(tmp_path):
+    result, runner, _ = _run(tmp_path)
 
     assert runner.analysis_calls == 1
-    assert runner.review_calls == 2
-    assert result.analysis_version == 1
+    assert result.analysis_path.name == "research_analysis_v1.md"
+    assert not list(result.analysis_path.parent.glob("*_review_v*.md"))
 
 
 def test_engineering_analysis_allows_no_engineering_attempt(tmp_path):
@@ -264,24 +219,51 @@ def test_revise_keeps_v1_and_publishes_v2(tmp_path):
         publisher=_publisher(context.notes_root),
     )
 
-    assert first.analysis_path.exists() and first.review_path.exists()
-    assert second.analysis_version == second.review_version == 2
-    assert first.analysis_path.exists() and first.review_path.exists()
+    assert first.analysis_path.exists()
+    assert second.analysis_version == 2
+    assert second.analysis_path.name == "research_analysis_v2.md"
+    assert first.analysis_path.exists()
 
 
-def test_completed_fail_review_is_idempotent_not_passed(tmp_path):
+def test_default_returns_latest_valid_analysis(tmp_path):
+    _, _, context = _run(tmp_path)
+    reviser = FakeCodex(context)
+    reviser.mode = "research"
+    revised = _analyze(
+        "N001",
+        "research",
+        revise=True,
+        context=context,
+        runner=reviser,
+        publisher=_publisher(context.notes_root),
+    )
+    runner = FakeCodex(context)
+    runner.mode = "research"
+    result = _analyze(
+        "N001",
+        "research",
+        context=context,
+        runner=runner,
+        publisher=_publisher(context.notes_root),
+    )
+
+    assert revised.analysis_version == result.analysis_version == 2
+    assert result.analysis_path == revised.analysis_path
+    assert runner.analysis_calls == 0
+
+
+def test_completed_analysis_is_idempotent(tmp_path):
     context = _context(tmp_path)
     runner = FakeCodex(context)
     runner.mode = "research"
     runner.version = 1
-    runner.outputs = ["analysis", "review_fail"]
     publisher = _publisher(context.notes_root)
 
     first = _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
     second = _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
 
-    assert first.decision == second.decision == "fail"
-    assert runner.analysis_calls == runner.review_calls == 1
+    assert first.analysis_version == second.analysis_version == 1
+    assert runner.analysis_calls == 1
 
 
 def test_published_engineering_analysis_keeps_original_attempt_snapshot(tmp_path):
@@ -305,31 +287,7 @@ def test_published_engineering_analysis_keeps_original_attempt_snapshot(tmp_path
 
     assert [item.commit_sha for item in second.evidence.engineering_attempts] == ["0" * 40]
     assert second.analysis_version == 1
-    assert runner.analysis_calls == runner.review_calls == 1
-
-
-def test_missing_review_uses_published_evaluation_snapshot(tmp_path):
-    from dataclasses import replace
-
-    context = _context(tmp_path, engineering_count=1)
-    runner = FakeCodex(context, ["analysis", RuntimeError("review crashed")])
-    runner.mode = "engineering"
-    runner.version = 1
-    publisher = _publisher(context.notes_root)
-
-    with pytest.raises(RuntimeError, match="review crashed"):
-        _analyze("N001", "engineering", context=context, runner=runner, publisher=publisher)
-
-    later = _attempt("9" * 40, "engineering", "2026-02-01T00:00:00+00:00")
-    updated = replace(context, attempts=(*context.attempts, later))
-    _analyze("N001", "engineering", context=updated, runner=runner, publisher=publisher)
-
-    assert "9" * 40 in (context.notes_root / "nodes/N001/evaluation.md").read_text()
-    assert "9" * 40 not in runner.prompts[-1]
-    snapshot = runner.scratch[-1] / "evidence/evaluation.md"
-    assert snapshot.is_file()
-    assert "9" * 40 not in snapshot.read_text()
-    assert context.notes_root / "nodes/N001" not in runner.read_roots[-1]
+    assert runner.analysis_calls == 1
 
 
 def test_recovery_rejects_tampered_manifest(tmp_path):
@@ -370,13 +328,12 @@ def test_recovery_rejects_changed_raw_evidence(tmp_path):
     raw = context.log_root / ("r" * 40) / "raw.json"
     raw.parent.mkdir(parents=True)
     raw.write_text('{"value": 1}')
-    runner = FakeCodex(context, ["analysis", RuntimeError("review crashed")])
+    runner = FakeCodex(context)
     runner.mode = "research"
     runner.version = 1
     publisher = _publisher(context.notes_root)
 
-    with pytest.raises(RuntimeError, match="review crashed"):
-        _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
+    _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
     raw.write_text('{"value": 2}')
 
     with pytest.raises(ValueError, match="evidence changed"):
@@ -385,21 +342,20 @@ def test_recovery_rejects_changed_raw_evidence(tmp_path):
 
 def test_late_raw_file_is_not_added_to_recovered_snapshot(tmp_path):
     context = _context(tmp_path)
-    runner = FakeCodex(context, ["analysis", RuntimeError("review crashed")])
+    runner = FakeCodex(context)
     runner.mode = "research"
     runner.version = 1
     publisher = _publisher(context.notes_root)
 
-    with pytest.raises(RuntimeError, match="review crashed"):
-        _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
+    _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
     raw = context.log_root / ("r" * 40) / "raw.json"
     raw.parent.mkdir(parents=True)
     raw.write_text('{"late": true}')
     _analyze("N001", "research", context=context, runner=runner, publisher=publisher)
 
-    snapshot_root = next(root for root in runner.read_roots[-1] if root.name == "evidence")
+    snapshot_root = next(root for root in runner.read_roots[0] if root.name == "evidence")
     assert not (snapshot_root / f"eval_logs/{'r' * 40}/raw.json").exists()
-    assert context.log_root not in runner.read_roots[-1]
+    assert runner.analysis_calls == 1
 
 
 def test_missing_raw_evidence_is_recorded_not_rejected(tmp_path):
@@ -410,11 +366,10 @@ def test_missing_raw_evidence_is_recorded_not_rejected(tmp_path):
     assert any(record.status == "missing" for record in evidence.evidence_records)
 
 
-def test_analyzer_and_reviewer_use_distinct_scratch_directories(tmp_path):
+def test_analyzer_uses_one_scratch_directory(tmp_path):
     _, runner, _ = _run(tmp_path)
 
-    assert len(runner.scratch) == 2
-    assert runner.scratch[0] != runner.scratch[1]
+    assert len(runner.scratch) == 1
 
 
 def test_research_analysis_accepts_terminal_failed_attempt(tmp_path):
@@ -435,35 +390,6 @@ def test_research_analysis_accepts_terminal_failed_attempt(tmp_path):
     )
 
     assert result.evidence.research_sha == "r" * 40
-
-
-def test_review_requires_actual_workflow_and_evidence_checks(tmp_path):
-    context = _context(tmp_path)
-    runner = FakeCodex(context)
-    runner.mode = "research"
-    runner.version = 1
-    runner.outputs = ["analysis", "review"]
-    original_call = runner.__call__
-
-    def invalid_review(prompt, read_roots, output_schema, scratch):
-        output = original_call(prompt, read_roots, output_schema, scratch)
-        if Path(output_schema).name.startswith("review"):
-            payload = json.loads(output.read_text())
-            payload["workflow_checks"] = []
-            payload["evidence_checks"] = []
-            output.write_text(json.dumps(payload))
-        return output
-
-    with pytest.raises(ValueError, match="workflow_checks"):
-        _analyze(
-            "N001",
-            "research",
-            context=context,
-            runner=invalid_review,
-            publisher=_publisher(context.notes_root),
-        )
-
-    assert not (context.notes_root / "nodes" / "N001" / "research_review_v1.md").exists()
 
 
 def test_evidence_rejects_spec_for_another_node(tmp_path):
