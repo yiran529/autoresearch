@@ -170,13 +170,14 @@ class WorkflowStore:
     def _assignments(state: dict[str, Any]) -> tuple[WorkflowAssignment, ...]:
         assignments = [
             WorkflowAssignment(record["research"]["agent_id"], "research", node_id,
-                               record["research"]["status"])
+                               "finalizing" if record["research"].get("finish_requested")
+                               else record["research"]["status"])
             for node_id, record in sorted(state["nodes"].items())
             if node_id != "N000" and record["research"]["status"] in {"reserved", "active"}
         ]
         assignments.extend(
             WorkflowAssignment(agent_id, "engineering", worker.get("node_id"),
-                               worker["status"])
+                               "finalizing" if worker.get("finish_requested") else worker["status"])
             for agent_id, worker in sorted(state["engineering_workers"].items())
             if worker["status"] in {"reserved", "active"}
         )
@@ -462,27 +463,7 @@ class WorkflowStore:
                     return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
                 if worker["status"] != "active":
                     raise WorkflowError("Engineering assignment is not active")
-                attempts = [
-                    attempt for attempt in read_attempts(
-                        self.coral_dir, island_id=self.island_id
-                    )
-                    if attempt.metadata.get("node_id") == node_id
-                    and attempt.metadata.get("mode") == "engineering"
-                    and attempt.agent_id == agent_id
-                    and attempt.budget_class == "real"
-                ]
-                if not attempts:
-                    raise WorkflowError(f"Node {node_id} requires an Engineering Attempt")
-                if any(
-                    attempt.status == "pending" or (
-                        attempt.status in {"crashed", "timeout"}
-                        and attempt.metadata.get("failure_class") == "infra"
-                        and int(attempt.metadata.get("infra_retry_count", 0))
-                        < int(attempt.metadata.get("max_infra_retries", 0))
-                    )
-                    for attempt in attempts
-                ):
-                    raise WorkflowError("Engineering Attempt is not terminal")
+                self._terminal_engineering_unlocked(agent_id, node_id)
                 self._validated_analysis_ref_unlocked(node_id, "engineering")
                 claims = state["nodes"][node_id]["engineering_claims"]
                 match = [claim for claim in claims if claim["agent_id"] == agent_id]
@@ -493,6 +474,45 @@ class WorkflowStore:
                 self._save_unlocked(state)
                 return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
             raise WorkflowError("assignment owner was not found")
+
+    def request_finish(self, agent_id: str, mode: str) -> dict[str, Any]:
+        """Freeze an owned flow for asynchronous Analysis and completion."""
+        if mode not in {"research", "engineering"}:
+            raise WorkflowError("invalid assignment mode")
+        with trusted_writes_lock(self.coral_dir):
+            state = self._load_unlocked()
+            for item in self._assignments(state):
+                if item.agent_id != agent_id or item.role != mode or not item.node_id:
+                    continue
+                if item.status not in {"active", "finalizing"}:
+                    raise WorkflowError("assignment is not active")
+                if mode == "research":
+                    self._terminal_research_unlocked(item.node_id)
+                    record = state["nodes"][item.node_id]["research"]
+                else:
+                    self._terminal_engineering_unlocked(agent_id, item.node_id)
+                    record = state["engineering_workers"][agent_id]
+                if not record.get("finish_requested"):
+                    record["finish_requested"] = True
+                    self._save_unlocked(state)
+                return {"agent_id": agent_id, "node_id": item.node_id, "status": "finalizing"}
+            raise WorkflowError("active assignment owner was not found")
+
+    def _terminal_engineering_unlocked(self, agent_id: str, node_id: str) -> None:
+        attempts = [
+            attempt for attempt in read_attempts(self.coral_dir, island_id=self.island_id)
+            if attempt.agent_id == agent_id and attempt.metadata.get("node_id") == node_id
+            and attempt.metadata.get("mode") == "engineering" and attempt.budget_class == "real"
+        ]
+        if not attempts:
+            raise WorkflowError(f"Node {node_id} requires an Engineering Attempt")
+        if any(attempt.status == "pending" or (
+            attempt.status in {"crashed", "timeout"}
+            and attempt.metadata.get("failure_class") == "infra"
+            and int(attempt.metadata.get("infra_retry_count", 0))
+            < int(attempt.metadata.get("max_infra_retries", 0))
+        ) for attempt in attempts):
+            raise WorkflowError("Engineering Attempt is not terminal")
 
 
 
@@ -521,7 +541,15 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
         state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode")
     ):
         raise WorkflowError("Attempt owner is not the active Node assignment")
+    _reject_finalizing(state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode"))
     return {}
+
+
+def _reject_finalizing(state, agent_id, node_id, mode) -> None:
+    record = (state["nodes"][node_id]["research"] if mode == "research"
+              else state["engineering_workers"].get(agent_id, {}))
+    if record.get("finish_requested"):
+        raise WorkflowError("assignment is finalizing; no new candidate or Agent Analysis is allowed")
 
 
 def authorize_artifact(kind: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -537,6 +565,7 @@ def authorize_artifact(kind: str, context: dict[str, Any]) -> dict[str, Any]:
     if kind == "analysis":
         if not _owned_active(state, agent_id, node_id, context.get("mode")):
             raise WorkflowError("Artifact owner is not the active Node assignment")
+        _reject_finalizing(state, agent_id, node_id, context.get("mode"))
         return {}
     if not (
         _owned_active(state, agent_id, node_id, "research")
@@ -599,6 +628,8 @@ def handle_workflow(
         return store.claim_engineering(owner, payload["node_id"])
     if operation == "complete_assignment":
         return store.complete_assignment(owner, payload["mode"])
+    if operation == "finish_assignment":
+        return store.request_finish(owner, payload["mode"])
     if operation == "cancel_assignment":
         return store.cancel_assignment(owner)
     raise WorkflowError("unsupported workflow operation")

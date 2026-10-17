@@ -71,7 +71,9 @@ def invoke_task_validator(
     return result
 
 
-def start_task_worker(coral_dir: str | Path, entrypoint: str) -> subprocess.Popen:
+def start_task_worker(
+    coral_dir: str | Path, entrypoint: str, *, log_name: str = "memory_worker.err",
+) -> subprocess.Popen:
     """Launch one grader-owned task function without waiting for completion."""
     if not entrypoint or ":" not in entrypoint:
         raise ValueError("trusted worker entrypoint must be 'module:function'")
@@ -81,7 +83,9 @@ def start_task_worker(coral_dir: str | Path, entrypoint: str) -> subprocess.Pope
         raise RuntimeError(f"grader-private Python is unavailable at {python}")
     log_root = coral_dir / "public" / "logs"
     log_root.mkdir(parents=True, exist_ok=True)
-    log_file = (log_root / "memory_worker.err").open("ab")
+    if Path(log_name).name != log_name:
+        raise ValueError("trusted worker log must be a filename")
+    log_file = (log_root / log_name).open("ab")
     try:
         process = subprocess.Popen(
             [str(python), "-c", _WORKER],

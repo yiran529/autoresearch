@@ -231,14 +231,12 @@ def test_async_cli_skips_socket_below_gate_and_sends_empty_payload_when_due(tmp_
     assert calls == [(coral_dir, "start_memory_if_due", {})]
 
 
-def test_only_researcher_template_has_memory_startup_hook():
+def test_task_uses_scheduler_finalization_instead_of_memory_startup_hook():
     task_root = Path(__file__).resolve().parents[1]
     task = yaml.safe_load((task_root / "task.yaml").read_text())
     templates = {item["role"]: item for item in task["agents"]["assignments"]}
-    assert templates["research"]["runtime_options"]["startup_hook"] == [
-        ".venv/bin/autoresearch", "consolidate-memory", "--if-due", "--async",
-    ]
-    assert "startup_hook" not in templates["engineering"]["runtime_options"]
+    assert task["grader"]["args"]["trusted_workflow_worker"] == "autoresearch.lifecycle:run_worker"
+    assert all("startup_hook" not in item["runtime_options"] for item in templates.values())
 
 
 @pytest.mark.parametrize("kind", ["research_summary", "engineering_summary"])

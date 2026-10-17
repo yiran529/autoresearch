@@ -133,6 +133,21 @@ def test_manager_reconciles_dynamic_roster_without_restarting_survivors(tmp_path
     manager._reconcile_dynamic_agents()
     assert manager.handles[1] is engineer_handle
     assert manager.specs_by_id["engineer-E0001"].node_id == "N001"
+    # Finalizing keeps its slot/worktree but must not restart the producer session.
+    retired = []
+    monkeypatch.setattr("coral.agent.manager.retire_agent_worktree",
+                        lambda *args: retired.append(args) or True)
+    desired[1]["status"] = "finalizing"
+    manager._reconcile_dynamic_agents()
+    assert engineer_handle.stopped
+    assert [h.agent_id for h in manager.handles] == ["research-N002"]
+    assert retired == []
+    manager._reconcile_dynamic_agents()
+    assert starts.count("engineer-E0001") == 1
+    desired.pop()
+    manager._reconcile_dynamic_agents()
+    assert len(retired) == 1
+    assert "engineer-E0001" not in manager.specs_by_id
 
 
 def test_retire_only_removes_clean_worktree_and_preserves_branch(tmp_path):

@@ -29,7 +29,7 @@ PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 64 * 1024
 WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
-    "complete_assignment", "cancel_assignment",
+    "complete_assignment", "cancel_assignment", "finish_assignment",
 })
 OPERATIONS = frozenset({
     "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due",
@@ -39,6 +39,7 @@ _WORKFLOW_FIELDS = {
     "initialize_research": frozenset({"node_id", "parent_node", "hypothesis", "selection_rationale", "delta", "risk", "falsification_criteria"}),
     "claim_engineering": frozenset({"node_id"}),
     "complete_assignment": frozenset({"mode"}),
+    "finish_assignment": frozenset({"mode"}),
     "cancel_assignment": frozenset(),
 }
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -425,6 +426,7 @@ class TrustedWriteService:
         self.artifact_authorizer = artifact_authorizer
         self.memory_authorizer = memory_authorizer
         self.memory_launcher = memory_launcher
+        self._workflow_process = None
 
     def _validator_entrypoint(self, name: str) -> str:
         args = getattr(getattr(self.config, "grader", None), "args", {}) or {}
@@ -528,7 +530,18 @@ class TrustedWriteService:
                 raise TrustedWriteError("only the manager peer may reconcile workflow")
             if not isinstance(payload, dict):
                 raise TrustedWriteError("trusted payload must be an object")
-            return self._workflow(operation, payload, None)
+            result = self._workflow(operation, payload, None)
+            configured = getattr(getattr(self.config, "grader", None), "args", {}) or {}
+            entrypoint = configured.get("trusted_workflow_worker")
+            if entrypoint and (
+                self._workflow_process is None or self._workflow_process.poll() is not None
+            ):
+                from coral.grader.trusted_worker import start_task_worker
+
+                self._workflow_process = start_task_worker(
+                    self.coral_dir, entrypoint, log_name="workflow_worker.err"
+                )
+            return result
         binding = self.identity_resolver(self.coral_dir, peer_pid)
         return self.handle_authenticated(operation, payload, binding)
 

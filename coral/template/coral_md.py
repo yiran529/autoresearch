@@ -33,15 +33,16 @@ def generate_coral_md(
             scope = (
                 f"You own Research Node `{node_id}`. Choose a Parent, then run "
                 "`autoresearch node initialize` before changing the code base. "
-                "Run one formal Research evaluation, publish Research Analysis, "
-                "then `autoresearch node complete --mode research` and exit."
+                "Run one formal Research evaluation; handle same-SHA infrastructure retries "
+                "if needed, then wait for automatic Analysis, completion and Agent retirement."
             )
         elif workflow_role == "engineering":
             scope = (
                 "Inspect the Tree and evidence, choose one eligible Research Node, "
                 "then atomically run `autoresearch engineering claim <node-id>`. "
-                "Optimize from its Research commit, publish Engineering Analysis, "
-                "then `autoresearch node complete --mode engineering` and exit. "
+                "Optimize from its Research commit. When finished evaluating candidates, "
+                "run `autoresearch engineering finish` and wait for automatic Analysis, "
+                "completion and Agent retirement. "
                 "If no target is eligible, run `autoresearch engineering cancel` and exit."
             )
         else:

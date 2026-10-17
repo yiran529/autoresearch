@@ -14,7 +14,7 @@
 - Scheduler 维持 `max_researchers` / `max_engineers` 并发，Agent 完成后立即补位；
 - 所有共享 workflow 状态通过同一受信任入口原子修改；
 - Reviewer 删除，Analysis 由一次独立 Analyzer session 生成；
-- Researcher 每次启动仍检查 Global Memory 三 Node 门槛。
+- Scheduler 通过现有 reconcile 自动刷新 Evaluation、推进 Analysis/完成并检查 Global Memory 三 Node 门槛。
 
 不改变 Evaluation Contract、GPU 分配与清理、Research Attempt 唯一性、同 SHA infra retry、Root Evaluation、Reference Toolkit 或 Grader 证据格式。默认静态 CORAL Agent 模式保持兼容。V1 动态模式只支持单 island。
 
@@ -47,6 +47,8 @@ reserved -> active -> completed
 Engineering 使用可追加的 claim 记录，每条 claim 有 `reserved / active / completed / cancelled`。V1 policy 将每个 Research Node 的最大 Engineering 流程数设为 1，但状态格式不把 1 固化，未来可提高 policy 而无需迁移 Node schema。
 
 `completed` 表示流程与证据已封存，不表示结果优秀。Quality gate 是独立事实：Research quality 失败的 Node 仍可完成，但不能被 Engineer 认领。
+
+2026-10-17 自动收尾增量：active record 可持久化 `finish_requested: true`，公开 assignment roster 将其展示为 `finalizing`。Research 在唯一正式 Attempt 终态且无可重试 infra failure 后自动进入该阶段；Engineer 自主决定停止后通过 `autoresearch engineering finish` 请求进入。收尾时禁止新增 Attempt 和 Agent Analysis，Manager 停止 Producer 并保留槽位/Worktree，任务侧 worker 运行 Analyzer、校验证据并完成。Analyzer 失败保留请求，下次 reconcile 恢复；不重启 Producer。Engineering 两轮仍只是 Prompt 软约束，系统不按轮数强制结束。
 
 ## 3. 权威 Workflow State
 
@@ -84,6 +86,7 @@ Root `N000` 由现有 host bootstrap 创建并完成正式评测。动态 Agent 
 - `initialize_research`：仅 reservation 对应的 Researcher 可调用；验证 Parent Research Analysis、干净的固定 base、Node payload 后发布 `spec.md` 并转为 active；
 - `claim_engineering`：仅未绑定 Engineer 可调用；在锁内重新验证目标资格并写入 claim；
 - `complete_assignment`：验证调用者归属、Attempt/Evaluation/Analysis 和无 pending run，再完成 Research 或 Engineering；
+- `finish_assignment`：验证当前 owner 与终态 Attempts，幂等记录收尾请求，交由自动 Analyzer/complete；
 - `cancel_assignment`：只取消尚未产生正式 Attempt 的 reservation/claim，保留 ID 和历史记录。
 
 Task handler 由 `grader.args.trusted_workflow_handler` 固定配置；另配置只读的 `trusted_workflow_authorizer` 和 Artifact 归属校验。Agent payload 不能指定任意路径、Agent 身份、计数器或最终状态。Manager operation 通过 `SO_PEERCRED` 匹配 grader daemon 的 parent PID；Agent operation 继续使用现有 registered process-root binding。容量只从可信 task config 读取，不接受 Manager 或 Agent 请求覆盖。
@@ -123,12 +126,12 @@ Research/Engineering事实仍由 Git、Attempts、eval logs、Node Spec 和 Anal
 ## 6. Researcher Workflow
 
 1. Root N000的Research Analysis就绪后，Manager调用reconcile，原子预留 `Nxxx` 与 `research-Nxxx`。
-2. Manager 从 Researcher template 创建独立 Worktree和全新 Codex Session；启动 Hook异步检查 Memory。
+2. Manager 从 Researcher template 创建独立 Worktree和全新 Codex Session。
 3. Researcher 阅读 Tree、Summary和固定 Analyses，自主选择 Parent与假设。
 4. `autoresearch node initialize` 将干净 Worktree定位到选定 Parent Research Commit，并通过可信操作发布 `spec.md`。
 5. Researcher实现算法，通过 `coral eval`提交该 Node唯一正式 Research Attempt。
-6. Grader发布 Quality Evaluation；`autoresearch analyze --mode research` 启动独立 Analyzer并发布 Analysis。
-7. `autoresearch node complete --mode research` 验证证据并原子完成。
+6. Grader 发布终态 Attempt；reconcile 触发的一次性任务 worker 在可信锁内刷新 Evaluation、固定收尾请求，锁外启动独立 Analyzer 并发布 Analysis；可重试 infra failure 仍等待同 SHA retry。
+7. worker 校验完整证据并原子完成，无需 Researcher 自行调用 analyze/complete。质量失败同样收尾。
 8. Manager停止已完成进程，保存 Git/日志证据，安全移除干净 Worktree并立即补位。未完成退出则恢复原 Node、Worktree和 Session。
 
 Research quality 无论通过或失败都可完成；只有通过者满足 Engineering 资格。Research Analysis 发布后即可作为 Child evidence，不等待 Engineering。
@@ -140,8 +143,8 @@ Research quality 无论通过或失败都可完成；只有通过者满足 Engin
 3. Engineer 自主比较全局 evidence 并调用 `autoresearch engineering claim Nxxx`。
 4. 可信入口原子认领并返回固定 Research Commit；CLI 将干净 Engineer Worktree定位到该 commit。
 5. Engineer实施系统优化，通过 `coral eval`提交属于原 Node的 Engineering Attempts。提交验证按 mode 区分：Research 继续匹配 Node Spec 固定的 Parent/Base；Engineering 必须把本 Node 唯一 terminal Research SHA 同时固定为 `quality_anchor` 和 `base_commit`，验证该 SHA 和候选提交链；有效 claim 由 Attempt 创建前的锁内 authorizer 重查，不再把 Node Spec 的 Parent Commit 当作 Engineering 提交的直接父提交；后续 Engineering Attempt 可以接续该 Engineer 的前次提交。
-6. Grader执行固定 Efficiency Evaluation；Analyzer发布 Engineering Analysis。
-7. `autoresearch node complete --mode engineering` 完成 claim，Manager释放资源并按需补位。
+6. Grader 执行固定 Efficiency Evaluation，系统自动刷新 Evaluation。Engineer 根据结果决定是否继续；结束时调用 `autoresearch engineering finish`。两轮上限仍由 Prompt 引导，不新增硬限制。
+7. 请求后系统自动启动 Analyzer、发布 Engineering Analysis 并完成 claim，Manager 释放资源并按需补位；早期 Analysis 若未覆盖最新 Attempts，保留旧版本并发布新版本。
 8. 崩溃恢复同一 Engineer Agent、claim、Worktree和 Session；不得创建新的 Engineering 流程。
 
 ## 8. CORAL Dynamic Agent 集成
@@ -169,6 +172,7 @@ Manager 在 start/resume、workflow state改变和 Agent退出后 reconcile；�
 
 - desired 且未运行：从对应 template 构造 `AgentSpec` 并启动；
 - desired 且异常退出：使用现有 `_restart_agent()` 恢复 Session；
+- desired 且 finalizing：停止 Producer、不重启、不释放槽位或 Worktree，等待任务 worker 完成；
 - 不再 desired：不重启，停止 handle 并回收 Worktree；
 - 容量空缺：下一次 reconcile 原子补足。
 
@@ -180,17 +184,9 @@ Reviewer schema、Prompt、Artifact和调用阶段删除。`autoresearch analyze
 
 Researcher、Engineer和Analyzer遇到实质不确定性时可自主使用有限 Subagent；常规工作不强制使用，Subagent继承父 Agent权限。
 
-每次 Researcher Agent初启或恢复时调用：
+自动路径通过 Scheduler 现有 reconcile 触发 `grader.args.trusted_workflow_worker: autoresearch.lifecycle:run_worker`。Grader 同时最多保持一个该子进程，task worker 再持有私有非阻塞收尾锁防止多进程重复运行；不新增调度服务。worker 刷新 Evaluation、完成就绪的 Research/Engineering 后检查 Memory gate；后续 reconcile 也检查，允许失败后恢复。Researcher template 不再配置 Memory startup Hook。手动 `autoresearch consolidate-memory --if-due --async` 和固定 socket 启动入口保留兼容。
 
-```bash
-autoresearch consolidate-memory --if-due --async
-```
-
-一 Node 一 Researcher Session使该检查自然随研究推进。Gate仍按两份 Summary共同未处理的 Research Analysis所属不同 Node计数，达到 3 才运行；Engineering Analysis不计数但纳入输入。
-
-CLI不构建 Evidence Bundle/hash或解释知识差异，但必须记录本次 gate 使用的 Research Analysis引用，并要求两份输出的 `processed_analyses` 都覆盖这些引用。Memory Manager负责筛选、去重、冲突分析和完整 processed list。简单非阻塞 flock防并发；失败不阻塞研究，下次 Researcher启动重试。
-
-`--async` 不从短命 CLI 进程直接 `Popen` 一个再经 Agent socket 发布的孤儿 worker：该进程会失去 registered Agent 祖先。CLI 可先按文件名计算三 Node 门槛以便未到期时立即退出；到期才向现有 trusted socket 发一个固定、空 payload 的 Memory 启动请求。Worker 持锁后必须重算门槛，避免并发重复启动；服务端只接受当前 Researcher，并从现有 grader daemon 启动一次性 worker 后立即返回。Worker 自己持非阻塞 Memory `flock`、检查三 Node 门槛、运行独立 Codex session，并通过只允许替换两份固定 Summary 的宿主发布方法写入；不增加第二个 socket、常驻服务或通用控制面。Grader 停止时 worker 若失败则保持旧 processed refs，下次 Researcher 启动重新检查。测试覆盖 CLI 立即返回、真实子进程不依赖 Researcher 祖先也能发布两份 Summary、失败后仍 due；不只 mock `Popen`。
+Gate 仍按两份 Summary 共同未处理的 Research Analysis 所属不同 Node 计数，达到 3 才启动既有独立 Memory worker；Engineering Analysis 不计数但纳入输入。Memory worker 自己持非阻塞锁、重算门槛、运行一次独立 Codex session，并通过只允许替换两份固定 Summary 的宿主路径写入，不依赖 Producer 祖先。Python 不构建 Memory Evidence Bundle/hash、不解释知识差异；两份输出都须覆盖本次触发的 Research Analysis 引用。失败或部分发布保留 due，下次 reconcile 重试；不要求还有新 Researcher 启动。
 
 ## 10. 完成条件与资源回收
 

@@ -170,6 +170,7 @@ def _parser() -> argparse.ArgumentParser:
     claim = engineering_commands.add_parser("claim", help="atomically claim one Research Node")
     claim.add_argument("node_id")
     engineering_commands.add_parser("cancel", help="cancel an unbound Engineer assignment")
+    engineering_commands.add_parser("finish", help="end optimization and request automatic Analysis")
 
     refresh = commands.add_parser(
         "refresh-evaluation", help="rebuild and publish one Node evaluation"
@@ -219,6 +220,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         result = _claim_engineering(args.node_id)
     elif args.command == "engineering" and args.engineering_command == "cancel":
         result = request_trusted(_coral_dir(), "cancel_assignment", {})
+    elif args.command == "engineering" and args.engineering_command == "finish":
+        result = request_trusted(_coral_dir(), "finish_assignment", {"mode": "engineering"})
     elif args.command == "refresh-evaluation":
         result = _refresh_evaluation(args)
     elif args.command == "analyze":

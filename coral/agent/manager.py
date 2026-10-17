@@ -227,23 +227,26 @@ class AgentManager:
             item.agent_id: spec_for_assignment(self.config, item) for item in desired
         }
         for handle in list(self.handles):
-            if handle.agent_id in desired_by_id:
+            desired_item = desired_by_id.get(handle.agent_id)
+            if desired_item is not None and desired_item.status != "finalizing":
                 continue
             handle.stop()
             self.handles.remove(handle)
             self._write_trusted_agent_registry()
-            self.specs_by_id.pop(handle.agent_id, None)
             self.runtimes.pop(handle.agent_id, None)
+        for agent_id in set(self.specs_by_id) - set(desired_by_id):
+            self.specs_by_id.pop(agent_id, None)
+            self.runtimes.pop(agent_id, None)
             retire_agent_worktree(
                 self.paths.repo_dir,
-                self.paths.agents_dir / handle.agent_id,
+                self.paths.agents_dir / agent_id,
             )
         live_ids = {handle.agent_id for handle in self.handles}
         self.specs = [desired_specs[item.agent_id] for item in desired]
         self.specs_by_id.update(desired_specs)
         for item in desired:
             spec = desired_specs[item.agent_id]
-            if item.agent_id in live_ids:
+            if item.agent_id in live_ids or item.status == "finalizing":
                 continue
             self.runtimes[item.agent_id] = get_runtime(spec.runtime)
             handle = self._setup_and_start_agent(

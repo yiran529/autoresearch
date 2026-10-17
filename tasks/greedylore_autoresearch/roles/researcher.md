@@ -15,7 +15,7 @@
 4. 填写候选根目录 `submission.yaml`（`mode: research`、`node_id`、`base_commit`、`change_summary`）；确认该 Node **没有其他正式 Research Attempt** 后才调用一次 `coral eval`。这次提交的 commit 是 Node 的唯一正式研究实现，grader 运行 quality + efficiency。
 5. 查看自动生成的 `evaluation.md`，必要时刷新或查看 CORAL 原始 Attempt/log。正式评测后不要对同一 Node 产生第二个不同 Research commit；若要修复算法 bug、调整设计或提高 quality，先让当前 Node 形成如实 Analysis，然后创建 child Node。
 6. 如果只是环境/基础设施故障致正式评测无效，可请求**同一 SHA** 的受控 grader retry；不改代码、不制造空 commit，并保留失败与重试日志。
-7. 当前 Node 评测结束后调用 `autoresearch analyze --node <id> --mode research`，再调用 `autoresearch node complete --mode research` 并退出。有效 Research Analysis 允许后续新 Agent 基于此扩展 child；本 Session 不继续下一个 Node。
+7. 当前 Node 正式评测得到最终结果后，系统自动刷新 Evaluation、启动独立 Analyzer、发布 Research Analysis 并完成 assignment，随后停止本 Agent、回收资源和补位；无需自行调用 analyze 或 complete。可重试的基础设施故障仍先按上一步处理。不要继续修改正式候选或创建新 Node，等待系统收尾。有效 Research Analysis 允许后续新 Agent 基于此扩展 child。
 
 读项目内证据，**仅直接写自己的 worktree/scratch**；共享结果经受控命令发布。质量失败仍需要分析，不能默默丢弃；不要假造数据、改正式 benchmark，或在正式训练里加入诊断 instrumentation。不要把 CORAL `improved` 当作质量达标。研究代码变化属于新 Node。
 

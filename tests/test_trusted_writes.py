@@ -608,6 +608,29 @@ def test_workflow_reconcile_accepts_only_manager_peer(tmp_path, monkeypatch):
         )
 
 
+def test_manager_reconcile_launches_one_configured_finalizer_at_a_time(tmp_path, monkeypatch):
+    config = SimpleNamespace(grader=SimpleNamespace(args={
+        "trusted_workflow_worker": "task.lifecycle:run_worker",
+    }))
+    service = TrustedWriteService(tmp_path / ".coral", config,
+                                 workflow_handler=lambda *_: {"assignments": []})
+    monkeypatch.setattr("coral.grader.trusted_writes.os.getppid", lambda: 4242)
+    launches = []
+    process = SimpleNamespace(poll=lambda: None)
+
+    def launch(coral_dir, entrypoint, **kwargs):
+        launches.append((coral_dir, entrypoint))
+        return process
+
+    monkeypatch.setattr("coral.grader.trusted_worker.start_task_worker", launch)
+    for _ in range(2):
+        service.handle("reconcile_workflow", {}, peer_pid=4242)
+    assert launches == [(tmp_path / ".coral", "task.lifecycle:run_worker")]
+    process.poll = lambda: 0
+    service.handle("reconcile_workflow", {}, peer_pid=4242)
+    assert len(launches) == 2
+
+
 def test_memory_launch_accepts_only_active_researcher_and_empty_payload(tmp_path):
     binding = AgentBinding("research-N001", 1, 1, str(tmp_path), None)
     calls = []
