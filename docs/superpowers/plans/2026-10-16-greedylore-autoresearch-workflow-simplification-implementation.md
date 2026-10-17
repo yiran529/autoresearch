@@ -704,7 +704,7 @@ def test_processed_set_skips_manager(memory_context):
     assert runner.calls == 0
 ```
 
-Test that the CLI returns immediately without a socket call below the three-Node gate, and that an authenticated active Researcher CLI request uses an empty payload when due: the existing grader daemon launches one bounded child from a fixed task entrypoint and returns immediately; the worker—not the socket handler—takes `LOCK_EX | LOCK_NB`. Use a real short-lived subprocess with a fake Codex runner to prove both Summaries can be published after the Hook CLI exits, without a registered Agent ancestor. Occupied lock returns `locked`; runner/publisher failure leaves Analysis、Evaluation和Reference unchanged; next check remains due. Do not rely only on mocked `Popen`.
+Test that the CLI returns immediately without a socket call below the three-Node gate, and that an authenticated live Researcher assignment (`reserved` or `active`, since the Hook precedes Node initialization) uses an empty payload when due: the existing grader daemon launches one bounded child from a fixed task entrypoint and returns immediately; the worker—not the socket handler—takes `LOCK_EX | LOCK_NB`. Use a real short-lived subprocess with a fake Codex runner to prove both Summaries can be published after the Hook CLI exits, without a registered Agent ancestor. Occupied lock returns `locked`; runner/publisher failure leaves Analysis、Evaluation和Reference unchanged; next check remains due. Do not rely only on mocked `Popen`.
 
 - [ ] **Step 3: Write startup Hook, fixed-target and Sandbox tests**
 
@@ -723,7 +723,7 @@ def test_hook_failure_still_execs_runtime(monkeypatch):
     assert calls == [("hook",), ("exec", ("codex", "exec"))]
 ```
 
-Trusted writer tests require a fixed `start_memory_if_due` operation with empty payload, callable only from a currently registered Researcher, and a host-only writer for the two exact replaceable Summary targets. Ordinary Agent `publish_artifact` must reject both Summary kinds. SRT denies direct writes to both Summary paths while the run-scoped `memory-consolidation.lock` remains writable. No arbitrary notes-root target is accepted.
+Trusted writer tests require a fixed `start_memory_if_due` operation with empty payload, callable only from a currently registered Researcher whose assignment is `reserved` or `active`, and a host-only writer for the two exact replaceable Summary targets. Ordinary Agent `publish_artifact` must reject both Summary kinds. SRT denies direct writes to both Summary paths while the run-scoped `memory-consolidation.lock` remains writable. No arbitrary notes-root target is accepted.
 
 - [ ] **Step 4: Run focused tests and verify RED**
 

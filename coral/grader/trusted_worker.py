@@ -23,6 +23,7 @@ try:
         raise TypeError("trusted validator must return an object")
     sys.stdout.write(json.dumps({"ok": True, "result": result}))
 except Exception as exc:
+    sys.stderr.write(traceback.format_exc())
     sys.stdout.write(json.dumps({
         "ok": False,
         "error": f"{type(exc).__name__}: {exc}",
@@ -68,6 +69,38 @@ def invoke_task_validator(
     if not isinstance(result, dict):
         raise RuntimeError("trusted validator returned a non-object result")
     return result
+
+
+def start_task_worker(coral_dir: str | Path, entrypoint: str) -> subprocess.Popen:
+    """Launch one grader-owned task function without waiting for completion."""
+    if not entrypoint or ":" not in entrypoint:
+        raise ValueError("trusted worker entrypoint must be 'module:function'")
+    coral_dir = Path(coral_dir).resolve()
+    python = grader_python_path(coral_dir)
+    if not python.exists():
+        raise RuntimeError(f"grader-private Python is unavailable at {python}")
+    log_root = coral_dir / "public" / "logs"
+    log_root.mkdir(parents=True, exist_ok=True)
+    log_file = (log_root / "memory_worker.err").open("ab")
+    try:
+        process = subprocess.Popen(
+            [str(python), "-c", _WORKER],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=log_file,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+    if process.stdin is None:
+        raise RuntimeError("trusted worker stdin is unavailable")
+    process.stdin.write(json.dumps({
+        "entrypoint": entrypoint,
+        "args": [str(coral_dir)],
+        "kwargs": {},
+    }).encode())
+    process.stdin.close()
+    return process
 
 
 def main() -> None:

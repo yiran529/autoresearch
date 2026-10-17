@@ -553,6 +553,23 @@ def authorize_artifact(kind: str, context: dict[str, Any]) -> dict[str, Any]:
     return {"content": content}
 
 
+def authorize_memory_start(agent_id: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Only a live Researcher assignment may request the one-shot worker."""
+    if context.get("island_id") is not None:
+        raise WorkflowError("dynamic Memory supports only one island")
+    store = WorkflowStore(context["coral_dir"])
+    with trusted_writes_lock(store.coral_dir):
+        state = store._load_unlocked()
+        if not any(
+            node_id != "N000"
+            and record["research"]["agent_id"] == agent_id
+            and record["research"]["status"] in {"reserved", "active"}
+            for node_id, record in state["nodes"].items()
+        ):
+            raise WorkflowError("live Researcher required for Memory launch")
+    return {}
+
+
 def handle_workflow(
     operation: str, payload: dict[str, Any], context: dict[str, Any]
 ) -> dict[str, Any]:

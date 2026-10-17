@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -605,6 +606,61 @@ def test_workflow_reconcile_accepts_only_manager_peer(tmp_path, monkeypatch):
             "reconcile_workflow", {},
             AgentBinding("research-N001", 1, 1, str(tmp_path), None),
         )
+
+
+def test_memory_launch_accepts_only_active_researcher_and_empty_payload(tmp_path):
+    binding = AgentBinding("research-N001", 1, 1, str(tmp_path), None)
+    calls = []
+
+    def authorize(agent_id, context):
+        if agent_id != "research-N001":
+            raise TrustedWriteError("active Researcher required")
+        return {}
+
+    service = TrustedWriteService(
+        tmp_path / ".coral",
+        SimpleNamespace(grader=SimpleNamespace(args={"trusted_memory_worker": "autoresearch.memory:run_worker"})),
+        memory_authorizer=authorize,
+        memory_launcher=lambda coral_dir, entrypoint: calls.append((coral_dir, entrypoint)),
+    )
+    assert service.handle_authenticated("start_memory_if_due", {}, binding) == {"status": "started"}
+    assert calls == [(tmp_path / ".coral", "autoresearch.memory:run_worker")]
+    with pytest.raises(TrustedWriteError, match="fields"):
+        service.handle_authenticated("start_memory_if_due", {"path": "elsewhere"}, binding)
+    with pytest.raises(TrustedWriteError, match="Researcher"):
+        service.handle_authenticated(
+            "start_memory_if_due", {},
+            AgentBinding("engineer-E0001", 2, 1, str(tmp_path), None),
+        )
+
+
+def test_one_shot_memory_child_survives_short_lived_launcher(tmp_path):
+    coral_dir = tmp_path / ".coral"
+    python = coral_dir / "private" / "grader_venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    (tmp_path / "memory_fake.py").write_text(
+        "from pathlib import Path\n"
+        "import time\n"
+        "def run(coral_dir):\n"
+        "    time.sleep(0.2)\n"
+        "    Path(coral_dir, 'worker_done').write_text('published')\n"
+        "    return {'status': 'published'}\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), str(Path.cwd())])
+    launcher = subprocess.run(
+        [sys.executable, "-c", (
+            "from coral.grader.trusted_worker import start_task_worker; "
+            "import sys; start_task_worker(sys.argv[1], 'memory_fake:run')"
+        ), str(coral_dir)],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    assert launcher.returncode == 0
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not (coral_dir / "worker_done").is_file():
+        time.sleep(0.02)
+    assert (coral_dir / "worker_done").read_text() == "published"
 
 
 def test_agent_workflow_operation_cannot_supply_identity_or_state(tmp_path):

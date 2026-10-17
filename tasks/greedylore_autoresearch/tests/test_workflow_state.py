@@ -101,6 +101,18 @@ def _state(coral_dir: Path) -> dict:
     return json.loads((coral_dir / "private" / "autoresearch_state.json").read_text())
 
 
+def test_memory_start_accepts_live_research_reservation_before_initialize(root_run):
+    from autoresearch.state import WorkflowError, authorize_memory_start
+
+    store = _store(root_run)
+    assignment = store.reconcile(1, 0)[0]
+    context = {"coral_dir": str(root_run), "island_id": None}
+    assert authorize_memory_start(assignment.agent_id, context) == {}
+    store.cancel_assignment(assignment.agent_id)
+    with pytest.raises(WorkflowError, match="Researcher"):
+        authorize_memory_start(assignment.agent_id, context)
+
+
 def test_concurrent_reconcile_does_not_duplicate_node_ids(root_run):
     def reconcile(_):
         return _store(root_run).reconcile(2, 0)

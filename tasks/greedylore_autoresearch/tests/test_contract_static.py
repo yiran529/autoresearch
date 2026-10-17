@@ -97,7 +97,10 @@ def test_contract_freezes_compressor_and_idle_gpu_policy() -> None:
 
 def test_task_wires_fixed_trusted_validators() -> None:
     task = yaml.safe_load((TASK_ROOT / "task.yaml").read_text())
-    assert task["grader"]["args"] == {
+    assert task["grader"]["args"].items() >= {
         "trusted_submission_validator": "autoresearch.submission:validate_submission",
         "trusted_artifact_validator": "autoresearch.artifacts:validate_artifact",
-    }
+    }.items()
+    assert task["grader"]["args"]["trusted_memory_worker"] == (
+        "autoresearch.memory:run_worker"
+    )

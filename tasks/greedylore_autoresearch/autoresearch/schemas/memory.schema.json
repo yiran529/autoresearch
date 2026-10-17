@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["research_summary", "engineering_summary"],
+  "additionalProperties": false,
+  "properties": {
+    "research_summary": {"type": "string", "minLength": 1},
+    "engineering_summary": {"type": "string", "minLength": 1}
+  }
+}

@@ -31,7 +31,9 @@ WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
     "complete_assignment", "cancel_assignment",
 })
-OPERATIONS = frozenset({"submit_attempt", "retry_attempt", "publish_artifact"}) | WORKFLOW_OPERATIONS
+OPERATIONS = frozenset({
+    "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due",
+}) | WORKFLOW_OPERATIONS
 _WORKFLOW_FIELDS = {
     "reconcile_workflow": frozenset(),
     "initialize_research": frozenset({"node_id", "parent_node", "hypothesis", "selection_rationale", "delta", "risk", "falsification_criteria"}),
@@ -409,6 +411,8 @@ class TrustedWriteService:
         workflow_handler: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
         attempt_authorizer: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
         artifact_authorizer: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        memory_authorizer: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        memory_launcher: Callable[[Path, str], Any] | None = None,
     ) -> None:
         self.coral_dir = Path(coral_dir).resolve()
         self.config = config
@@ -419,6 +423,8 @@ class TrustedWriteService:
         self.workflow_handler = workflow_handler
         self.attempt_authorizer = attempt_authorizer
         self.artifact_authorizer = artifact_authorizer
+        self.memory_authorizer = memory_authorizer
+        self.memory_launcher = memory_launcher
 
     def _validator_entrypoint(self, name: str) -> str:
         args = getattr(getattr(self.config, "grader", None), "args", {}) or {}
@@ -540,11 +546,39 @@ class TrustedWriteService:
             raise TrustedWriteError("only the manager peer may reconcile workflow")
         if operation in WORKFLOW_OPERATIONS:
             return self._workflow(operation, payload, binding)
+        if operation == "start_memory_if_due":
+            return self._start_memory(payload, binding)
         if operation == "submit_attempt":
             return self._submit(payload, binding).to_dict()
         if operation == "retry_attempt":
             return self._retry(payload, binding).to_dict()
         return self._publish(payload, binding)
+
+    def _start_memory(
+        self, payload: dict[str, Any], binding: AgentBinding,
+    ) -> dict[str, str]:
+        if payload:
+            raise TrustedWriteError("start_memory_if_due contains unknown fields")
+        configured = getattr(getattr(self.config, "grader", None), "args", {}) or {}
+        if self.memory_authorizer is None and not configured.get("trusted_memory_authorizer"):
+            raise TrustedWriteError("Memory authorization is not configured")
+        self._authorize(
+            "trusted_memory_authorizer",
+            self.memory_authorizer,
+            binding.agent_id,
+            {
+                "coral_dir": str(self.coral_dir),
+                "island_id": binding.island_id,
+            },
+        )
+        entrypoint = self._validator_entrypoint("trusted_memory_worker")
+        if self.memory_launcher is not None:
+            self.memory_launcher(self.coral_dir, entrypoint)
+        else:
+            from coral.grader.trusted_worker import start_task_worker
+
+            start_task_worker(self.coral_dir, entrypoint)
+        return {"status": "started"}
 
     def submit_root_attempt(
         self,

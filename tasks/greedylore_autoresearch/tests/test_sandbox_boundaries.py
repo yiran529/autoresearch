@@ -40,6 +40,8 @@ def test_settings_protect_formal_records_and_keep_normal_agent_writes(tmp_path):
         str((tmp_path / ".coral/public/attempts").resolve()),
         str((tmp_path / ".coral/public/eval_logs").resolve()),
         str((tmp_path / ".coral/public/notes/tree.md").resolve()),
+        str((tmp_path / ".coral/public/notes/research_summary.md").resolve()),
+        str((tmp_path / ".coral/public/notes/engineering_summary.md").resolve()),
         str((tmp_path / ".coral/public/notes/nodes").resolve()),
     }
     assert expected <= denied
@@ -47,6 +49,7 @@ def test_settings_protect_formal_records_and_keep_normal_agent_writes(tmp_path):
     assert str((paths["repo_dir"] / ".git").resolve()) in filesystem["allowWrite"]
     assert str(sibling.resolve()) not in filesystem["allowWrite"]
     assert str((tmp_path / ".coral/public").resolve()) in filesystem["allowRead"]
+    assert str((tmp_path / ".coral/public/memory-consolidation.lock").resolve()) not in denied
 
 
 def test_multi_island_protects_existing_formal_trees(tmp_path):

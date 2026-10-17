@@ -17,6 +17,8 @@ grader:
     trusted_workflow_handler: autoresearch.state:handle_workflow
     trusted_workflow_authorizer: autoresearch.state:authorize_attempt
     trusted_artifact_authorizer: autoresearch.state:authorize_artifact
+    trusted_memory_authorizer: autoresearch.state:authorize_memory_start
+    trusted_memory_worker: autoresearch.memory:run_worker
     max_engineering_runs_per_node: 1
     trusted_submission_validator: autoresearch.submission:validate_submission
     trusted_artifact_validator: autoresearch.artifacts:validate_artifact
@@ -36,6 +38,11 @@ agents:
   - role: research
     runtime_options:
       role_file: ./roles/researcher.md
+      startup_hook:
+      - .venv/bin/autoresearch
+      - consolidate-memory
+      - --if-due
+      - --async
   - role: engineering
     runtime_options:
       role_file: ./roles/engineer.md

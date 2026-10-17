@@ -147,6 +147,11 @@ def _parser() -> argparse.ArgumentParser:
     root.add_argument("--coral-dir", type=Path, required=True)
     root.add_argument("--root-worktree", type=Path, required=True)
 
+    memory = commands.add_parser("consolidate-memory", help="run the one-shot Global Memory gate")
+    memory.add_argument("--if-due", action="store_true")
+    memory.add_argument("--async", dest="async_launch", action="store_true")
+    memory.add_argument("--coral-dir", type=Path)
+
     node = commands.add_parser("node", help="manage Research Tree Nodes")
     node_commands = node.add_subparsers(dest="node_command", required=True)
     initialize = node_commands.add_parser("initialize", help="initialize this reserved Node")
@@ -189,6 +194,21 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         path = bootstrap_root_analysis(args.coral_dir, args.root_worktree)
         result = {"analysis_path": str(path)}
+    elif args.command == "consolidate-memory":
+        from autoresearch.memory import MemoryContext, consolidate_memory, memory_due
+
+        coral_dir = args.coral_dir or _coral_dir()
+        context = MemoryContext(coral_dir)
+        if args.async_launch:
+            if args.coral_dir is not None:
+                raise SystemExit("async Memory launch must use the current Agent run")
+            if args.if_due and not memory_due(context.notes_root).due:
+                result = {"status": "not_due"}
+            else:
+                result = request_trusted(coral_dir, "start_memory_if_due", {})
+        else:
+            memory_result = consolidate_memory(if_due=args.if_due, context=context)
+            result = {"status": memory_result.status}
     elif args.command == "node" and args.node_command == "initialize":
         result = _initialize_node(args)
     elif args.command == "node" and args.node_command == "complete":

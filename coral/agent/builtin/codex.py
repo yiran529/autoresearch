@@ -34,6 +34,17 @@ _CODEX_RUNTIME_OPTION_KEYS = {
 }
 
 
+def _wrap_startup_hook(command: list[str], hook: Any) -> list[str]:
+    if not isinstance(hook, list) or not hook or not all(
+        isinstance(item, str) and item for item in hook
+    ):
+        raise ValueError("startup_hook must be a nonempty argv list")
+    return [
+        sys.executable, "-m", "coral.agent.startup_hook",
+        "--hook-json", json.dumps(hook), "--", *command,
+    ]
+
+
 def _extract_codex_session_id(log_path: Path) -> str | None:
     """Extract the resumable thread ID from a Codex JSONL log.
 
@@ -138,7 +149,11 @@ class CodexRuntime:
             else:
                 prompt = "Begin working on your task and iterating on the seed solution. There is no user in the loop — make decisions, run evals, accumulate knowledge, and iterate without waiting for input."
 
-        option_args = _build_codex_runtime_option_args(runtime_options)
+        startup_hook = (runtime_options or {}).get("startup_hook")
+        option_args = _build_codex_runtime_option_args({
+            key: value for key, value in (runtime_options or {}).items()
+            if key != "startup_hook"
+        })
 
         if resume_session_id:
             # codex exec resume <session_id> "follow-up prompt"
@@ -167,6 +182,8 @@ class CodexRuntime:
                 "--json",
             ]
 
+        if startup_hook is not None:
+            cmd = _wrap_startup_hook(cmd, startup_hook)
         cmd = apply_sandbox(cmd, sandbox)
 
         logger.info(f"Starting Codex agent {agent_id} in {worktree_path}")
