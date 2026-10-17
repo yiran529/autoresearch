@@ -760,6 +760,8 @@ class TrustedWriteService:
                 "budget_class": payload["budget_class"],
                 "mode": canonical["mode"],
                 "node_id": canonical["node_id"],
+                "node_type": canonical["node_type"],
+                "submission_hash": canonical["submission_hash"],
                 "base_commit": canonical["base_commit"],
                 "quality_anchor": canonical["quality_anchor"],
                 "contract_hash": canonical["contract_hash"],

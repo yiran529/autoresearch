@@ -4,6 +4,17 @@ from greedylore_autoresearch_grader.efficiency import (
 )
 
 
+def test_timing_error_inherit_is_accepted_by_integer_parser(contract, tmp_path):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--error_inherit', type=int)
+    for cell in contract.efficiency.cells.values():
+        spec = build_timing_command(cell, 0, tmp_path, tmp_path / 'out', (0, 1, 2, 3))
+        args, _ = parser.parse_known_args(spec.argv)
+        assert args.error_inherit == 0
+
+
 def has_args(command, *expected):
     size = len(expected)
     return any(tuple(command[index:index + size]) == expected for index in range(len(command)))

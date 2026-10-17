@@ -24,6 +24,36 @@ class ResourceBusy(InfraFailure):
     pass
 
 
+def _belongs_to_launcher(identity: ProcessIdentity, launcher_pid: int) -> bool:
+    """torchrun starts rank sessions; accept only live same-user descendants."""
+    if identity.uid != os.getuid():
+        return False
+    if identity.session_id == launcher_pid and identity.pgid == launcher_pid:
+        return True
+    launcher = ProcessIdentity.read(launcher_pid)
+    if (launcher is None or launcher.uid != identity.uid
+            or launcher.session_id != launcher_pid or launcher.pgid != launcher_pid):
+        return False
+    current = identity
+    seen = set()
+    while current.pid not in seen:
+        seen.add(current.pid)
+        if current == launcher:
+            return ProcessIdentity.read(launcher_pid) == launcher
+        try:
+            fields = (Path('/proc') / str(current.pid) / 'stat').read_text().rsplit(')', 1)[1].split()
+            parent_pid = int(fields[1])
+        except (OSError, ValueError, IndexError):
+            return False
+        if ProcessIdentity.read(current.pid) != current:
+            return False
+        parent = ProcessIdentity.read(parent_pid)
+        if parent is None or parent.uid != launcher.uid:
+            return False
+        current = parent
+    return False
+
+
 @dataclass(frozen=True)
 class IdleGpuPolicy:
     compute_processes: int
@@ -194,7 +224,7 @@ class GpuReservation:
         self._inventory_provider = inventory_provider or GpuInventory.from_nvidia_smi
 
     def check_exclusive(self, session_pid: int | None = None) -> None:
-        """Allow compute only from the process group/session created for this command."""
+        """Allow compute only from this launcher or its live rank descendants."""
         for attempt in range(2):
             try:
                 sample = self._inventory_provider()
@@ -213,10 +243,8 @@ class GpuReservation:
                     # An identified foreign process is interference even if it
                     # exits immediately. Only ambiguous/vanished ranks get a retry.
                     external = session_pid is None or any(
-                        identity is not None and (
-                            identity.uid != os.getuid() or identity.session_id != session_pid
-                            or identity.pgid != session_pid
-                        ) for identity in (owner, current)
+                        identity is not None and not _belongs_to_launcher(identity, session_pid)
+                        for identity in (owner, current)
                     )
                     if external or (attempt == 1 and (owner is None or current != owner)):
                         raise InfraFailure(f"timing interference: {uuid} PID {pid}, "

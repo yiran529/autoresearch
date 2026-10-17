@@ -53,7 +53,7 @@ def build_timing_command(
         "--use_error_feedback", f"ef{compressor['ef_rank']}",
         "--min_compression_rate", str(compressor["min_compression_rate"]),
         "--beta_ef", str(compressor["beta_ef"]),
-        "--error_inherit", str(compressor["error_inherit"]),
+        "--error_inherit", format(compressor["error_inherit"], "g"),
         "--contract_hash", str(cell["contract_hash"]),
         "--repetition", str(repetition), "--output_dir", str(output),
     ]

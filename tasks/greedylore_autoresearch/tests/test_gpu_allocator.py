@@ -179,9 +179,6 @@ def test_timing_guard_accepts_only_current_session_compute_processes(tmp_path):
     with reserve_idle_gpus(1, tmp_path, IdleGpuPolicy(0, 512, 5),
                            inventory_provider=provider) as reservation:
         samples[:] = [replace(idle, compute_pids=(own.pid,), compute_processes=(own,))]
-        # This process belongs to a different session than the proposed launcher.
-        with pytest.raises(InfraFailure, match="interference"):
-            reservation.check_exclusive(own.pid)
         with pytest.raises(InfraFailure, match="interference"):
             reservation.check_exclusive()
 
@@ -189,6 +186,10 @@ def test_timing_guard_accepts_only_current_session_compute_processes(tmp_path):
             [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True,
         )
         try:
+            # The test runner may itself be a session leader. Use a distinct
+            # real launcher to establish that its parent is not an owned rank.
+            with pytest.raises(InfraFailure, match="interference"):
+                reservation.check_exclusive(launcher.pid)
             rank = ProcessIdentity.read(launcher.pid)
             assert rank is not None
             samples[:] = [replace(idle, compute_pids=(rank.pid,), compute_processes=(rank,))]
@@ -196,6 +197,36 @@ def test_timing_guard_accepts_only_current_session_compute_processes(tmp_path):
         finally:
             launcher.terminate()
             launcher.wait(timeout=5)
+
+
+def test_timing_guard_accepts_launcher_rank_in_separate_session(tmp_path):
+    import subprocess
+    import sys
+    from dataclasses import replace
+
+    from greedylore_autoresearch_grader.runtime import ProcessIdentity
+
+    code = (
+        "import subprocess,sys; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],start_new_session=True); "
+        "print(p.pid,flush=True); sys.stdin.read(); p.terminate(); p.wait()"
+    )
+    launcher = subprocess.Popen([sys.executable, '-c', code], start_new_session=True,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        rank = ProcessIdentity.read(int(launcher.stdout.readline()))
+        assert rank is not None
+        assert rank.session_id != launcher.pid
+        idle = GpuDevice(0, 'GPU-0', 'A100', 0, 0, (), 0)
+        samples = [idle]
+        def provider():
+            return GpuInventory(tuple(samples), 'topology')
+        with reserve_idle_gpus(1, tmp_path, IdleGpuPolicy(0, 512, 5),
+                               inventory_provider=provider) as reservation:
+            samples[:] = [replace(idle, compute_pids=(rank.pid,), compute_processes=(rank,))]
+            reservation.check_exclusive(launcher.pid)
+    finally:
+        launcher.communicate('', timeout=5)
 
 
 def test_waiting_run_acquires_cards_when_other_process_releases(tmp_path):

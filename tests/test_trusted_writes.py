@@ -335,6 +335,8 @@ def test_trusted_host_can_bootstrap_only_fixed_n000(tmp_path):
 
     assert attempt.agent_id == "root-bootstrap"
     assert attempt.metadata["node_id"] == "N000"
+    assert attempt.metadata["node_type"] == "seed"
+    assert attempt.metadata["submission_hash"] == "f" * 64
     assert attempt.parent_hash == source
 
 

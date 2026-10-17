@@ -26,15 +26,23 @@ def _display(value: Any) -> str:
 
 
 def _submission_identity(attempt: Attempt) -> str:
+    # Canonical submission metadata survives retirement of the producer Worktree.
+    if attempt.metadata.get("submission_hash"):
+        mode, node_id = attempt.metadata.get("mode"), attempt.metadata.get("node_id")
+        if isinstance(mode, str) and isinstance(node_id, str):
+            return f"{mode}:{node_id}"
     worktree = attempt.metadata.get("source_worktree")
     if not isinstance(worktree, str):
         return "—"
-    result = subprocess.run(
-        ["git", "show", f"{attempt.commit_hash}:submission.yaml"],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{attempt.commit_hash}:submission.yaml"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return "—"
     if result.returncode != 0:
         return "—"
     try:

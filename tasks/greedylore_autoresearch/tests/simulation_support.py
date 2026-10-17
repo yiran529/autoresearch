@@ -1,0 +1,820 @@
+"""Test-only subprocess replacements. No model, training, or GPU code is executed."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import traceback
+from pathlib import Path
+from unittest.mock import patch
+
+import yaml
+
+from coral.agent.runtime import AgentHandle
+from coral.grader.task_grader import TaskGrader
+from coral.grader.trusted_writes import process_start_time
+from coral.types import Score, ScoreBundle
+
+TASK = Path(__file__).resolve().parents[1]
+
+
+def root() -> Path:
+    return Path(os.environ["CORAL_SIM_ROOT"])
+
+
+def event(kind: str, **fields) -> None:
+    path = root() / "timeline.jsonl"
+    with path.open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        stream.write(
+            json.dumps(
+                {
+                    "event": kind,
+                    "pid": os.getpid(),
+                    "pid_start": process_start_time(os.getpid()),
+                    "at_ns": time.monotonic_ns(),
+                    **fields,
+                }
+            )
+            + "\n"
+        )
+        stream.flush()
+
+
+def events() -> list[dict]:
+    return read_events(root())
+
+
+def read_events(output: Path) -> list[dict]:
+    path = output / "timeline.jsonl"
+    if not path.exists():
+        return []
+    with path.open() as stream:
+        fcntl.flock(stream, fcntl.LOCK_SH)
+        return [json.loads(line) for line in stream if line.strip()]
+
+
+def wait_for(predicate, label: str, timeout=100):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        failures = [e for e in events() if e["event"] == "agent_error"]
+        if failures:
+            raise RuntimeError(failures[0]["traceback"])
+        time.sleep(0.025)
+    raise TimeoutError(f"waiting for {label}; recent events: {events()[-12:]}")
+
+
+def gate(name: str) -> Path:
+    return root() / f"gate-{name}"
+
+
+def git(repo: Path, *args: str) -> str:
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stderr)
+    return result.stdout.strip()
+
+
+def cli(module: str, *args: str, check=True):
+    result = subprocess.run(
+        [sys.executable, "-m", module, *args], capture_output=True, text=True, timeout=40
+    )
+    event(
+        "command",
+        module=module,
+        argv=list(args),
+        code=result.returncode,
+        stdout=result.stdout[-1200:],
+        stderr=result.stderr[-2000:],
+    )
+    if check and result.returncode:
+        raise RuntimeError(f"{module} {args}: {result.stderr}\n{result.stdout}")
+    return result
+
+
+class ScriptRuntime:
+    instruction_filename = "AGENTS.md"
+    shared_dir_name = ".claude"
+
+    def start(self, worktree_path, coral_md_path, log_dir=None, resume_session_id=None, **kwargs):
+        aid = (worktree_path / ".coral_agent_id").read_text().strip()
+        sid = resume_session_id or f"simulation-{aid}"
+        coral_dir = Path((worktree_path / ".coral_dir").read_text().strip())
+        session = coral_dir / "public/sessions/scripted" / f"{sid}.jsonl"
+        session.parent.mkdir(parents=True, exist_ok=True)
+        if not session.exists():
+            session.write_text(json.dumps({"simulated": True, "session_id": sid}) + "\n")
+        log_path = log_dir / f"{aid}-simulation.log"
+        stream = log_path.open("a")
+        stream.write(json.dumps({"simulation_session": sid}) + "\n")
+        stream.flush()
+        process = subprocess.Popen(
+            [sys.executable, "-m", "simulation_support", "agent", str(coral_dir), aid],
+            cwd=worktree_path,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        event(
+            "runtime_start",
+            agent=aid,
+            session=sid,
+            resume=resume_session_id,
+            worktree=str(worktree_path),
+            child_pid=process.pid,
+            child_start=process_start_time(process.pid),
+        )
+        return AgentHandle(aid, process, worktree_path, log_path, session_id=sid, _log_file=stream)
+
+    def extract_session_id(self, log_path):
+        for line in log_path.read_text().splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if "simulation_session" in record:
+                return record["simulation_session"]
+        return None
+
+
+class SyntheticGrader(TaskGrader):
+    def evaluate(self):
+        metadata = self.tasks[0].metadata
+        node, mode = metadata["node_id"], metadata["mode"]
+        quality = 0.0 if node == "N002" else 1.0
+        score = quality if mode == "research" else 0.2
+        marker = Path(self.codebase_path) / "simulation_marker.txt"
+        if node != "N000" and not marker.is_file():
+            raise RuntimeError("Grader did not receive committed simulation code")
+        evidence = {
+            "simulated": True,
+            "node_id": node,
+            "mode": mode,
+            "committed_marker": marker.read_text() if marker.exists() else None,
+        }
+        if (
+            os.environ["CORAL_SIM_SCENARIO"] == "faults"
+            and node == "N003"
+            and not gate("infra-failed").exists()
+        ):
+            gate("infra-failed").touch()
+            event("infra_failure", node=node, commit=metadata["commit_hash"])
+            return ScoreBundle(
+                scores={"quality_gate": Score(None, "quality_gate")},
+                aggregated=None,
+                feedback="SIMULATED infrastructure failure.",
+                metadata={"simulated": True, "failure_class": "infra"},
+            )
+        (self.eval_logs_dir / "simulation_result.json").write_text(json.dumps(evidence))
+        event(
+            "graded",
+            node=node,
+            mode=mode,
+            commit=metadata["commit_hash"],
+            quality=quality,
+            checkout=str(self.codebase_path),
+            run_id=metadata["grader_run_id"],
+        )
+        return ScoreBundle(
+            scores={"quality_gate": Score(quality, "quality_gate")},
+            aggregated=score,
+            feedback="SIMULATED: no training or timing.",
+            metadata={
+                "simulated": True,
+                "failure_class": None,
+                "contract_hash": metadata["contract_hash"],
+            },
+        )
+
+
+def analysis_runner(prompt, read_roots, schema, scratch):
+    evidence_root = next(p for p in read_roots if (p / "spec.md").is_file())
+    code_root = next(p for p in read_roots if p.name == "code")
+    spec = yaml.safe_load((evidence_root / "spec.md").read_text())
+    node = spec["node_id"]
+    mode = "engineering" if '"mode": "engineering"' in prompt else "research"
+    event("analyzer", node=node, mode=mode, code_snapshots=[str(p) for p in code_root.iterdir()])
+    if (
+        os.environ["CORAL_SIM_SCENARIO"] == "faults"
+        and node == "N002"
+        and not gate("analyzer-failed").exists()
+    ):
+        gate("analyzer-failed").touch()
+        event("analyzer_failure", node=node)
+        raise RuntimeError("injected first Analyzer failure")
+    output = scratch / "synthetic-analysis.json"
+    output.write_text(
+        json.dumps(
+            {
+                "summary": f"SIMULATED {mode} result for {node}; no scientific measurement.",
+                "findings": ["Only workflow behavior was exercised."],
+                "limitations": [
+                    "No model reasoning, training, correctness, or efficiency validation."
+                ],
+            }
+        )
+    )
+    return output
+
+
+def memory_runner(prompt, read_roots, schema, scratch):
+    from autoresearch.memory import list_analysis_refs
+
+    refs = list(list_analysis_refs(read_roots[0]))
+    event("memory_model", refs=refs)
+    summary = (
+        "---\n"
+        + yaml.safe_dump({"processed_analyses": refs})
+        + ("---\n# SIMULATED Summary\n\nWorkflow exercise only; no scientific conclusions.\n")
+    )
+    output = scratch / "synthetic-memory.json"
+    output.write_text(json.dumps({"research_summary": summary, "engineering_summary": summary}))
+    return output
+
+
+def run_memory(coral_dir: str):
+    from autoresearch.memory import MemoryContext, consolidate_memory
+
+    event("worker_start", worker="memory")
+    try:
+        result = consolidate_memory(
+            if_due=True, context=MemoryContext(Path(coral_dir)), runner=memory_runner
+        )
+        event("memory_done", status=result.status)
+        return {"status": result.status}
+    finally:
+        event("worker_end", worker="memory")
+
+
+def run_finalization(coral_dir: str):
+    from autoresearch.lifecycle import run_worker
+
+    from coral.grader.trusted_worker import start_task_worker
+
+    def launch_memory(coral, entrypoint):
+        if entrypoint != "autoresearch.memory:run_worker":
+            raise RuntimeError(f"unexpected worker {entrypoint}")
+        return start_task_worker(coral, "simulation_support:run_memory")
+
+    event("worker_start", worker="finalization")
+    try:
+        result = run_worker(coral_dir, runner=analysis_runner, memory_launcher=launch_memory)
+        event("finalization_done", **result)
+        return result
+    finally:
+        event("worker_end", worker="finalization")
+
+
+def declaration(coral_dir, node, mode, base, round_number):
+    spec = yaml.safe_load((coral_dir / f"public/notes/nodes/{node}/spec.md").read_text())
+    body = {
+        "mode": mode,
+        "node_id": node,
+        "node_type": "research",
+        "base_commit": base,
+        "quality_anchor": base if mode == "engineering" else None,
+        "analysis_refs": spec["analysis_refs"],
+        "change_summary": f"SIMULATED {mode} {node} candidate {round_number}",
+        "selection_rationale": "Fixed target for deterministic workflow simulation.",
+        "semantic_self_check": {
+            "status": "not_run",
+            "commands": [],
+            "limitations": "Simulation; no scientific self-check.",
+        },
+    }
+    Path("submission.yaml").write_text(yaml.safe_dump(body, sort_keys=False))
+    Path("simulation_marker.txt").write_text(f"SIMULATED {mode} {node} {round_number}\n")
+
+
+def agent(coral_dir: Path, aid: str):
+    event("agent_ready", agent=aid)
+    if aid.startswith("research-"):
+        node = aid.removeprefix("research-")
+        if node not in {"N001", "N002", "N003"}:
+            wait_for(lambda: gate("stop").exists(), "unused reservation stop")
+            return
+        spec_path = coral_dir / f"public/notes/nodes/{node}/spec.md"
+        if not spec_path.exists():
+            cli(
+                "autoresearch.cli",
+                "node",
+                "initialize",
+                "--parent",
+                "N000",
+                "--hypothesis",
+                "Simulation only",
+                "--selection-rationale",
+                "Root fixture",
+                "--delta",
+                "Synthetic marker",
+                "--risk",
+                "No scientific test",
+                "--falsification-criteria",
+                "Workflow assertion fails",
+            )
+        event("initialized", node=node, agent=aid, head=git(Path.cwd(), "rev-parse", "HEAD"))
+        if node == "N001":
+            from coral.grader.trusted_writes import TrustedWriteError, request_trusted
+
+            for name, operation, payload in (
+                ("reconcile", "reconcile_workflow", {}),
+                (
+                    "tree",
+                    "publish_artifact",
+                    {
+                        "kind": "tree",
+                        "content": "# Forbidden",
+                        "node_id": None,
+                        "mode": None,
+                        "version": None,
+                    },
+                ),
+                (
+                    "spec",
+                    "publish_artifact",
+                    {
+                        "kind": "spec",
+                        "content": "node_id: N001",
+                        "node_id": "N001",
+                        "mode": None,
+                        "version": None,
+                    },
+                ),
+                (
+                    "other_node",
+                    "publish_artifact",
+                    {
+                        "kind": "analysis",
+                        "content": "{}",
+                        "node_id": "N002",
+                        "mode": "research",
+                        "version": 99,
+                    },
+                ),
+            ):
+                try:
+                    request_trusted(coral_dir, operation, payload)
+                except TrustedWriteError as exc:
+                    event("authority_rejected", check=name, reason=str(exc))
+                else:
+                    raise RuntimeError(f"unauthorized operation succeeded: {name}")
+        if (
+            node == "N002"
+            and os.environ["CORAL_SIM_SCENARIO"] == "faults"
+            and not gate("crashed").exists()
+        ):
+            gate("crashed").touch()
+            event("agent_crash", agent=aid)
+            raise SystemExit(17)
+        wait_for(lambda: gate("research").exists(), "parallel Research release")
+        base = yaml.safe_load(spec_path.read_text())["base_commit"]
+        declaration(coral_dir, node, "research", base, 1)
+        cli("coral.cli", "eval", "-m", f"SIMULATED research {node}", "--no-wait")
+        event("submitted", node=node, mode="research", commit=git(Path.cwd(), "rev-parse", "HEAD"))
+        if node == "N003" and os.environ["CORAL_SIM_SCENARIO"] == "faults":
+            from coral.hub.attempts import read_attempt
+
+            sha = git(Path.cwd(), "rev-parse", "HEAD")
+
+            def failed():
+                attempt = read_attempt(coral_dir, sha)
+                return attempt if attempt and attempt.status != "pending" else None
+
+            first = wait_for(failed, "injected infrastructure failure")
+            if first.status != "crashed" or first.metadata.get("failure_class") != "infra":
+                raise RuntimeError("expected the controlled infrastructure failure")
+            if (spec_path.parent / "research_analysis_v1.md").exists():
+                raise RuntimeError("Research was finalized before its infrastructure retry")
+            cli("autoresearch.cli", "retry", sha)
+            event(
+                "same_sha_retry",
+                node=node,
+                commit=sha,
+                head_after=git(Path.cwd(), "rev-parse", "HEAD"),
+            )
+    else:
+        wait_for(lambda: gate("claims").exists(), "Engineer claim release")
+        result = cli("autoresearch.cli", "engineering", "claim", "N001", check=False)
+        if result.returncode:
+            event("claim_lost", agent=aid, error=result.stderr)
+            wait_for(lambda: gate("stop").exists(), "losing Engineer stop")
+            return
+        event("claim_won", agent=aid, node="N001")
+        base = git(Path.cwd(), "rev-parse", "HEAD")
+        for number in (1, 2):
+            declaration(coral_dir, "N001", "engineering", base, number)
+            cli("coral.cli", "eval", "-m", f"SIMULATED engineering {number}", "--timeout", "30")
+            event(
+                "submitted",
+                node="N001",
+                mode="engineering",
+                commit=git(Path.cwd(), "rev-parse", "HEAD"),
+                round=number,
+            )
+        cli("autoresearch.cli", "engineering", "finish")
+        event("finish_requested", agent=aid)
+    wait_for(lambda: gate("stop").exists(), "Agent retirement")
+
+
+def offline_grader_env(coral_dir, *_args, **_kwargs):
+    path = coral_dir / "private/grader_venv/bin/python"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+    path.chmod(0o755)
+    return path
+
+
+def prepare():
+    from autoresearch.bootstrap import bootstrap_root, bootstrap_root_analysis
+
+    from coral.config import CoralConfig
+    from coral.grader.daemon import process_pending_once
+    from coral.grader.trusted_writes import TrustedWriteService, _atomic_json
+    from coral.workspace.project import create_project
+
+    config = yaml.safe_load((TASK / "task.yaml").read_text())
+    config["task"]["name"] = "SIMULATED GreedyLoRE workflow"
+    config["workspace"] = {
+        "repo_path": str(TASK / "seed"),
+        "results_dir": str(root()),
+        "run_dir": str(root() / "run"),
+        "setup": [],
+    }
+    config["grader"].update(
+        entrypoint="simulation_support:SyntheticGrader",
+        setup=[],
+        timeout=30,
+        private=["taskdata/eval_contract.yaml"],
+    )
+    config["grader"]["args"]["trusted_workflow_worker"] = "simulation_support:run_finalization"
+    config["grader"]["args"]["trusted_memory_worker"] = "simulation_support:run_memory"
+    config["agents"].update(
+        runtime="simulation_support:ScriptRuntime",
+        model="simulation",
+        timeout=0,
+        heartbeat_enabled=False,
+    )
+    config["agents"]["sandbox"] = {"enabled": False}
+    config["agents"]["dynamic"]["max_engineers"] = (
+        2 if os.environ["CORAL_SIM_SCENARIO"] == "faults" else 1
+    )
+    for assignment in config["agents"]["assignments"]:
+        assignment["runtime_options"]["role_file"] = str(
+            TASK / assignment["runtime_options"]["role_file"]
+        )
+    cfg = CoralConfig.from_dict(config)
+    cfg.task_dir = TASK
+    with patch("coral.workspace.grader_env.setup_grader_env", offline_grader_env):
+        paths = create_project(cfg, config_dir=TASK)
+    seed = git(paths.repo_dir, "rev-parse", "HEAD")
+    bootstrap_root(paths.repo_dir, paths.repo_dir / "source_manifest.json")
+    a0 = git(paths.repo_dir, "rev-parse", "HEAD")
+    _atomic_json(
+        paths.coral_dir / "private/root_bootstrap.json",
+        {
+            "version": 1,
+            "source_commit": seed,
+            "node_id": "N000",
+            "mode": "research",
+            "submission_hash": hashlib.sha256(
+                (paths.repo_dir / "submission.yaml").read_bytes()
+            ).hexdigest(),
+        },
+    )
+    service = TrustedWriteService(paths.coral_dir, cfg)
+    service.submit_root_attempt(worktree=paths.repo_dir, commit_hash=a0)
+    process_pending_once(paths.coral_dir)
+    bootstrap_root_analysis(paths.coral_dir, paths.repo_dir, runner=analysis_runner)
+    event("root_bootstrapped", seed=seed, attempt=a0)
+    return cfg, paths
+
+
+def read_state(coral_dir):
+    return json.loads((coral_dir / "private/autoresearch_state.json").read_text())
+
+
+def controller(manager, paths, errors):
+    try:
+        wait_for(
+            lambda: (
+                {e.get("node") for e in events() if e["event"] == "initialized"} >= {"N001", "N002"}
+            ),
+            "two initialized Research worktrees",
+        )
+        gate("research").touch()
+        event("parallel_barrier_released")
+
+        def research_done():
+            state = read_state(paths.coral_dir)
+            return all(
+                state["nodes"].get(n, {}).get("research", {}).get("status") == "completed"
+                for n in ("N001", "N002", "N003")
+            )
+
+        wait_for(research_done, "three Research completions")
+        engineers = manager.config.agents.dynamic.max_engineers
+        wait_for(
+            lambda: (
+                len(
+                    {
+                        e["agent"]
+                        for e in events()
+                        if e["event"] == "agent_ready" and e["agent"].startswith("engineer-")
+                    }
+                )
+                >= engineers
+            ),
+            "Engineer processes ready for claim barrier",
+        )
+        gate("claims").touch()
+        event("claim_barrier_released")
+
+        def engineering_done():
+            return any(
+                w["status"] == "completed"
+                for w in read_state(paths.coral_dir)["engineering_workers"].values()
+            )
+
+        wait_for(engineering_done, "Engineering Analysis and completion")
+        wait_for(
+            lambda: (paths.coral_dir / "public/notes/engineering_summary.md").exists(),
+            "Memory publication",
+        )
+        wait_for(
+            lambda: all(
+                not (paths.agents_dir / f"research-{n}").exists() for n in ("N001", "N002", "N003")
+            ),
+            "Research worktree retirement",
+        )
+        winner = next(e["agent"] for e in events() if e["event"] == "claim_won")
+        wait_for(lambda: not (paths.agents_dir / winner).exists(), "Engineer worktree retirement")
+    except Exception:
+        errors.append(traceback.format_exc())
+    finally:
+        gate("stop").touch()
+        manager._stop_event.set()
+
+
+def make_report(paths):
+    from autoresearch.memory import MemoryContext, consolidate_memory
+
+    from coral.hub.attempts import read_attempts
+
+    state = read_state(paths.coral_dir)
+    recorded = events()
+    notes = paths.coral_dir / "public/notes"
+    before = [
+        (notes / name).read_bytes() for name in ("research_summary.md", "engineering_summary.md")
+    ]
+    result = consolidate_memory(
+        if_due=True,
+        context=MemoryContext(paths.coral_dir),
+        runner=lambda *_: (_ for _ in ()).throw(RuntimeError("duplicate Memory")),
+    )
+    after = [
+        (notes / name).read_bytes() for name in ("research_summary.md", "engineering_summary.md")
+    ]
+    starts = [
+        e for e in recorded if e["event"] == "runtime_start" and e["agent"] == "research-N002"
+    ]
+    claims = [e for e in recorded if e["event"] == "claim_won"]
+    attempts = read_attempts(paths.coral_dir)
+    roots = {"N001", "N002", "N003"}
+    report = {
+        "simulated": True,
+        "run_dir": str(paths.run_dir),
+        "completed_research": sorted(
+            n for n in roots if state["nodes"][n]["research"]["status"] == "completed"
+        ),
+        "quality_failed": sorted(
+            a.metadata["node_id"]
+            for a in attempts
+            if a.metadata["mode"] == "research"
+            and a.metadata["scores"]["quality_gate"]["value"] == 0
+        ),
+        "engineering_attempts": sum(a.metadata["mode"] == "engineering" for a in attempts),
+        "engineering_completed": sum(
+            w["status"] == "completed" for w in state["engineering_workers"].values()
+        ),
+        "parallel_research_verified": all(
+            any(
+                e["event"] == "initialized"
+                and e.get("node") == node
+                and e["at_ns"] < barrier["at_ns"]
+                for e in recorded
+            )
+            for node in ("N001", "N002")
+            for barrier in recorded
+            if barrier["event"] == "parallel_barrier_released"
+        )
+        and any(e["event"] == "parallel_barrier_released" for e in recorded),
+        "retired_worktrees": all(not (paths.agents_dir / f"research-{n}").exists() for n in roots)
+        and all(not (paths.agents_dir / c["agent"]).exists() for c in claims),
+        "memory_idempotent": result.status == "not_due" and before == after,
+        "same_session_resumed": len(starts) >= 2
+        and starts[1]["resume"] == starts[0]["session"]
+        and starts[1]["worktree"] == starts[0]["worktree"],
+        "analyzer_failure_recovered": any(e["event"] == "analyzer_failure" for e in recorded)
+        and state["nodes"]["N002"]["research"]["status"] == "completed",
+        "claim_conflict_verified": len(claims) == 1
+        and any(e["event"] == "claim_lost" for e in recorded),
+        "infra_retry_same_sha_verified": any(
+            e["event"] == "same_sha_retry" and e["commit"] == e["head_after"] for e in recorded
+        )
+        and any(
+            a.metadata.get("node_id") == "N003"
+            and len(a.metadata.get("grader_runs", [])) == 2
+            and a.metadata["grader_runs"][0]["failure_class"] == "infra"
+            and a.metadata["grader_runs"][1]["failure_class"] is None
+            for a in attempts
+        ),
+        "authority_rejections": sorted(
+            {e["check"] for e in recorded if e["event"] == "authority_rejected"}
+        ),
+        "residual_reservations": [
+            item
+            for item in state["nodes"]
+            if state["nodes"][item]["research"]["status"] == "reserved"
+        ],
+        "blocked_command_invocations": (root() / "blocked-commands.log").read_text().splitlines()
+        if (root() / "blocked-commands.log").exists()
+        else [],
+        "remaining_simulation_processes": live_processes(root()),
+        "residual_engineer_reservations": [
+            aid for aid, w in state["engineering_workers"].items() if w["status"] == "reserved"
+        ],
+        "not_covered": [
+            "Real Codex and session files",
+            "Prompt compliance and target judgment",
+            "Real quality/semantic/efficiency/GPU training",
+            "SRT/OS permissions and network isolation",
+            "Cold start_all and dependency installation",
+            "Manager/Grader crash and host power loss",
+            "Manual pause/resume, circuit breaker, exhausted infrastructure retries",
+            "Memory partial publication and Memory worker crash recovery",
+            "Multi-island",
+            "Long-running/load/race stress",
+        ],
+        "srt_available": shutil.which("srt") is not None,
+        "artifacts": [str(path.relative_to(paths.run_dir)) for path in sorted(notes.rglob("*.md"))],
+        "attempts": [
+            {
+                "node": a.metadata["node_id"],
+                "mode": a.metadata["mode"],
+                "agent": a.agent_id,
+                "commit": a.commit_hash,
+                "status": a.status,
+                "run_ids": [r["run_id"] for r in a.metadata.get("grader_runs", [])],
+            }
+            for a in attempts
+        ],
+    }
+    (root() / "report.json").write_text(json.dumps(report, indent=2))
+    covered = [
+        "真实 Seed Root bootstrap、S0/A0 与固定提交快照",
+        "两 Researcher 并行初始化、唯一 Node ID、真实 UDS/PID 认证与提交校验",
+        "模拟 quality 通过/失败后自动 Analysis、完成、干净 Worktree 回收与槽位补位",
+        "Engineering 原子认领、独立 Worktree、两个候选、finish 后自动收尾",
+        "Memory 三不同 Research Node 门槛（含 N000）、两 Summary 发布与幂等跳过",
+        "普通 Agent 无法 reconcile、写 Tree/Spec 或其他 Node Analysis",
+        "所有测试进程收尾后按 PID 和启动时间核查无残留",
+    ]
+    if os.environ["CORAL_SIM_SCENARIO"] == "faults":
+        covered += [
+            "脚本崩溃恢复同 Node、Worktree 和模拟 Session ID",
+            "Analyzer 首次失败后重试，完成前保持 assignment",
+            "两个 Engineer 竞争同一目标仅一人成功",
+            "可重试 infra failure 不提前收尾，同 SHA 重试保留两份 run 日志",
+        ]
+    report_md = [
+        "# Workflow 模拟覆盖报告",
+        "",
+        "所有科研结果均为模拟；未调用模型或 GPU。",
+        "",
+        "## 已覆盖",
+        "",
+        *[f"- {item}" for item in covered],
+        "",
+        "## 未覆盖",
+        "",
+        *[f"- {item}" for item in report["not_covered"]],
+        "",
+        "## 运行记录",
+        "",
+        "| Node | mode | Agent | Commit | status |",
+        "| --- | --- | --- | --- | --- |",
+        *[
+            f"| {a['node']} | {a['mode']} | {a['agent']} | {a['commit']} | {a['status']} |"
+            for a in report["attempts"]
+        ],
+        "",
+        "未执行的补位 reservation 保留在权威状态中；其进程已停止。",
+        "",
+        f"Research reservations: {report['residual_reservations']}",
+        f"Engineer reservations: {report['residual_engineer_reservations']}",
+        "",
+        "完整事件与判定依据见同目录 timeline.jsonl、report.json。",
+    ]
+    (root() / "coverage.md").write_text("\n".join(report_md) + "\n")
+
+
+def driver(output: Path, scenario: str):
+    from coral.agent.manager import AgentManager
+
+    os.environ["CORAL_SIM_ROOT"] = str(output)
+    os.environ["CORAL_SIM_SCENARIO"] = scenario
+    forbidden = output / "blocked-bin"
+    forbidden.mkdir()
+    for name in ("codex", "torchrun", "nvidia-smi"):
+        command = forbidden / name
+        command.write_text(
+            "#!/bin/sh\nprintf '%s\\n' "
+            + shlex.quote(name)
+            + " >> "
+            + shlex.quote(str(output / "blocked-commands.log"))
+            + "\nexit 90\n"
+        )
+        command.chmod(0o755)
+    os.environ["PATH"] = str(forbidden) + os.pathsep + os.environ["PATH"]
+    config, paths = prepare()
+    manager = AgentManager(config, config_dir=TASK)
+    errors = []
+    try:
+        manager.resume_all(paths)
+        event(
+            "daemon_started",
+            child_pid=manager._grader_proc.pid,
+            child_start=process_start_time(manager._grader_proc.pid),
+        )
+        control = threading.Thread(target=controller, args=(manager, paths, errors), daemon=True)
+        control.start()
+        manager.monitor_loop(check_interval=0.1)
+        control.join(timeout=2)
+    finally:
+        gate("stop").touch()
+        manager.stop_all()
+        cleanup_processes(output)
+    if errors:
+        raise RuntimeError(errors[0])
+    wait_for(
+        lambda: (
+            len([e for e in events() if e["event"] == "worker_start"])
+            == len([e for e in events() if e["event"] == "worker_end"])
+        ),
+        "worker exit",
+        timeout=10,
+    )
+    make_report(paths)
+
+
+def live_processes(output: Path) -> list[int]:
+    identities = set()
+    for entry in read_events(output):
+        if entry["event"] in {"runtime_start", "daemon_started"}:
+            identities.add((entry["child_pid"], entry["child_start"]))
+        elif entry["event"] in {"worker_start", "graded"}:
+            identities.add((entry["pid"], entry["pid_start"]))
+    live = []
+    for pid, started in identities:
+        try:
+            status = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            if process_start_time(pid) == started and status not in {"Z", "X"}:
+                live.append(pid)
+        except (OSError, ValueError):
+            pass
+    return sorted(live)
+
+
+def cleanup_processes(output: Path) -> None:
+    # Only PIDs recorded by this test, with matching /proc start identities.
+    deadline = time.monotonic() + 3
+    while live_processes(output) and time.monotonic() < deadline:
+        time.sleep(0.025)
+    for pid in live_processes(output):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "driver":
+        driver(Path(sys.argv[2]), sys.argv[3])
+    else:
+        try:
+            agent(Path(sys.argv[2]), sys.argv[3])
+        except Exception:
+            event("agent_error", agent=sys.argv[3], traceback=traceback.format_exc())
+            raise

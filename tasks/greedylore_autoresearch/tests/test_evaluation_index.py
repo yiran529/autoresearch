@@ -105,3 +105,15 @@ def test_evaluation_preserves_retry_status_and_failure_class(tmp_path):
 
     assert "first:crashed/infra" in rebuilt
     assert "second:improved" in rebuilt
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+def test_evaluation_survives_retired_source_worktree(tmp_path, canonical):
+    attempt = _attempt("a" * 40, "research", "2026-01-01T00:00:00+00:00")
+    attempt.metadata["source_worktree"] = str(tmp_path / "retired-agent")
+    if canonical:
+        attempt.metadata["submission_hash"] = "b" * 64
+    rebuilt = refresh_node_evaluation("N001", [attempt], tmp_path / "logs")
+    assert "| research |" in rebuilt
+    if canonical:
+        assert "research:N001" in rebuilt

@@ -63,7 +63,7 @@ def build_quality_command(
         "--use_error_feedback", f"ef{compressor['ef_rank']}",
         "--min_compression_rate", _value(compressor["min_compression_rate"]),
         "--beta_ef", _value(compressor["beta_ef"]),
-        "--error_inherit", _value(compressor["error_inherit"]),
+        "--error_inherit", format(compressor["error_inherit"], "g"),
         "--contract_hash", str(profile["contract_hash"]),
         "--output_dir", str(output),
     ]

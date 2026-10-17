@@ -31,6 +31,29 @@ def test_formal_mode_plan_keeps_research_and_engineering_distinct():
     assert Grader.workloads_for("engineering") == ("efficiency",)
 
 
+def test_exploration_rejects_old_full_budget_dense_reference(contract, tmp_path):
+    import json
+
+    import yaml
+    from greedylore_autoresearch_grader.contract import EvalContract
+    from greedylore_autoresearch_grader.runtime import InfraFailure
+
+    legacy = yaml.safe_load(contract.path.read_text())
+    legacy["quality"]["workloads"]["llama60m_adamw"]["stop_after_steps"] = 8393
+    path = tmp_path / "legacy.yaml"
+    path.write_text(yaml.safe_dump(legacy))
+    legacy_hash = EvalContract.load(path).contract_hash
+    private = tmp_path / "private"
+    references = private / "dense_references"
+    references.mkdir(parents=True)
+    for name in ("quality", "efficiency"):
+        (references / f"{name}.json").write_text(json.dumps({"contract_hash": legacy_hash}))
+    grader = Grader(GraderConfig())
+    grader.private_dir = str(private)
+    with pytest.raises(InfraFailure, match="contract hash mismatch"):
+        grader._load_references(contract.contract_hash)
+
+
 def test_research_scores_quality_gate_and_comparable_speedup():
     reference = {
         "quality": {
@@ -49,8 +72,8 @@ def test_research_scores_quality_gate_and_comparable_speedup():
         },
     }
     quality = {
-        "llama60m_adamw": {"final_eval_loss": 1.05},
-        "llama130m_muon": {"final_eval_loss": 2.1},
+        "llama60m_adamw": {"final_eval_loss": 1.05, "best_eval_loss": 0.5},
+        "llama130m_muon": {"final_eval_loss": 2.1, "best_eval_loss": 0.5},
     }
     timing = {
         "130m_adamw_bf16": {"mean": 0.2, "relative_spread": 0.1},
@@ -63,6 +86,9 @@ def test_research_scores_quality_gate_and_comparable_speedup():
     )
 
     assert bundle.scores["llama60m_loss_ratio"].value == 1.05
+    assert bundle.scores["llama60m_eval_loss"].value == 1.05
+    assert bundle.scores["llama130m_eval_loss"].value == 2.1
+    assert bundle.scores["llama130m_loss_ratio"].value == 1.05
     assert bundle.scores["llama130m_quality_pass"].value == 1.0
     assert bundle.scores["bf16_speedup"].value == 2.0
     assert bundle.scores["fp32_speedup"].value == 1.0
@@ -263,7 +289,7 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
                 is_60m = "c4/configs/llama_60m_table_iv.json" in spec.argv
                 payload = {
                     "status": "completed", "contract_hash": contract.contract_hash,
-                    "world_size": 4, "update_step": 8393 if is_60m else 2500,
+                    "world_size": 4, "update_step": 4000 if is_60m else 2500,
                     "final_eval_loss": 1.0 if is_60m else 2.0,
                 }
             else:

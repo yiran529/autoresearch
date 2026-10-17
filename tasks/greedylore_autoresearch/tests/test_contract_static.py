@@ -41,7 +41,7 @@ def test_contract_freezes_quality_workloads() -> None:
         "precision": "bf16",
         "per_device_batch_size": 128,
         "scheduler_steps": 8393,
-        "stop_after_steps": 8393,
+        "stop_after_steps": 4000,
         "learning_rate": 0.0025,
         "activation_checkpointing": True,
     }
