@@ -634,21 +634,39 @@ def test_memory_launch_accepts_only_active_researcher_and_empty_payload(tmp_path
         )
 
 
-def test_one_shot_memory_child_survives_short_lived_launcher(tmp_path):
+def test_one_shot_memory_child_publishes_after_short_lived_launcher(tmp_path):
     coral_dir = tmp_path / ".coral"
     python = coral_dir / "private" / "grader_venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)
+    notes = coral_dir / "public" / "notes"
+    for index in (1, 2, 3):
+        analysis = notes / "nodes" / f"N{index:03d}" / "research_analysis_v1.md"
+        analysis.parent.mkdir(parents=True)
+        analysis.write_text("# Published Analysis\n")
     (tmp_path / "memory_fake.py").write_text(
+        "import json, time\n"
         "from pathlib import Path\n"
-        "import time\n"
+        "from autoresearch.memory import MemoryContext, consolidate_memory, list_analysis_refs\n"
         "def run(coral_dir):\n"
         "    time.sleep(0.2)\n"
-        "    Path(coral_dir, 'worker_done').write_text('published')\n"
-        "    return {'status': 'published'}\n"
+        "    context = MemoryContext(Path(coral_dir))\n"
+        "    refs = list_analysis_refs(context.notes_root)\n"
+        "    summary = '---\\nprocessed_analyses:\\n' + ''.join(f'  - {ref}\\n' for ref in refs) + '---\\n# Summary\\n\\nA finding.\\n'\n"
+        "    def fake_runner(prompt, read_roots, schema, scratch):\n"
+        "        output = scratch / 'output.json'\n"
+        "        output.write_text(json.dumps({'research_summary': summary, 'engineering_summary': summary}))\n"
+        "        return output\n"
+        "    result = consolidate_memory(if_due=True, context=context, runner=fake_runner)\n"
+        "    return {'status': result.status}\n"
     )
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), str(Path.cwd())])
+    task_src = (Path(__file__).resolve().parents[1] / "tasks"
+                / "greedylore_autoresearch" / "autoresearch" / "src")
+    env["PYTHONPATH"] = os.pathsep.join([
+        str(tmp_path), str(Path.cwd()), str(task_src),
+        *(path for path in sys.path if path.endswith("site-packages")),
+    ])
     launcher = subprocess.run(
         [sys.executable, "-c", (
             "from coral.grader.trusted_worker import start_task_worker; "
@@ -658,9 +676,10 @@ def test_one_shot_memory_child_survives_short_lived_launcher(tmp_path):
     )
     assert launcher.returncode == 0
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and not (coral_dir / "worker_done").is_file():
+    while time.monotonic() < deadline and not (notes / "engineering_summary.md").is_file():
         time.sleep(0.02)
-    assert (coral_dir / "worker_done").read_text() == "published"
+    assert "nodes/N003/research_analysis_v1.md" in (notes / "research_summary.md").read_text()
+    assert "nodes/N003/research_analysis_v1.md" in (notes / "engineering_summary.md").read_text()
 
 
 def test_agent_workflow_operation_cannot_supply_identity_or_state(tmp_path):
