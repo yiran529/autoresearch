@@ -25,6 +25,12 @@ grader:
     trusted_artifact_authorizer: autoresearch.state:authorize_artifact
     trusted_memory_authorizer: autoresearch.state:authorize_memory_start
     trusted_memory_worker: autoresearch.memory:run_worker
+    trusted_diagnostic_handler: autoresearch.diagnostics:handle_diagnostic
+    analyzer_diagnostics: true
+    # Explicit public Python/CUDA/data roots can be mounted read-only when needed.
+    # Never include .coral/private, home directories, credentials or other runs.
+    diagnostic_runtime_roots: []
+    diagnostic_path: /usr/local/bin:/usr/bin:/bin
     max_engineering_runs_per_node: 1
     trusted_submission_validator: autoresearch.submission:validate_submission
     trusted_artifact_validator: autoresearch.artifacts:validate_artifact

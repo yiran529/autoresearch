@@ -74,6 +74,9 @@ scripts/tmp_*/
 # Project runs (ephemeral agent workspaces, logs, experiment outputs)
 erdos_project/
 autoresearch/
+# The task's Python package is source, not an ephemeral run directory.
+!tasks/greedylore_autoresearch/autoresearch/
+!tasks/greedylore_autoresearch/autoresearch/src/autoresearch/
 results/
 test_claude_code/
 

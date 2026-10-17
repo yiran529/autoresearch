@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -550,6 +551,7 @@ def analyze(
     runner: Runner = run_fresh_codex,
     publisher: Publisher | None = None,
     code_snapshotter: CodeSnapshotter = _prepare_code_snapshot,
+    diagnostic_runner: Callable | None = None,
 ) -> AnalysisResult:
     ctx = context or _default_context()
     publish = publisher or _default_publisher(ctx)
@@ -575,23 +577,51 @@ def analyze(
         evidence = _artifact_evidence(analysis_document, evidence, ctx)
         analysis_document = validate_analysis(analysis_document, evidence)
     else:
-        analyzer_scratch = Path(tempfile.mkdtemp(prefix="autoresearch-analyzer-"))
-        analyzer_snapshot = _prepare_evidence_snapshot(evidence, ctx, analyzer_scratch)
-        analyzer_code = code_snapshotter(evidence, ctx, analyzer_scratch)
-        analyzer_roots = [analyzer_code, analyzer_snapshot]
-        if references.is_dir():
-            analyzer_roots.append(references)
-        output = runner(
-            _prompt(evidence),
-            analyzer_roots,
-            _schema("analysis"),
-            analyzer_scratch,
-        )
-        analysis_document = validate_analysis(
-            seal_document(load_document(output), evidence), evidence
-        )
-        content = json.dumps(analysis_document, indent=2, sort_keys=True) + "\n"
-        analysis_path = _publish(publish, ctx, "analysis", mode, version, content)
+        from .diagnostic_sandbox import isolation_available
+        from .diagnostic_session import run_diagnostic_codex, settings
+        from .diagnostics import create_task
+
+        enabled = settings(ctx.coral_dir).get("analyzer_diagnostics", False)
+        if (enabled and diagnostic_runner is None and runner is run_fresh_codex
+                and isolation_available()):
+            diagnostic_runner = run_diagnostic_codex
+        task = (create_task(ctx.coral_dir, node_id, mode, version, evidence.research_sha,
+                            evidence_hash=evidence.manifest_hash)
+                if diagnostic_runner is not None else None)
+        with task.session() if task else nullcontext():
+            analyzer_scratch = (task.workspace if task else
+                                Path(tempfile.mkdtemp(prefix="autoresearch-analyzer-")))
+            analyzer_snapshot = _prepare_evidence_snapshot(evidence, ctx, analyzer_scratch)
+            analyzer_code = code_snapshotter(evidence, ctx, analyzer_scratch)
+            analyzer_roots = [analyzer_code, analyzer_snapshot]
+            if references.is_dir():
+                analyzer_roots.append(references)
+            if task is not None:
+                remaining = max(0, 3 - task.read()['executions'])
+                guidance = (
+                    "\n诊断已启用：每个分析任务最多 3 次执行，"
+                    f"剩余 {remaining} 次；每次按需申请 1–4 卡，运行最多 300 秒，排队最多 300 秒。"
+                    "在 experiments/ 写脚本，结果写入 results/，通过权威入口运行：\n"
+                    "autoresearch diagnostic run --gpus 4 --timeout 300 -- "
+                    "python experiments/probe.py --output results/probe.json\n"
+                    "仅在关键证据不足且能区分主要解释时诊断，不重复已有充分验证；"
+                    "不得绕过入口直接启动 GPU 工作。引用诊断 ID 和持久记录中的结果；"
+                    "失败或预算不足时明确不确定性，不猜测机制结论。"
+                )
+                output = diagnostic_runner(_prompt(evidence) + guidance, analyzer_roots,
+                                           _schema("analysis"), analyzer_scratch, task)
+            else:
+                output = runner(
+                    _prompt(evidence) + "\n本次未启用受控诊断；不要自行启动 GPU 实验，缺失证据请列为局限。",
+                    analyzer_roots,
+                    _schema("analysis"),
+                    analyzer_scratch,
+                )
+            analysis_document = validate_analysis(
+                seal_document(load_document(output), evidence), evidence
+            )
+            content = json.dumps(analysis_document, indent=2, sort_keys=True) + "\n"
+            analysis_path = _publish(publish, ctx, "analysis", mode, version, content)
 
     return AnalysisResult(
         evidence=evidence,

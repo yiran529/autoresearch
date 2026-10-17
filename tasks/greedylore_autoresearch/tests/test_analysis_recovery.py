@@ -97,6 +97,45 @@ def _analysis_payload(_evidence):
     }
 
 
+def test_diagnostic_runner_keeps_results_and_revokes_identity(tmp_path):
+    import os
+
+    from autoresearch.diagnostics import handle_diagnostic
+    context = _context(tmp_path)
+    # Use an actual SHA-shaped identity; the other legacy fixtures use synthetic 'r'.
+    context.attempts[0].commit_hash = 'a' * 40
+    observed = {}
+
+    def diagnostic_runner(prompt, roots, schema, scratch, task):
+        task.bind(os.getpid())
+        observed['task'] = task
+        assert scratch == task.workspace
+        assert 'diagnostic run' in prompt
+        assert '最多 3 次' in prompt
+        script = scratch / 'experiments/probe.py'
+        script.write_text('print("evidence")')
+        def execute(item, payload, cancelled):
+            cancelled()
+            (item.workspace / 'results/probe.json').write_text('{"gap":0.2}')
+            return {'status': 'completed', 'started': True, 'exit_code': 0}
+        result = handle_diagnostic(
+            {'request_id': 'mechanism', 'argv': ['python', 'experiments/probe.py'],
+             'gpus': 4, 'timeout': 300},
+            {'coral_dir': str(context.coral_dir), 'peer_pid': os.getpid()}, executor=execute)
+        output = scratch / 'results/output.json'
+        output.write_text(json.dumps({'summary': 'Measured gap.',
+            'findings': [f"Diagnostic {result['diagnostic_id']}: gap 0.2."],
+            'limitations': ['A small diagnostic, not a quality measurement.']}))
+        return output
+
+    result = _analyze('N001', 'research', context=context,
+                      publisher=_publisher(context.notes_root), diagnostic_runner=diagnostic_runner)
+    assert 'N001-research-v1/mechanism' in result.analysis_path.read_text()
+    task = observed['task']
+    assert (task.records / 'mechanism/record.json').is_file()
+    assert task.read()['process'] is None
+
+
 class FakeCodex:
     def __init__(self, context, outputs=None):
         self.context = context

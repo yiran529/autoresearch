@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -138,6 +140,14 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autoresearch")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    diagnostic = commands.add_parser("diagnostic", help="run a bounded Analyzer diagnostic")
+    diagnostic_commands = diagnostic.add_subparsers(dest="diagnostic_command", required=True)
+    diagnostic_run = diagnostic_commands.add_parser("run")
+    diagnostic_run.add_argument("--gpus", type=int, default=1)
+    diagnostic_run.add_argument("--timeout", type=float, default=300)
+    diagnostic_run.add_argument("--request-id", default=None, help="reuse this ID after a channel timeout")
+    diagnostic_run.add_argument("argv", nargs=argparse.REMAINDER)
+
     retry = commands.add_parser("retry", help="retry one same-SHA infrastructure failure")
     retry.add_argument("commit_hash")
 
@@ -188,7 +198,18 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
-    if args.command == "retry":
+    if args.command == "diagnostic":
+        from autoresearch.diagnostics import _validate_request
+
+        run = os.environ.get("CORAL_DIAGNOSTIC_RUN")
+        if not run:
+            raise SystemExit("diagnostics are available only inside an enabled Analyzer session")
+        argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+        payload = {"request_id": args.request_id or uuid.uuid4().hex,
+                   "argv": argv, "gpus": args.gpus, "timeout": args.timeout}
+        _validate_request(payload)
+        result = request_trusted(Path(run), "run_diagnostic", payload, timeout=660)
+    elif args.command == "retry":
         result = request_trusted(_coral_dir(), "retry_attempt", {"commit_hash": args.commit_hash})
     elif args.command == "bootstrap-root-analysis":
         from autoresearch.bootstrap import bootstrap_root_analysis

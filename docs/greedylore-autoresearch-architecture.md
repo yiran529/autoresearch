@@ -65,7 +65,7 @@ Researcher 负责一个算法假设和一个正式 Research 候选。Engineer �
 
 dynamic 模式生成精简的任务专用指令，指向对应角色文件。当前 Codex runtime 将其写为 worktree 根目录的 `AGENTS.md`，不会加载通用长版 `CORAL.md` 模板。角色文件再指引 Agent 阅读共享工作流规则。
 
-进程异常退出时，Manager 尝试恢复相同身份与 Session；节点完成后则退休原生产 Agent，后续节点启动新身份。当前任务关闭通用 heartbeat。独立 Analyzer 另用临时目录和新会话运行，不属于生产 Researcher / Engineer 的持续对话。
+进程异常退出时，Manager 尝试恢复相同身份与 Session；节点完成后则退休原生产 Agent，后续节点启动新身份。当前任务关闭通用 heartbeat。独立 Analyzer 使用新会话，不属于生产 Researcher / Engineer 的持续对话；受控诊断模式使用按 Node/mode/version 固定的独立 workspace，未启用时保留原临时目录模式。
 
 主要代码：[manager.py](../coral/agent/manager.py)、[codex.py](../coral/agent/builtin/codex.py)、[project.py](../coral/workspace/project.py)、[worktree.py](../coral/workspace/worktree.py)、[coral_md.py](../coral/template/coral_md.py)、[角色规则](../tasks/greedylore_autoresearch/roles/workflow_rules.md)。
 
@@ -102,6 +102,23 @@ Research 模式同时评估质量与效率。质量门槛失败时，汇总分�
 `lifecycle.py` 驱动自动收尾，准备固定证据并调用 `analysis.py`。独立 Analyzer 使用新会话，读取指定 SHA 的代码快照、Spec、Evaluation、相关 Analysis 和原始证据，根据 research / engineering 专用 prompt 输出结构化正文。宿主补入固定证据封装，校验后发布版本化 Analysis。
 
 Research Analysis 关注质量变化、算法机制、竞争解释、局限和可证伪的 child 建议。Engineering Analysis 关注结构开销、可优化实现开销及尚未证实的性能归因，同时审视全部工程候选。有效 Research Analysis 是节点完成和后续扩展的关键条件，Research 不必等待 Engineering。
+
+### Analyzer 诊断实验
+
+关键证据不足时，Analyzer 可在同一 Session 中编写小型诊断脚本，通过权威入口申请 GPU；它不是正式 Attempt，不改变质量、评分或 Engineer 两轮规则：
+
+```bash
+autoresearch diagnostic run --gpus 4 --timeout 300 -- \
+  python experiments/probe.py --output results/probe.json
+```
+
+每个分析版本最多实际执行 3 次，每次按需申请 1–4 卡、运行最多 300 秒，排队最多 300 秒。排队失败不消耗执行次数；重复使用 `--request-id <原ID>` 查询同一请求不会再执行。失败、超时和退出码也被记录。重启同一分析版本不重置预算，正式 Analysis 已发布时仍直接复用。
+
+工作区位于 `.coral/public/diagnostics/<Node>-<mode>-v<version>/workspace/`。只有 `experiments/` 和 `results/` 可写，固定 `code/`、`evidence/` 只读；兄弟任务、私有状态和未分配 GPU 不挂载。取得 GPU 后冻结可写输入，实验执行冻结副本，仍使用原来的命令和 workspace 路径，避免排队期间的修改污染证据。结果安全合并拷回 workspace，具体归因以本次持久记录为准。`records/<request-id>/` 保存脚本和输入快照、命令、固定证据身份、GPU、运行时间、stdout/stderr 及结果副本，供 Analysis 引用。每类归档上限 64 MiB / 4096 条目，超出时明确记录归档失败；不承诺完整保留超大输出。普通 Researcher/Engineer 不能改写诊断目录。
+
+启用条件是 `grader.args.analyzer_diagnostics: true`、可用的 bubblewrap namespace，以及显式配置的公共运行依赖。`diagnostic_runtime_roots` 只读挂载所需 Python 环境（含其公开的解释器/链接目标）、CUDA 依赖、本地 C4 和 tokenizer；`diagnostic_path` 指向该环境的 bin 目录。不要挂载整个 home、run、其他 workspace、凭据或 grader 私有环境。它们是宿主配置，不由 Analyzer 请求指定；不会自动安装依赖或下载数据。未安装 bubblewrap 或 namespace 探测失败时保留普通分析并提示诊断未启用；已启用但运行环境不完整时诊断明确失败，不直接在宿主执行命令。
+
+现阶段 CPU/可信 socket/预算与回归测试已覆盖；当前开发机缺少 bubblewrap，真实 namespace 隔离、四卡通信及 Codex 在该 namespace 中的运行仍须单独验证，不能仅凭命令构造测试宣称安全性已验证。
 
 `memory.py` 在累计达到条件时整理全局记忆，发布 `research_summary.md` 和 `engineering_summary.md`，并记录所覆盖的 Analysis 引用。Summary 帮助新 Agent 定位证据，具体判断仍需追溯到固定 SHA、Analysis 和原始记录。
 

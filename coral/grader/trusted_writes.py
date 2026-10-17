@@ -32,7 +32,7 @@ WORKFLOW_OPERATIONS = frozenset({
     "complete_assignment", "cancel_assignment", "finish_assignment",
 })
 OPERATIONS = frozenset({
-    "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due",
+    "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due", "run_diagnostic",
 }) | WORKFLOW_OPERATIONS
 _WORKFLOW_FIELDS = {
     "reconcile_workflow": frozenset(),
@@ -414,6 +414,7 @@ class TrustedWriteService:
         artifact_authorizer: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
         memory_authorizer: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
         memory_launcher: Callable[[Path, str], Any] | None = None,
+        diagnostic_handler: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self.coral_dir = Path(coral_dir).resolve()
         self.config = config
@@ -426,6 +427,7 @@ class TrustedWriteService:
         self.artifact_authorizer = artifact_authorizer
         self.memory_authorizer = memory_authorizer
         self.memory_launcher = memory_launcher
+        self.diagnostic_handler = diagnostic_handler
         self._workflow_process = None
 
     def _validator_entrypoint(self, name: str) -> str:
@@ -525,6 +527,18 @@ class TrustedWriteService:
         return result
 
     def handle(self, operation: str, payload: dict[str, Any], peer_pid: int) -> dict[str, Any]:
+        if operation == "run_diagnostic":
+            if not isinstance(payload, dict):
+                raise TrustedWriteError("trusted payload must be an object")
+            context = {"coral_dir": str(self.coral_dir), "peer_pid": peer_pid}
+            if self.diagnostic_handler is not None:
+                return self.diagnostic_handler(payload, context)
+            from coral.grader.trusted_worker import invoke_task_validator
+
+            return invoke_task_validator(
+                self.coral_dir, self._validator_entrypoint("trusted_diagnostic_handler"),
+                payload, context, timeout=650,
+            )
         if operation == "reconcile_workflow":
             if peer_pid != os.getppid():
                 raise TrustedWriteError("only the manager peer may reconcile workflow")
@@ -553,6 +567,8 @@ class TrustedWriteService:
     ) -> dict[str, Any]:
         if operation not in OPERATIONS:
             raise TrustedWriteError(f"unsupported trusted operation: {operation}")
+        if operation == "run_diagnostic":
+            raise TrustedWriteError("diagnostics require a kernel-authenticated Analyzer peer")
         if not isinstance(payload, dict):
             raise TrustedWriteError("trusted payload must be an object")
         if operation == "reconcile_workflow":
