@@ -5,14 +5,22 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import math
+import os
+import random
 import re
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from .runtime import InfraFailure, ProcessIdentity
 
-class InfraFailure(RuntimeError):  # noqa: N818 - contract term
+
+class ResourceBusy(InfraFailure):
+    """Transient contention; distinct from a failed inventory or configuration."""
+
     pass
 
 
@@ -32,6 +40,7 @@ class GpuDevice:
     utilization_percent: int
     compute_pids: tuple[int, ...]
     numa_node: int | None = None
+    compute_processes: tuple[ProcessIdentity, ...] = ()
 
     def idle(self, policy: IdleGpuPolicy) -> bool:
         return (
@@ -52,6 +61,7 @@ class GpuInventory:
         *,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         sysfs_root: Path = Path("/sys/bus/pci/devices"),
+        identity_reader: Callable[[int], ProcessIdentity | None] = ProcessIdentity.read,
     ) -> GpuInventory:
         query = runner(
             [
@@ -62,11 +72,13 @@ class GpuInventory:
             capture_output=True,
             text=True,
             check=True,
+            timeout=1,
         )
         apps = runner(
             ["nvidia-smi", "--query-compute-apps=gpu_uuid,pid", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
+            timeout=1,
         )
         if apps.returncode != 0:
             raise InfraFailure("incomplete GPU inventory evidence: compute-app query failed")
@@ -78,7 +90,7 @@ class GpuInventory:
             if len(parts) != 2 or not parts[1].isdigit():
                 raise InfraFailure("incomplete GPU inventory evidence: invalid compute-app row")
             pids.setdefault(parts[0], []).append(int(parts[1]))
-        topo = runner(["nvidia-smi", "topo", "-m"], capture_output=True, text=True)
+        topo = runner(["nvidia-smi", "topo", "-m"], capture_output=True, text=True, timeout=1)
         if topo.returncode != 0 or not topo.stdout.strip():
             raise InfraFailure("incomplete GPU inventory evidence: topology query failed")
         devices = []
@@ -104,6 +116,8 @@ class GpuInventory:
                     int(util),
                     tuple(pids.get(uuid, ())),
                     numa_node,
+                    tuple(identity for pid in pids.get(uuid, ())
+                          if (identity := identity_reader(pid)) is not None),
                 )
             )
         return cls(
@@ -168,13 +182,49 @@ def validate_efficiency_comparability(
 
 
 class GpuReservation:
-    def __init__(self, devices: tuple[GpuDevice, ...], streams: list[object], topology: str):
+    def __init__(self, devices: tuple[GpuDevice, ...], streams: list[object], topology: str,
+                 on_event: Callable | None = None, inventory_provider=None):
         self.devices = devices
         self._streams = streams
         self.topology = topology
         self.indices = tuple(device.index for device in devices)
         self.uuids = tuple(device.uuid for device in devices)
         self.cuda_visible_devices = ",".join(str(index) for index in self.indices)
+        self._on_event = on_event
+        self._inventory_provider = inventory_provider or GpuInventory.from_nvidia_smi
+
+    def check_exclusive(self, session_pid: int | None = None) -> None:
+        """Allow compute only from the process group/session created for this command."""
+        for attempt in range(2):
+            try:
+                sample = self._inventory_provider()
+            except Exception as exc:
+                raise InfraFailure(f"timing inventory unavailable: {exc}") from exc
+            by_uuid = {device.uuid: device for device in sample.devices}
+            unstable = False
+            for uuid in self.uuids:
+                device = by_uuid.get(uuid)
+                if device is None:
+                    raise InfraFailure(f"timing GPU disappeared: {uuid}")
+                owners = {p.pid: p for p in device.compute_processes}
+                for pid in device.compute_pids:
+                    owner = owners.get(pid)
+                    current = ProcessIdentity.read(pid)
+                    # An identified foreign process is interference even if it
+                    # exits immediately. Only ambiguous/vanished ranks get a retry.
+                    external = session_pid is None or any(
+                        identity is not None and (
+                            identity.uid != os.getuid() or identity.session_id != session_pid
+                            or identity.pgid != session_pid
+                        ) for identity in (owner, current)
+                    )
+                    if external or (attempt == 1 and (owner is None or current != owner)):
+                        raise InfraFailure(f"timing interference: {uuid} PID {pid}, "
+                                           f"UID {owner.uid if owner else 'unknown'}")
+                    if owner is None or current != owner:
+                        unstable = True
+            if not unstable:
+                return
 
     def __enter__(self) -> GpuReservation:
         return self
@@ -183,12 +233,86 @@ class GpuReservation:
         self.release()
 
     def release(self) -> None:
+        held = bool(self._streams)
         while self._streams:
             stream = self._streams.pop()
             try:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
             finally:
                 stream.close()
+        if held and self._on_event:
+            self._on_event("released", gpu_uuids=self.uuids)
+
+
+def default_lock_dir() -> Path:
+    """Stable across runs on one host, distinct on hosts sharing a home directory."""
+    try:
+        host = Path("/etc/machine-id").read_bytes().strip()
+    except OSError as exc:
+        raise InfraFailure("cannot resolve host identity; configure gpu_lock_dir") from exc
+    if not host:
+        raise InfraFailure("empty machine-id; configure gpu_lock_dir")
+    host_id = hashlib.sha256(host).hexdigest()[:16]
+    return Path.home() / ".coral" / "gpu-locks" / host_id / f"uid-{os.getuid()}"
+
+
+def _eligible(device: GpuDevice, policy: IdleGpuPolicy, share: bool, uid: int) -> bool:
+    if device.compute_pids:
+        owners = {identity.pid: identity for identity in device.compute_processes}
+        return share and all(pid in owners and owners[pid].uid != uid
+                             for pid in device.compute_pids)
+    return device.idle(policy)
+
+
+def _lock_file(path: Path):
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    stream = os.fdopen(fd, "a+b")
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        stream.close()
+        raise
+    return stream
+
+
+def _reserve_once(count, lock_dir, policy, inventory_provider, share, uid):
+    streams: list[object] = []
+    allocator = None
+    try:
+        try:
+            allocator = _lock_file(lock_dir / "allocator.lock")
+        except BlockingIOError as exc:
+            raise ResourceBusy("GPU allocator busy") from exc
+        first = inventory_provider()
+        selected = []
+        for device in sorted(first.devices, key=lambda d: (bool(d.compute_pids), d.index)):
+            if not _eligible(device, policy, share, uid):
+                continue
+            safe_uuid = re.sub(r"[^A-Za-z0-9_.-]", "_", device.uuid)
+            try:
+                stream = _lock_file(lock_dir / f"{safe_uuid}.lock")
+            except BlockingIOError:
+                continue
+            streams.append(stream)
+            selected.append(device)
+            if len(selected) == count:
+                break
+        if len(selected) != count:
+            raise ResourceBusy("fewer than four idle GPUs (or eligible shared GPUs)")
+        second = inventory_provider()
+        by_uuid = {device.uuid: device for device in second.devices}
+        confirmed = tuple(by_uuid.get(device.uuid) for device in selected)
+        if any(device is None or not _eligible(device, policy, share, uid)
+               for device in confirmed):
+            raise ResourceBusy("fewer than four idle GPUs after reservation recheck")
+        return GpuReservation(confirmed, streams, second.topology,
+                              inventory_provider=inventory_provider)
+    except BaseException:
+        GpuReservation((), streams, "").release()
+        raise
+    finally:
+        if allocator is not None:
+            allocator.close()
 
 
 def reserve_idle_gpus(
@@ -197,36 +321,65 @@ def reserve_idle_gpus(
     policy: IdleGpuPolicy,
     *,
     inventory_provider: Callable[[], GpuInventory] = GpuInventory.from_nvidia_smi,
+    allow_other_users: bool = False,
+    current_uid: int | None = None,
+    wait_timeout: float = 0,
+    poll_interval: float = 5,
+    check_cancelled: Callable[[], None] | None = None,
+    on_event: Callable | None = None,
 ) -> GpuReservation:
+    if (isinstance(count, bool) or not isinstance(count, int) or count <= 0
+            or not isinstance(allow_other_users, bool)
+            or not math.isfinite(wait_timeout) or wait_timeout < 0
+            or not math.isfinite(poll_interval) or poll_interval <= 0):
+        raise InfraFailure("invalid GPU allocation options")
     lock_dir = Path(lock_dir)
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    first = inventory_provider()
-    selected: list[GpuDevice] = []
-    streams: list[object] = []
     try:
-        for device in sorted(first.devices, key=lambda item: item.index):
-            if not device.idle(policy):
-                continue
-            safe_uuid = re.sub(r"[^A-Za-z0-9_.-]", "_", device.uuid)
-            stream = (lock_dir / f"{safe_uuid}.lock").open("a+b")
+        lock_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+        stat = lock_dir.stat()
+        if stat.st_uid != os.getuid() or stat.st_mode & 0o077:
+            raise InfraFailure("GPU lock directory must belong to this UID and have mode 0700")
+    except OSError as exc:
+        raise InfraFailure(f"GPU lock directory unavailable: {exc}") from exc
+    uid = os.getuid() if current_uid is None else current_uid
+    deadline = time.monotonic() + wait_timeout
+    inventory_errors = 0
+    while True:
+        if check_cancelled:
+            check_cancelled()
+        try:
+            held = _reserve_once(count, lock_dir, policy, inventory_provider,
+                                 allow_other_users, uid)
+        except ResourceBusy as exc:
+            reason = str(exc)
+            inventory_errors = 0
+        except (InfraFailure, subprocess.SubprocessError, OSError, ValueError) as exc:
+            inventory_errors += 1
+            reason = f"GPU inventory failed: {exc}"
+            if inventory_errors >= 3 or wait_timeout == 0 or isinstance(exc, OSError):
+                raise InfraFailure(reason) from exc
+        else:
+            held._on_event = on_event
             try:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                stream.close()
-                continue
-            selected.append(device)
-            streams.append(stream)
-            if len(selected) == count:
-                break
-        if len(selected) != count:
-            raise InfraFailure("fewer than four idle GPUs")
-        second = {device.uuid: device for device in inventory_provider().devices}
-        confirmed = tuple(second.get(device.uuid) for device in selected)
-        if any(device is None or not device.idle(policy) for device in confirmed):
-            raise InfraFailure("fewer than four idle GPUs")
-        return GpuReservation(
-            tuple(device for device in confirmed if device is not None), streams, first.topology
-        )
-    except Exception:
-        GpuReservation((), streams, first.topology).release()
-        raise
+                if on_event:
+                    on_event("reserved", gpu_uuids=held.uuids, gpu_indices=held.indices,
+                             devices=[{"uuid": d.uuid, "memory_used_mib": d.memory_used_mib,
+                                       "utilization_percent": d.utilization_percent,
+                                       "compute_pids": d.compute_pids,
+                                       "compute_uids": [p.uid for p in d.compute_processes]}
+                                      for d in held.devices])
+                return held
+            except BaseException:
+                held.release()
+                raise
+        if wait_timeout == 0:
+            raise ResourceBusy(reason)
+        if time.monotonic() >= deadline:
+            raise InfraFailure(f"timed out waiting for GPUs: {reason}")
+        if on_event:
+            on_event("waiting", reason=reason)
+        wake = min(deadline, time.monotonic() + poll_interval * random.uniform(0.9, 1.1))
+        while time.monotonic() < wake:
+            if check_cancelled:
+                check_cancelled()
+            time.sleep(min(0.1, max(0, wake - time.monotonic())))

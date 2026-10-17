@@ -7,10 +7,12 @@ import signal
 import subprocess
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from .runtime import InfraFailure
 
 
 @dataclass(frozen=True)
@@ -40,19 +42,25 @@ class ProcessResult:
     stdout_log: str
     stderr_log: str
     stderr_tail: str
+    infra_failure: str | None = None
 
 
-def run_process_group(spec: ProcessSpec) -> ProcessResult:
+def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = None,
+                      monitor: Callable | None = None,
+                      monitor_interval: float = 1) -> ProcessResult:
     spec.log_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     stdout_path = spec.log_dir / f"{token}.stdout.log"
     stderr_path = spec.log_dir / f"{token}.stderr.log"
     started = datetime.now(UTC).isoformat()
     timed_out = False
+    infra_failure = None
     cleanup: list[str] = []
     process: subprocess.Popen[bytes] | None = None
     environment = {key: value for key, value in os.environ.items() if not key.startswith("NCCL_")}
     environment.update(spec.env)
+    if check_cancelled:
+        check_cancelled()
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
         process = subprocess.Popen(
             list(spec.command),
@@ -63,9 +71,26 @@ def run_process_group(spec: ProcessSpec) -> ProcessResult:
             start_new_session=True,
         )
         try:
-            process.wait(timeout=spec.timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+            deadline = None if spec.timeout is None else time.monotonic() + spec.timeout
+            next_monitor = 0.0
+            while process.poll() is None:
+                if check_cancelled:
+                    check_cancelled()
+                now = time.monotonic()
+                if monitor is not None and now >= next_monitor:
+                    monitor(process.pid)
+                    next_monitor = time.monotonic() + monitor_interval
+                if deadline is not None and time.monotonic() >= deadline:
+                    timed_out = True
+                    break
+                try:
+                    process.wait(timeout=0.05)
+                except subprocess.TimeoutExpired:
+                    pass
+        except InfraFailure as exc:
+            infra_failure = str(exc)
+        except Exception as exc:
+            infra_failure = f"process monitoring failed: {type(exc).__name__}: {exc}"
         finally:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -86,6 +111,14 @@ def run_process_group(spec: ProcessSpec) -> ProcessResult:
                 except ProcessLookupError:
                     pass
             process.wait()
+        if infra_failure is None:
+            try:
+                if check_cancelled:
+                    check_cancelled()
+                if monitor is not None:
+                    monitor(process.pid)
+            except Exception as exc:
+                infra_failure = str(exc)
     with stderr_path.open("rb") as stream:
         stream.seek(0, os.SEEK_END)
         size = stream.tell()
@@ -102,4 +135,5 @@ def run_process_group(spec: ProcessSpec) -> ProcessResult:
         str(stdout_path),
         str(stderr_path),
         stderr_tail,
+        infra_failure,
     )

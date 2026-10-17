@@ -14,6 +14,11 @@ grader:
   timeout: 0
   direction: maximize
   args:
+    pretraining_allow_other_users: false
+    gpu_lock_dir: null
+    gpu_poll_interval_seconds: 5
+    gpu_wait_timeout_seconds: 86400
+    timing_monitor_interval_seconds: 1
     trusted_workflow_handler: autoresearch.state:handle_workflow
     trusted_workflow_worker: autoresearch.lifecycle:run_worker
     trusted_workflow_authorizer: autoresearch.state:authorize_attempt

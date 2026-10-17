@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,8 @@ def _main():
     config = GraderConfig(**payload["config"])
     grader = cls(config=config)
     grader.private_dir = payload["private_dir"]
+    # Trusted launch context, never taken from candidate Task metadata/args.
+    grader.host_parent_identity = payload.get("host_parent_identity")
 
     tasks = [Task.from_dict(t) for t in payload["tasks"]]
     # Forward island_id alongside codebase_path/tasks so the inner grader
@@ -157,6 +160,15 @@ class SubprocessGrader:
         return await loop.run_in_executor(None, self._run_worker, payload)
 
     def _run_worker(self, payload: dict[str, Any]) -> ScoreBundle:
+        parent_identity = None
+        try:
+            fields = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()
+            parent_identity = {"pid": os.getpid(), "start_time": int(fields[19])}
+        except (OSError, ValueError, IndexError):
+            # Optional on platforms without procfs; graders requiring Linux
+            # lifecycle guarantees reject missing launch identity themselves.
+            pass
+        payload = {**payload, "host_parent_identity": parent_identity}
         try:
             result = subprocess.run(
                 [str(self.worker_python), "-c", _WORKER_SCRIPT],

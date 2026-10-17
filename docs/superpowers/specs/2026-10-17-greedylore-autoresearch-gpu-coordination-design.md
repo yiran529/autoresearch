@@ -2,7 +2,7 @@
 
 **日期：** 2026-10-17
 
-**状态：** 已完成 GPT-6.1-Sol（medium）设计初审、意见修订和复核，待用户审阅；尚未实现。
+**状态：** 用户已批准实施；实现、自动化回归及 GPT-6.1-Sol（medium）代码复核已完成。真实 GPU 监测开销/reference 兼容验收尚未执行。
 
 **代码基线：** `74e3de25b1168ce2d040ae3545386f4560461978`。
 
@@ -158,7 +158,7 @@ quality 已成功但 timing 暂时无卡时，在同一存活 worker 中保留�
 
 具体接线放在任务侧 `Grader.grade()` 的主线程异步入口：注册生命周期上下文和信号处理器，再调用 `super().grade()`；在 finally 恢复原处理器并关闭 pidfd。`TaskGrader.grade()` 会把 `evaluate()` 放进线程池，因此不得在 `evaluate()` 内调用 `signal.signal()`。信号处理器只设置线程安全的取消标志，不直接执行查询、写日志或清理；由资源等待与进程执行循环观察标志并进入现有 finally 清理路径。生产 worker 在主线程调用 grade；不满足该条件的嵌入调用需显式验证并报告限制，不能悄悄忽略取消机制。
 
-该方案沿用现有 manager 停止宽限期，不承诺 stop event 触发后立即取消，也不需要先改通用 daemon 的协议。实现测试必须覆盖实际父进程死亡及 manager 强制结束 daemon 的路径；若任务侧方案无法满足清理验收，再提出有证据的最小 framework 变更，不能静默扩大范围。
+该方案沿用现有 manager 停止宽限期，不承诺 stop event 触发后立即取消，不新增 daemon 队列协议。实现审查已复现任务侧首次捕获父身份前 daemon 就退出的窗口，因此采用最小 framework 接线：`SubprocessGrader` 在创建 worker 前取得自身 PID/启动时间，通过请求顶层 `host_parent_identity` 交给 worker；任务侧初始化时验证实际父身份一致，再建立生命周期监测。身份不来自候选 metadata 或 args；其他 grader 可忽略这一可选上下文。旧框架未提供上下文时，本任务明确返回 infra，不悄悄降级为监测收养进程。对应测试覆盖真实父进程死亡及初始化时身份已不匹配的场景。
 
 worker 被 SIGKILL 时不能承诺执行 finally 清理；内核释放它持有的 FD 锁，但遗留训练进程可能仍占卡。后续 allocator 必须看到这些同 UID 计算进程并跳过，不能仅凭锁释放判定卡空闲。若存在可确认的孤儿，清理只针对本次可证明归属的进程；不扩展为杀死其他 run 的 GPU 进程。
 
@@ -183,6 +183,7 @@ ScoreBundle 保持现有主要字段与失败类别，只增加必要的资源�
 | `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/gpu.py` | GPU/PID 身份、阶段策略、公共锁、完整分配、等待与干扰检查 |
 | `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/grader.py` | 配置解析、分阶段 reservation、生命周期检查接线、证据及 infra 分类 |
 | `tasks/greedylore_autoresearch/grader/src/greedylore_autoresearch_grader/process.py` | 可检查/取消的执行循环、干扰原因、可靠进程组清理 |
+| `coral/grader/subprocess_grader.py`、`tests/test_subprocess_grader.py` | 最小可信父身份传递及跨 worker 回归；解决审查复现的提前 reparent 窗口，不改变各 run 的队列 |
 | `tasks/greedylore_autoresearch/task.yaml` | 新配置及默认值；保留 `parallel.max_workers: 1` |
 | `tasks/greedylore_autoresearch/tests/test_gpu_allocator.py` | 策略矩阵、跨进程锁、等待/超时/取消、完整四卡分配 |
 | `tasks/greedylore_autoresearch/tests/test_grader.py` | research/engineering 分阶段、GPU 切换、环境证据与 infra 分类 |
@@ -215,7 +216,7 @@ ScoreBundle 保持现有主要字段与失败类别，只增加必要的资源�
 
 独立 review 重点：目的是否忠实于用户需求；任务侧方案是否足够；公共锁域、进程归属和阶段切换是否闭合；等待是否引入停止/重启问题；“timing 不共享”的实际保证是否被夸大；改动成本是否与收益相称。
 
-本次交付只包含设计文档及 review 后的文档修订，不执行上述实现，不改当前 run 的配置，不启动、停止或重试实际训练任务。
+最初设计交付只包含文档；随后用户明确要求开始实现，实施结果见第16节。实施不改当前 run 的配置，不启动、停止或重试实际训练任务。
 
 ## 15. 独立设计 Review 记录
 
@@ -233,3 +234,13 @@ ScoreBundle 保持现有主要字段与失败类别，只增加必要的资源�
 上述修订是对审查意见的设计回应，不代表已实现或已通过真实 GPU 验收。初审无架构推翻建议；后续实现规划应以修订后的正文为准。
 
 同一 reviewer 随后对修订内容做聚焦复核：两项 Important 在文档层面已闭合，quality 调度例外和 timing 预检的说明足够，本设计范围不要求预先修改 contract schema/hash；未发现新增 Critical、Important 或 Minor 问题。最终结论为**可以进入后续实现规划**，不代表实现或真实 GPU 兼容验收已经完成。
+
+## 16. 实施与代码 Review 记录
+
+用户批准在现有功能分支实施后，已完成公共四卡锁、UID 共享策略、等待、分阶段 reservation、资源证据、reference 兼容校验、timing 进程监测与生命周期清理。增加任务侧 `runtime.py` 和 `resources.py` 分担身份/生命周期与资源配置/证据职责，使用说明见 `tasks/greedylore_autoresearch/GPU_COORDINATION.md`。
+
+GPT-6.1-Sol（medium）对实现做只读审查，发现两项 P2：父 daemon 在 Lifecycle 初始化前退出会被错误接受；正常退出的 timing rank 可能被误认作外部干扰。前者通过上述可信启动身份接线修复；后者对未知/消失身份增加一次有界重采样，已确认的外部进程仍立即拒绝。两项均有失败后修复的回归测试，复核结论为**原两项 P2 已闭合，代码可交付**。
+
+验证：任务测试及 `tests/test_grader_daemon.py`、`tests/test_subprocess_grader.py`、`tests/test_sandbox.py` 共 **260 passed**；修改后的实现文件和测试静态检查通过。框架 asyncio 线程回调在沙箱内会挂起，已用独立最小示例确认；上述组合回归通过已授权的沙箱外执行完成。
+
+未运行真实 GPU 训练或 timing，也未补写历史 Dense reference。正式上线前仍需按第4节提供真实监测兼容证据或补测 reference；不能把自动化回归或模型 review 当成性能等价证据。

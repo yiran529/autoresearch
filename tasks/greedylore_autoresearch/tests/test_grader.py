@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import pytest
+from greedylore_autoresearch_grader.grader import Grader, score_results
 
 from coral.config import GraderConfig
 from coral.types import Task
-from greedylore_autoresearch_grader.grader import Grader, score_results
 
 
 def test_validation_mode_checks_contract_and_commands_without_gpu(contract, tmp_path):
@@ -155,13 +155,19 @@ def test_formal_evaluation_fails_as_infrastructure_before_gpu_when_references_mi
     assert "dense reference" in bundle.feedback
 
 
-def test_formal_research_runs_fixed_matrix_and_scores_real_artifacts(contract, tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["research", "engineering"])
+@pytest.mark.parametrize("fault", [None, "missing_monitoring", "incomparable", "interference"])
+def test_formal_stages_reserve_separately_and_validate_before_scoring(
+    contract, tmp_path, monkeypatch, mode, fault,
+):
     import json
     from types import SimpleNamespace
 
     from greedylore_autoresearch_grader.gpu import (
-        GpuDevice, gpu_topology_fingerprint,
+        GpuDevice,
+        gpu_topology_fingerprint,
     )
+    from greedylore_autoresearch_grader.resources import ALLOCATION_POLICY_VERSION
 
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -184,38 +190,72 @@ def test_formal_research_runs_fixed_matrix_and_scores_real_artifacts(contract, t
             "llama130m_muon": {"final_eval_loss": 2.0},
         },
     }))
+    monitor_policy = {
+        "allocation_policy_version": ALLOCATION_POLICY_VERSION,
+        "interval_seconds": 1, "evidence_path": "monitoring.json",
+    }
+    environment = {
+        "gpu_uuids": [device.uuid for device in devices],
+        "gpu_names": [device.name for device in devices],
+        "topology_fingerprint": topology, "numa_nodes": [0, 0, 0, 0],
+        "nccl_env": nccl,
+    }
+    (references / "monitoring.json").write_text(json.dumps({
+        "kind": "monitored_reference", "contract_hash": contract.contract_hash,
+        "environment": environment, "allocation_policy_version": ALLOCATION_POLICY_VERSION,
+        "interval_seconds": 1,
+    }))
     (references / "efficiency.json").write_text(json.dumps({
         "contract_hash": contract.contract_hash,
-        "environment": {
-            "gpu_uuids": [device.uuid for device in devices],
-            "gpu_names": [device.name for device in devices],
-            "topology_fingerprint": topology, "numa_nodes": [0, 0, 0, 0],
-            "nccl_env": nccl,
-        },
+        "environment": environment,
+        "monitoring": {} if fault == "missing_monitoring" else monitor_policy,
         "cells": {
             "130m_adamw_bf16": {"mean_iteration_seconds": 0.4},
             "130m_adamw_fp32": {"mean_iteration_seconds": 0.4},
         },
     }))
 
+    reservations = []
+    held = []
+
     class Reservation:
-        indices = (0, 1, 2, 3)
-        uuids = tuple(device.uuid for device in devices)
-        topology = "topology"
+        def __init__(self, stage, on_event):
+            self.stage, self.on_event = stage, on_event
+            self.indices = (4, 5, 6, 7) if stage == "quality" else (0, 1, 2, 3)
+            self.devices = tuple(GpuDevice(i, f"GPU-{i}", "A100", 0, 0, (), 0)
+                                 for i in self.indices)
+            self.uuids = tuple(d.uuid for d in self.devices)
+            self.topology = "wrong-topology" if fault == "incomparable" else "topology"
+            assert not held
+            held.append(self)
+            reservations.append(self)
+            on_event("reserved", gpu_indices=self.indices, gpu_uuids=self.uuids)
+
         def __enter__(self):
-            self.devices = devices
             return self
         def __exit__(self, *_args):
-            return None
+            held.remove(self)
+            self.on_event("released", gpu_uuids=self.uuids)
+
+        def check_exclusive(self, _pid=None):
+            assert self.stage == "timing"
+
+    def reserve(_count, lock_dir, _policy, **kwargs):
+        assert Path(lock_dir) == tmp_path / "shared-locks"
+        assert kwargs["wait_timeout"] == 86400
+        stage = "quality" if kwargs["allow_other_users"] else "timing"
+        return Reservation(stage, kwargs["on_event"])
 
     monkeypatch.setattr(
         "greedylore_autoresearch_grader.gpu.reserve_idle_gpus",
-        lambda *_args, **_kwargs: Reservation(),
+        reserve,
     )
 
     class ArtifactGrader(Grader):
         commands = []
         def _run(self, spec):
+            assert held
+            assert spec.env["CUDA_VISIBLE_DEVICES"] == ",".join(map(str, held[0].indices))
             self.commands.append(spec.argv)
             output = Path(spec.argv[spec.argv.index("--output_dir") + 1])
             output.mkdir(parents=True, exist_ok=True)
@@ -234,25 +274,41 @@ def test_formal_research_runs_fixed_matrix_and_scores_real_artifacts(contract, t
                     "topology_fingerprint": topology, "mean_iteration_seconds": 0.2,
                 }
             (output / "all_results.json").write_text(json.dumps(payload))
-            return SimpleNamespace(timed_out=False, returncode=0, stderr_tail="")
+            return SimpleNamespace(
+                timed_out=False, returncode=0, stderr_tail="",
+                infra_failure="timing interference" if fault == "interference"
+                and "c4/table_v_timing.py" in spec.argv else None,
+            )
 
-    grader = ArtifactGrader(GraderConfig())
+    grader = ArtifactGrader(GraderConfig(args={
+        "pretraining_allow_other_users": True, "gpu_lock_dir": str(tmp_path / "shared-locks"),
+    }))
     grader.codebase_path = str(candidate)
     grader.private_dir = str(private)
     grader.tasks = [Task(
         "formal", "formal", "formal",
-        {"mode": "research", "contract_hash": contract.contract_hash},
+        {"mode": mode, "contract_hash": contract.contract_hash, "quality_anchor": "research-sha"},
     )]
 
     bundle = grader.evaluate()
 
+    assert not held
+    if fault is not None:
+        assert bundle.aggregated is None
+        assert bundle.metadata["failure_class"] == "infra"
+        if fault in {"missing_monitoring", "incomparable"}:
+            assert not any("c4/table_v_timing.py" in command for command in grader.commands)
+        if fault == "interference":
+            assert "interference" in bundle.feedback
+        return
     assert bundle.aggregated == pytest.approx(2.0)
-    assert len(grader.commands) == 6
-    assert sum("c4/run_llama_pretraining.py" in command for command in grader.commands) == 2
+    assert [r.stage for r in reservations] == (["quality", "timing"] if mode == "research" else ["timing"])
+    assert len(grader.commands) == (6 if mode == "research" else 4)
+    assert sum("c4/run_llama_pretraining.py" in command for command in grader.commands) == (2 if mode == "research" else 0)
     assert sum("c4/table_v_timing.py" in command for command in grader.commands) == 4
     assert bundle.metadata["failure_class"] is None
-    assert len(bundle.metadata["evidence_paths"]) == 12
-    assert all(path.endswith(("llama60m_adamw", "llama130m_muon", "bf16", "fp32", ".process")) or "r1-" in path or "r2-" in path for path in bundle.metadata["evidence_paths"])
+    assert len(bundle.metadata["evidence_paths"]) == (14 if mode == "research" else 10)
+    assert any(path.endswith("gpu_resources.jsonl") for path in bundle.metadata["evidence_paths"])
 
 
 def test_invalid_dense_reference_is_infrastructure_failure_before_gpu(contract, tmp_path, monkeypatch):

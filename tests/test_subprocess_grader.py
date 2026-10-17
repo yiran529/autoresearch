@@ -93,6 +93,31 @@ def test_subprocess_grader_propagates_codebase_and_private_dir(pythonpath_with: 
     assert bundle.aggregated == pytest.approx(1.0)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux procfs parent identity")
+def test_subprocess_grader_binds_worker_to_original_parent(pythonpath_with: Path) -> None:
+    _write_fixture_grader(
+        pythonpath_with,
+        """
+        import os
+        from pathlib import Path
+        from coral.grader import TaskGrader
+
+        class Grader(TaskGrader):
+            def evaluate(self):
+                expected = self.host_parent_identity
+                assert expected['pid'] == os.getppid()
+                actual = Path(f'/proc/{os.getppid()}/stat').read_text().rsplit(')', 1)[1].split()
+                assert expected['start_time'] == int(actual[19])
+                return 1.0
+        """,
+    )
+    grader = SubprocessGrader(
+        entrypoint="fixture_grader:Grader", worker_python=Path(sys.executable),
+        config=GraderConfig(), private_dir=str(pythonpath_with),
+    )
+    assert _grade(grader, str(pythonpath_with)).aggregated == 1.0
+
+
 def test_subprocess_grader_unknown_module_raises(pythonpath_with: Path) -> None:
     grader = SubprocessGrader(
         entrypoint="not_a_real_module:Grader",

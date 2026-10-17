@@ -77,6 +77,36 @@ class CandidateError(RuntimeError):
 
 
 class Grader(TaskGrader):
+    async def grade(self, codebase_path, tasks, **kwargs):
+        from .runtime import InfraFailure, Lifecycle
+
+        self._journal = None
+        try:
+            expected = getattr(self, "host_parent_identity", None)
+            if expected is None:
+                raise InfraFailure("trusted grader parent daemon identity is unavailable")
+            with Lifecycle(expected_parent=expected) as lifecycle:
+                self._lifecycle = lifecycle
+                try:
+                    return await super().grade(codebase_path, tasks, **kwargs)
+                finally:
+                    self._lifecycle = None
+        except InfraFailure as exc:
+            return self._failure(str(exc), "infra")
+
+    def _check_cancelled(self):
+        lifecycle = getattr(self, "_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.check()
+
+    def _resource_paths(self):
+        journal = getattr(self, "_journal", None)
+        if journal is None:
+            return []
+        return [str(self.eval_logs_worktree_path(journal.root / name))
+                for name in ("gpu_resources.jsonl", "gpu_resources.json")
+                if (journal.root / name).exists()]
+
     @staticmethod
     def workloads_for(mode: str) -> tuple[str, ...]:
         if mode == "research":
@@ -86,9 +116,13 @@ class Grader(TaskGrader):
         raise ValueError(f"unsupported submission mode: {mode}")
 
     def _failure(self, message: str, failure_class: str) -> ScoreBundle:
+        journal = getattr(self, "_journal", None)
+        if journal is not None:
+            journal.event(getattr(self, "_stage", "setup"), "failed", reason=message)
         return ScoreBundle(
             scores={"eval": Score(None, "eval", message)}, aggregated=None,
-            feedback=message, metadata={"failure_class": failure_class},
+            feedback=message, metadata={"failure_class": failure_class,
+                                        "evidence_paths": self._resource_paths()},
         )
 
     def _load_references(self, contract_hash: str):
@@ -138,7 +172,12 @@ class Grader(TaskGrader):
 
     def _run(self, spec):
         from .process import run_process_group
-        return run_process_group(spec)
+        reservation = getattr(self, "_timing_reservation", None)
+        return run_process_group(
+            spec, check_cancelled=self._check_cancelled,
+            monitor=reservation.check_exclusive if reservation is not None else None,
+            monitor_interval=self._resource_options.monitor_interval,
+        )
 
     def _completed_json(self, spec, output):
         import json
@@ -155,7 +194,11 @@ class Grader(TaskGrader):
             "cleanup_signals": list(getattr(result, "cleanup_signals", ())),
             "stdout_log": getattr(result, "stdout_log", None),
             "stderr_log": getattr(result, "stderr_log", None),
+            "infra_failure": getattr(result, "infra_failure", None),
         }, indent=2) + "\n")
+        if getattr(result, "infra_failure", None):
+            from .gpu import InfraFailure
+            raise InfraFailure(result.infra_failure)
         if result.timed_out or result.returncode != 0:
             raise CandidateError(
                 f"candidate process failed with return code {result.returncode}; "
@@ -176,11 +219,14 @@ class Grader(TaskGrader):
 
         from .gpu import (
             EfficiencyEnvironment,
+            GpuInventory,
             IdleGpuPolicy,
+            InfraFailure,
             gpu_topology_fingerprint,
             reserve_idle_gpus,
             validate_efficiency_comparability,
         )
+        from .resources import ResourceJournal, ResourceOptions, validate_monitoring_reference
         from .results import TimingRepetition, aggregate_timing_cell
 
         idle = contract.raw["hardware"]["idle_gpu"]
@@ -188,13 +234,49 @@ class Grader(TaskGrader):
             int(idle["compute_processes"]), int(idle["max_memory_used_mib"]),
             int(idle["max_utilization_percent"]),
         )
-        lock_dir = Path(self.private_dir) / "gpu_locks"
+        options = self._resource_options = ResourceOptions.from_args(self.args)
         candidate = Path(self.codebase_path)
         evidence_root = self.eval_logs_dir
+        journal = self._journal = ResourceJournal(evidence_root, options)
+        self._stage = "setup"
+        journal.event("setup", "configured")
+        validate_monitoring_reference(reference["efficiency"], options,
+                                      Path(self.private_dir) / "dense_references")
         quality_results = {}
         timing_repetitions = {name: [] for name in contract.efficiency.cells}
         evidence_paths = []
-        with reserve_idle_gpus(contract.hardware.gpu_count, lock_dir, policy) as reservation:
+        def acquire(stage):
+            self._stage = stage
+            return reserve_idle_gpus(
+                contract.hardware.gpu_count, options.lock_dir, policy,
+                allow_other_users=stage == "quality" and options.pretraining_allow_other_users,
+                wait_timeout=options.wait_timeout, poll_interval=options.poll_interval,
+                check_cancelled=self._check_cancelled,
+                on_event=lambda state, **details: journal.event(stage, state, **details),
+                inventory_provider=GpuInventory.from_nvidia_smi,
+            )
+
+        if mode == "research":
+            with acquire("quality") as reservation:
+                journal.event("quality", "running", gpu_uuids=reservation.uuids)
+                for name, profile in contract.quality.items():
+                    self._check_cancelled()
+                    output = evidence_root / "quality" / name
+                    output.mkdir(parents=True, exist_ok=False)
+                    spec = build_quality_command(profile, candidate, output, reservation.indices)
+                    payload = self._completed_json(spec, output)
+                    if (payload.get("contract_hash") != contract.contract_hash
+                            or payload.get("world_size") != contract.hardware.gpu_count
+                            or payload.get("update_step") != profile["stop_after_steps"]
+                            or not math.isfinite(float(payload.get("final_eval_loss", math.nan)))):
+                        raise CandidateError(f"invalid quality result for {name}")
+                    quality_results[name] = payload
+                    evidence_paths.extend((
+                        str(self.eval_logs_worktree_path(output)),
+                        str(self.eval_logs_worktree_path(spec.log_dir)),
+                    ))
+
+        with acquire("timing") as reservation:
             nccl_env = {
                 "NCCL_P2P_DISABLE": "1", "NCCL_SHM_DISABLE": "0",
                 "NCCL_DEBUG": "INFO",
@@ -211,62 +293,56 @@ class Grader(TaskGrader):
                 reservation.uuids, tuple(device.name for device in reservation.devices),
                 topology, numa, nccl_env,
             )
-            if mode == "research":
-                for name, profile in contract.quality.items():
-                    output = evidence_root / "quality" / name
-                    output.mkdir(parents=True, exist_ok=False)
-                    spec = build_quality_command(profile, candidate, output, reservation.indices)
-                    payload = self._completed_json(spec, output)
-                    if (payload.get("contract_hash") != contract.contract_hash
-                            or payload.get("world_size") != contract.hardware.gpu_count
-                            or payload.get("update_step") != profile["stop_after_steps"]
-                            or not math.isfinite(float(payload.get("final_eval_loss", math.nan)))):
-                        raise CandidateError(f"invalid quality result for {name}")
-                    quality_results[name] = payload
-                    evidence_paths.extend((
-                        str(self.eval_logs_worktree_path(output)),
-                        str(self.eval_logs_worktree_path(spec.log_dir)),
-                    ))
-            for repetition, row in enumerate(contract.efficiency.run_order):
-                for name in row:
-                    output = evidence_root / "efficiency" / f"r{repetition + 1}-{name}"
-                    cell = contract.efficiency.cells[name]
-                    spec = build_timing_command(
-                        cell, repetition, candidate, output, reservation.indices, hardware
-                    )
-                    payload = self._completed_json(spec, output)
-                    if (payload.get("contract_hash") != contract.contract_hash
-                            or payload.get("measured_steps") != cell["measured_iterations"]
-                            or payload.get("strict_blocking_communication") is not False
-                            or payload.get("bucket_layout_recorded") is not True):
-                        raise CandidateError(f"invalid timing result for {name}")
-                    bucket = hashlib.sha256(json.dumps(
-                        payload.get("observed_bucket_bytes"), sort_keys=True
-                    ).encode()).hexdigest()
-                    timing_repetitions[name].append(TimingRepetition(
-                        float(payload["mean_iteration_seconds"]),
-                        payload["contract_hash"], bucket, payload["topology_fingerprint"],
-                    ))
-                    evidence_paths.extend((
-                        str(self.eval_logs_worktree_path(output)),
-                        str(self.eval_logs_worktree_path(spec.log_dir)),
-                    ))
+            env = reference["efficiency"]["environment"]
+            reference_env = EfficiencyEnvironment(
+                tuple(env["gpu_uuids"]), tuple(env["gpu_names"]), env["topology_fingerprint"],
+                tuple(env["numa_nodes"]), dict(env["nccl_env"]),
+            )
+            if not validate_efficiency_comparability(reference_env, current_env).valid:
+                raise InfraFailure("incomparable_hardware before timing")
+            self._timing_reservation = reservation
+            try:
+                for repetition, row in enumerate(contract.efficiency.run_order):
+                    for name in row:
+                        self._check_cancelled()
+                        reservation.check_exclusive()
+                        journal.event("timing", "running", gpu_uuids=reservation.uuids,
+                                      repetition=repetition, cell=name)
+                        output = evidence_root / "efficiency" / f"r{repetition + 1}-{name}"
+                        cell = contract.efficiency.cells[name]
+                        spec = build_timing_command(
+                            cell, repetition, candidate, output, reservation.indices, hardware
+                        )
+                        payload = self._completed_json(spec, output)
+                        reservation.check_exclusive()
+                        if (payload.get("contract_hash") != contract.contract_hash
+                                or payload.get("measured_steps") != cell["measured_iterations"]
+                                or payload.get("strict_blocking_communication") is not False
+                                or payload.get("bucket_layout_recorded") is not True):
+                            raise CandidateError(f"invalid timing result for {name}")
+                        bucket = hashlib.sha256(json.dumps(
+                            payload.get("observed_bucket_bytes"), sort_keys=True
+                        ).encode()).hexdigest()
+                        timing_repetitions[name].append(TimingRepetition(
+                            float(payload["mean_iteration_seconds"]),
+                            payload["contract_hash"], bucket, payload["topology_fingerprint"],
+                        ))
+                        evidence_paths.extend((
+                            str(self.eval_logs_worktree_path(output)),
+                            str(self.eval_logs_worktree_path(spec.log_dir)),
+                        ))
+            finally:
+                self._timing_reservation = None
 
         timing = {}
         for name, repetitions in timing_repetitions.items():
             summary = aggregate_timing_cell(repetitions)
             timing[name] = {"mean": summary.mean, "relative_spread": summary.relative_spread}
-        env = reference["efficiency"].get("environment", {})
-        reference_env = EfficiencyEnvironment(
-            tuple(env.get("gpu_uuids", ())), tuple(env.get("gpu_names", ())),
-            str(env.get("topology_fingerprint", "")),
-            tuple(env.get("numa_nodes", ())), dict(env.get("nccl_env", {})),
-        )
         comparable = validate_efficiency_comparability(reference_env, current_env).valid
         return score_results(
             mode, quality_results, timing, reference,
             contract_hash=contract.contract_hash, comparable=comparable,
-            evidence_paths=evidence_paths,
+            evidence_paths=evidence_paths + self._resource_paths(),
         )
 
     def evaluate(self) -> ScoreBundle:
