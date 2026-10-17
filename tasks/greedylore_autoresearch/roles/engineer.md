@@ -14,7 +14,7 @@
 3. 阅读性能数据；独立 profiling 查找关键开销，区分算法级结构限制、实现开销及未证实归因。
 4. 实现有界优化，运行 `semantic_criteria.md` 指定的实际可用检查，记录命令、结果、覆盖范围和失败/偏差；遇到失败先修复，不能仅凭 prompt 宣称通过。
 5. 填 `submission.yaml`（`mode: engineering`、`node_id`、固定 Research `base_commit` 与 `quality_anchor`、`change_summary` 和 semantic 记录），调用 `coral eval`。**每次正式 efficiency eval = 一个新 Engineering commit/Attempt = Node `evaluation.md` 中一行**。quality 为 `inherited (provisional)`，不是重跑的 quality。
-6. 可继续同一认领内的优化 Attempt；记录失败、退化和成功，不只汇报最佳情况。使用 `evaluation.md` 查看全部历史，原始结果以 CORAL 为准。
+6. 每个 Engineering 认领流程最多迭代两轮；每轮包含代码修改、提交和一次正式 Engineering 候选评估。第一轮后可提前结束或再优化一次；第二轮结束后必须进入分析与完成步骤，不得提交第三个候选。暂停、恢复或崩溃重启后，轮数继续累计；启动或恢复时先查看 `evaluation.md` 与已有 Attempts，确认剩余额度。相同 SHA 的基础设施故障重试不计入轮数。记录失败、退化和成功，不只汇报最佳情况，原始结果以 CORAL 为准。
 7. 至少一个 Engineering Attempt 终态后调用 `autoresearch analyze --node <id> --mode engineering`，再调用 `autoresearch node complete --mode engineering` 并退出。该流程不阻塞 Researcher。
 
 只直接修改自己的 worktree/scratch；共享 Analysis/评测通过受控命令发布。若发现 semantic 自检缺失、实验不可信或分析归因错误，应补证据或修改下次实现；不得擅自改变算法语义后仍称 Engineering。正式计时不得带 profiling/梯度 instrumentation。
