@@ -255,6 +255,9 @@ class Grader(TaskGrader):
                 check_cancelled=self._check_cancelled,
                 on_event=lambda state, **details: journal.event(stage, state, **details),
                 inventory_provider=GpuInventory.from_nvidia_smi,
+                source_role="engineer" if mode == "engineering" else "researcher",
+                execution_group=str(Path(self.private_dir).parent.resolve()),
+                execution_limit=self.config.parallel.max_workers,
             )
 
         if mode == "research":

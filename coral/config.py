@@ -28,10 +28,16 @@ class ParallelGraderConfig:
     the pool existed. Set higher only when the grader is concurrency-safe
     (pure Python, sandboxed swebench runs, etc.); the daemon does not enforce
     safety, so a misconfigured value with a non-safe grader is the user's
-    responsibility.
+    responsibility. ``max_waiting_workers > 0`` enables continuous admission
+    of additional host workers for cooperative resource-aware graders. Such
+    graders must enforce ``max_workers`` at resource acquisition themselves.
     """
 
     max_workers: int = 1
+    # Opt-in cooperative graders may host extra GPU-waiting evaluations.
+    # They MUST enforce max_workers themselves at resource admission. One host
+    # slot is reserved for later engineering submissions to avoid head blocking.
+    max_waiting_workers: int = 0
 
 
 @dataclass
@@ -72,6 +78,9 @@ class GraderConfig:
             raise ValueError(
                 f"grader.parallel.max_workers must be >= 1, got {self.parallel.max_workers}"
             )
+        if (type(self.parallel.max_waiting_workers) is not int
+                or self.parallel.max_waiting_workers < 0):
+            raise ValueError("grader.parallel.max_waiting_workers must be a nonnegative integer")
 
 
 @dataclass

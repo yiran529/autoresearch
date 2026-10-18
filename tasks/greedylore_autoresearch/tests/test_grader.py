@@ -271,6 +271,9 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
     def reserve(_count, lock_dir, _policy, **kwargs):
         assert Path(lock_dir) == tmp_path / "shared-locks"
         assert kwargs["wait_timeout"] == 86400
+        assert kwargs["source_role"] == ("engineer" if mode == "engineering" else "researcher")
+        assert kwargs["execution_group"] == str(tmp_path)
+        assert kwargs["execution_limit"] == 1
         stage = "quality" if kwargs["allow_other_users"] else "timing"
         return Reservation(stage, kwargs["on_event"])
 

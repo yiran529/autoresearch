@@ -11,6 +11,9 @@ Design invariants:
   just configuration; safety is the operator's call — most graders are NOT
   concurrency-safe (Docker port conflicts, GPU contention, shared scratch
   dirs, etc.).
+- Opt-in cooperative resource graders may add `max_waiting_workers` host
+  slots and continuous admission; their allocator enforces active resource
+  limits and priority while a reserved slot admits late engineering work.
 - Writes are atomic via hub.attempts.write_attempt (tmp + rename).
 - Daemon is idempotent: re-seeing an already-scored attempt is a no-op.
 """
@@ -25,7 +28,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -752,6 +755,8 @@ def process_pending_once(coral_dir: str | Path) -> list[Attempt]:
     coral_dir = Path(coral_dir).resolve()
     config_path = coral_dir / "config.yaml"
     config = CoralConfig.from_yaml(config_path)
+    if config.grader.parallel.max_waiting_workers:
+        return _serve_resource_pending(config_path, coral_dir, config, once=True)
     return _drain_pending(
         _find_pending(coral_dir),
         config_path,
@@ -759,6 +764,67 @@ def process_pending_once(coral_dir: str | Path) -> list[Attempt]:
         config,
         max_workers=config.grader.parallel.max_workers,
     )
+
+
+def _serve_resource_pending(
+    config_path: Path,
+    coral_dir: Path,
+    config: CoralConfig,
+    *,
+    should_stop: Callable[[], bool] = lambda: False,
+    heartbeat_file: Path | None = None,
+    once: bool = False,
+) -> list[Attempt]:
+    """Keep accepting late high-priority work while cooperative graders await GPUs.
+
+    Enabled only with max_waiting_workers. The task's resource allocator, rather
+    than the host thread count, enforces max_workers active GPU stages per run.
+    A reserved host slot prevents low-priority waiting workers filling the pool.
+    """
+    capacity = config.grader.parallel.max_workers + config.grader.parallel.max_waiting_workers
+    finalized: list[Attempt] = []
+    with ThreadPoolExecutor(max_workers=capacity) as pool:
+        in_flight = {}
+        while True:
+            stopping = should_stop()
+            candidates = []
+            if not stopping:
+                try:
+                    pending = _find_pending(coral_dir)
+                except Exception:
+                    logger.exception("Failed to scan resource-aware pending attempts")
+                    pending = []
+                active_hashes = {attempt.commit_hash for attempt in in_flight.values()}
+                candidates = sorted(
+                    (attempt for attempt in pending if attempt.commit_hash not in active_hashes),
+                    key=lambda attempt: (attempt.metadata.get("mode") != "engineering", attempt.timestamp),
+                )
+                for attempt in candidates:
+                    if len(in_flight) >= capacity:
+                        break
+                    low_count = sum(a.metadata.get("mode") != "engineering"
+                                    for a in in_flight.values())
+                    if attempt.metadata.get("mode") != "engineering" and low_count >= capacity - 1:
+                        continue
+                    future = pool.submit(_safe_grade_one, attempt, config_path, coral_dir, config)
+                    in_flight[future] = attempt
+            if heartbeat_file is not None:
+                try:
+                    heartbeat_file.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+                except OSError:
+                    pass
+            if not in_flight:
+                if stopping or once and not candidates:
+                    break
+                time.sleep(_POLL_INTERVAL_SEC)
+                continue
+            done, _pending = wait(in_flight, timeout=_POLL_INTERVAL_SEC, return_when=FIRST_COMPLETED)
+            for future in done:
+                del in_flight[future]
+                result = future.result()
+                if result is not None:
+                    finalized.append(result)
+    return finalized
 
 
 def run_daemon(coral_dir: str | Path, stop_event: Any = None) -> None:
@@ -802,6 +868,10 @@ def run_daemon(coral_dir: str | Path, stop_event: Any = None) -> None:
         trusted_server.start()
 
     try:
+        if config.grader.parallel.max_waiting_workers:
+            _serve_resource_pending(config_path, coral_dir, config,
+                                    should_stop=_should_stop, heartbeat_file=heartbeat_file)
+            return
         while not _should_stop():
             try:
                 pending = _find_pending(coral_dir)

@@ -112,6 +112,7 @@ def test_missing_sandbox_returns_unavailable_before_allocation(task, monkeypatch
 def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch, allow_unix):
     task.close()
     from pathlib import Path
+
     from autoresearch import diagnostic_session
     config = {'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'medium',
               'analyzer_allow_unix_sockets': allow_unix}
@@ -310,7 +311,12 @@ def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
         def check_exclusive(self, pid):
             pass
     monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/unused/bwrap')
-    monkeypatch.setattr(sandbox, 'reserve_idle_gpus', lambda *_args, **_kwargs: Reservation())
+    def reserve(*_args, **kwargs):
+        assert kwargs['source_role'] == 'analyzer'
+        assert kwargs['execution_group'] == str(task.coral_dir)
+        assert kwargs['execution_limit'] == 1
+        return Reservation()
+    monkeypatch.setattr(sandbox, 'reserve_idle_gpus', reserve)
     # Only namespace/GPU dependencies are replaced; run a real process and timeout.
     monkeypatch.setattr(sandbox, 'build_sandbox', lambda _ws, _roots, _devices, argv, **_kw: argv)
     script = task.workspace / 'experiments' / 'slow.py'

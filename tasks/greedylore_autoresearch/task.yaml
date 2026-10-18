@@ -38,6 +38,7 @@ grader:
     trusted_artifact_validator: autoresearch.artifacts:validate_artifact
   parallel:
     max_workers: 1
+    max_waiting_workers: 2
   private:
   - taskdata/eval_contract.yaml
   - taskdata/dense_references

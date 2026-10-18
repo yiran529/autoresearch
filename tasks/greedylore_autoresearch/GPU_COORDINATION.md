@@ -1,6 +1,6 @@
 # GPU 分配与跨 run 协调
 
-GreedyLoRE grader 在同一 Linux 宿主、同一 UID 的多个独立 CORAL run 之间协调 GPU。每个 run 保留自己的串行评测队列；八张满足条件的卡可以支持两个并发的四卡阶段。Agent 并发数与评测队列并发数独立。
+GreedyLoRE grader 在同一 Linux 宿主、同一 UID 的多个独立 CORAL run 之间协调 GPU。每个 run 可以同时保持多个等待 GPU 的评测 worker，实际占用 GPU 的阶段数仍由 `grader.parallel.max_workers` 限制；八张满足条件的卡可以支持两个独立 run 并发执行四卡阶段。Agent 并发数、等待 worker 数和 GPU 执行名额独立。
 
 ## 配置
 
@@ -21,6 +21,31 @@ timing_monitor_interval_seconds: 1
 - `timing_monitor_interval_seconds`：timing 运行中的检查间隔，必须大于零。改变它需要重新验证 Dense reference 监测条件。
 
 配置不热更新。升级时先让旧 grader 退出，再启动新版；旧版使用 run 私有锁，与公共锁不互通。需同步升级 CORAL 框架和任务 grader：框架提供可信父进程启动身份，缺少该上下文的旧框架会被任务 grader 明确拒绝。不同自定义锁目录、不同 UID 或不共享相同宿主文件系统的容器不会通过这些锁互相协调。本实现要求宿主 PID/UID 和 procfs 视图一致，不支持把 NVML 宿主 PID 与隔离容器 PID 混用。
+
+## 角色优先级与等待名额
+
+固定优先级为 **Analyzer = Engineer > Researcher**，同级按 GPU 请求入队顺序执行，不估算耗时。Researcher 的 quality 和 timing 都属于低优先级；Engineer 正式 timing 和 Analyzer 受控诊断属于同一个高优先级。角色由可信宿主入口确定，诊断请求不能自行选择优先级。
+
+任务的配置为：
+
+```yaml
+grader:
+  parallel:
+    max_workers: 1
+    max_waiting_workers: 2
+```
+
+这允许一个 run 最多保持三个评测宿主 worker，其中低优先级 worker 最多占两个，保留一个接纳后来提交的 Engineer。daemon 持续检查新提交，不必等当前 Researcher 结束才派发。这里的三个 worker 并不表示可以同时跑三个 GPU 实验：公共 allocator 以 canonical `.coral` 路径标识 run，并限制同一 run 同时持有的 GPU 阶段 reservation 数不超过 `max_workers`。Analyzer 诊断使用相同的 run 名额。
+
+例如 Researcher 已经在等卡，Engineer 后提交：Engineer 可以进入公共 GPU 队列；卡空闲时高优先级先拿卡，Researcher 保持存活等待。没有退出/重启评测，没有新增正式 Attempt、infra failure 或 retry，也不会丢失或重跑已完成的 quality。已经持有 GPU 的实验不被抢占；Researcher 在 quality 与 timing 之间释放 reservation 后重新排队。
+
+优先级只在资源条件满足的请求之间应用。高优先级请求暂时凑不齐严格空闲卡时，可让符合共享规则的 quality 使用其他可用卡；八卡环境也允许不同 run 同时获准使用不重叠的卡。持续有高优先级请求时，Researcher 可能长期等待；本策略没有自动老化提权。
+
+队列记录位于公共锁目录的 `requests/`，记录 PID/启动时间、角色、入队时间、等待期限、共享规则及执行名额。等待超时/取消和正常释放会清理请求；其他申请者也会清理已死亡或过期的等待者。活跃 reservation 不因原等待期限到期而被抢占。更新时需要同步重启使用该锁域的旧版 run，避免旧调用方没有登记角色/执行组而绕开新策略。
+
+`max_waiting_workers` 默认是 `0`，其他任务继续使用原有派发行为。只有在 grader 实现了协作式资源名额控制时才应启用它；单独增加这个值不能保证其他 grader 的实际执行仍串行。
+
+新 run 会复制本任务中已启用的配置。已有 run 使用自己的 `.coral/config.yaml`，需要由 run owner 同步其中的 `grader.parallel.max_waiting_workers: 2`，并重启更新后的 daemon；仅修改任务模板不会热更新已有 run。
 
 ## 分配与阶段
 

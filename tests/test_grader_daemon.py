@@ -856,6 +856,165 @@ def test_invalid_max_workers_rejected():
         )
 
 
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_invalid_waiting_worker_capacity_rejected(value):
+    from coral.config import GraderConfig, ParallelGraderConfig
+
+    with pytest.raises(ValueError):
+        GraderConfig(parallel=ParallelGraderConfig(max_waiting_workers=value))
+
+
+@pytest.mark.parametrize("research_count", [1, 3])
+def test_priority_daemon_admits_late_engineering_without_restarting_research(
+    tmp_path, monkeypatch, research_count,
+):
+    import threading
+
+    from coral.grader.daemon import _serve_resource_pending
+
+    repo = _init_repo_and_coral(tmp_path)
+    _set_config(repo, parallel={"max_workers": 1, "max_waiting_workers": 2})
+    config = CoralConfig.from_yaml(repo / ".coral/config.yaml")
+    _submit_n(repo, 1)
+    research = _find_pending(repo / ".coral")[0]
+    research.metadata["mode"] = "research"
+    write_attempt(str(repo / ".coral"), research)
+    researchers = [research]
+    for index in range(1, research_count):
+        (repo / "main.py").write_text(f"print('research {index}')\n")
+        queued = submit_eval(message="Research", agent_id=f"research-{index}",
+                             workdir=str(repo), wait=False)
+        queued.metadata["mode"] = "research"
+        write_attempt(str(repo / ".coral"), queued)
+        researchers.append(queued)
+    research_waiting, engineer_finished = threading.Event(), threading.Event()
+    stop = threading.Event()
+    starts, finished = [], []
+
+    def grade(attempt, *_args):
+        starts.append(attempt.agent_id)
+        if attempt.metadata["mode"] == "research":
+            if len(starts) >= min(research_count, 2):
+                research_waiting.set()
+            assert engineer_finished.wait(5), "late Engineer never reached a worker"
+        attempt.status = "improved"
+        attempt.score = 1
+        write_attempt(str(repo / ".coral"), attempt)
+        finished.append(attempt.agent_id)
+        if attempt.metadata["mode"] == "engineering":
+            engineer_finished.set()
+        if len(finished) == research_count + 1:
+            stop.set()
+        return attempt
+
+    monkeypatch.setattr("coral.grader.daemon._safe_grade_one", grade)
+    errors = []
+    def serve():
+        try:
+            _serve_resource_pending(repo / ".coral/config.yaml", repo / ".coral", config,
+                                    should_stop=stop.is_set)
+        except Exception as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=serve)
+    worker.start()
+    try:
+        assert research_waiting.wait(3)
+        (repo / "main.py").write_text("print('engineering')\n")
+        engineering = submit_eval(message="Engineer", agent_id="engineer", workdir=str(repo), wait=False)
+        engineering.metadata["mode"] = "engineering"
+        write_attempt(str(repo / ".coral"), engineering)
+        worker.join(8)
+    finally:
+        stop.set()
+        engineer_finished.set()
+        worker.join(5)
+    assert not errors
+    assert not worker.is_alive()
+    assert starts[:min(research_count, 2)] == [a.agent_id for a in researchers[:2]]
+    assert starts[min(research_count, 2)] == "engineer"
+    assert finished[0] == "engineer"
+    assert sorted(finished) == sorted(["engineer", *[a.agent_id for a in researchers]])
+
+
+def test_late_engineer_gets_gpu_first_with_real_grader_workers(tmp_path, monkeypatch):
+    """Actual subprocess workers share the allocator; inventory alone is synthetic."""
+    import threading
+
+    source = Path(__file__).resolve().parents[1] / "tasks/greedylore_autoresearch/grader/src"
+    monkeypatch.syspath_prepend(str(source))
+    from greedylore_autoresearch_grader.gpu import (
+        GpuDevice,
+        GpuInventory,
+        IdleGpuPolicy,
+        reserve_idle_gpus,
+    )
+    repo = _init_repo_and_coral(tmp_path)
+    coral_dir = repo / ".coral"
+    locks = tmp_path / "gpu-locks"
+    log = coral_dir / "private/order.jsonl"
+    _set_config(repo, parallel={"max_workers": 1, "max_waiting_workers": 2})
+    _write_grader(repo, f'''
+import json, sys, time
+from pathlib import Path
+sys.path.insert(0, {str(source)!r})
+from coral.grader import TaskGrader
+from greedylore_autoresearch_grader.gpu import GpuDevice, GpuInventory, IdleGpuPolicy, reserve_idle_gpus
+
+class Grader(TaskGrader):
+    def evaluate(self):
+        mode = self.tasks[0].metadata['mode']
+        def inventory():
+            return GpuInventory(tuple(GpuDevice(i, f'GPU-{{i}}', 'A100', 0, 0, (), 0) for i in range(4)), 'topology')
+        def event(state, **details):
+            if state == 'waiting':
+                (Path(self.private_dir) / (mode + '.waiting')).touch()
+        with reserve_idle_gpus(4, {str(locks)!r}, IdleGpuPolicy(0,512,5),
+                source_role='engineer' if mode == 'engineering' else 'researcher',
+                execution_group={str(coral_dir)!r}, execution_limit=1,
+                inventory_provider=inventory, wait_timeout=5, poll_interval=.01, on_event=event):
+            with Path({str(log)!r}).open('a') as stream:
+                stream.write(json.dumps(mode) + '\\n')
+            time.sleep(.03)
+        return 1.0
+''')
+    _submit_n(repo, 1)
+    research = _find_pending(coral_dir)[0]
+    research.metadata["mode"] = "research"
+    write_attempt(str(coral_dir), research)
+    devices = tuple(GpuDevice(i, f"GPU-{i}", "A100", 0, 0, (), 0) for i in range(4))
+    holder = reserve_idle_gpus(4, locks, IdleGpuPolicy(0, 512, 5),
+                               inventory_provider=lambda: GpuInventory(devices, "topology"))
+    stop = threading.Event()
+    daemon = threading.Thread(target=run_daemon, args=(coral_dir, stop))
+    def until(predicate):
+        deadline = time.monotonic() + 8
+        while not predicate() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert predicate()
+    try:
+        daemon.start()
+        until(lambda: (coral_dir / "private/research.waiting").exists())
+        (repo / "main.py").write_text("print('later engineer')\n")
+        engineer = submit_eval(message="later Engineer", agent_id="engineer", workdir=str(repo), wait=False)
+        engineer.metadata["mode"] = "engineering"
+        write_attempt(str(coral_dir), engineer)
+        until(lambda: (coral_dir / "private/engineering.waiting").exists())
+        holder.release()
+        until(lambda: read_attempt(str(coral_dir), research.commit_hash).status != "pending")
+        until(lambda: read_attempt(str(coral_dir), engineer.commit_hash).status != "pending")
+    finally:
+        holder.release()
+        stop.set()
+        daemon.join(8)
+    assert not daemon.is_alive()
+    assert [json.loads(row) for row in log.read_text().splitlines()] == ["engineering", "research"]
+    for attempt in (research, engineer):
+        final = read_attempt(str(coral_dir), attempt.commit_hash)
+        assert final.score == 1
+        assert final.metadata["grader_invocation_count"] == 1
+        assert len(final.metadata["grader_runs"]) == 1
+
+
 def test_find_pending_multi_island_scans_every_island(tmp_path):
     """_find_pending picks up attempts from every islands/<id>/attempts/ dir."""
     from coral.grader.daemon import _find_pending

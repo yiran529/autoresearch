@@ -12,7 +12,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .runtime import InfraFailure, ProcessIdentity
@@ -222,6 +222,7 @@ class GpuReservation:
         self.cuda_visible_devices = ",".join(str(index) for index in self.indices)
         self._on_event = on_event
         self._inventory_provider = inventory_provider or GpuInventory.from_nvidia_smi
+        self._request = None
 
     def check_exclusive(self, session_pid: int | None = None) -> None:
         """Allow compute only from this launcher or its live rank descendants."""
@@ -268,6 +269,9 @@ class GpuReservation:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
             finally:
                 stream.close()
+        if self._request is not None:
+            self._request.close()
+            self._request = None
         if held and self._on_event:
             self._on_event("released", gpu_uuids=self.uuids)
 
@@ -303,7 +307,7 @@ def _lock_file(path: Path):
     return stream
 
 
-def _reserve_once(count, lock_dir, policy, inventory_provider, share, uid):
+def _reserve_once(count, lock_dir, policy, inventory_provider, share, uid, request):
     streams: list[object] = []
     allocator = None
     try:
@@ -311,30 +315,40 @@ def _reserve_once(count, lock_dir, policy, inventory_provider, share, uid):
             allocator = _lock_file(lock_dir / "allocator.lock")
         except BlockingIOError as exc:
             raise ResourceBusy("GPU allocator busy") from exc
+        request.register()
         first = inventory_provider()
-        selected = []
-        for device in sorted(first.devices, key=lambda d: (bool(d.compute_pids), d.index)):
-            if not _eligible(device, policy, share, uid):
-                continue
+        ordered = sorted(first.devices, key=lambda d: (bool(d.compute_pids), d.index))
+        free = set()
+        for device in ordered:
             safe_uuid = re.sub(r"[^A-Za-z0-9_.-]", "_", device.uuid)
             try:
-                stream = _lock_file(lock_dir / f"{safe_uuid}.lock")
+                probe = _lock_file(lock_dir / f"{safe_uuid}.lock")
             except BlockingIOError:
                 continue
+            probe.close()
+            free.add(device.uuid)
+        selected = request.choose(
+            ordered, free, lambda d, row: _eligible(
+                d, IdleGpuPolicy(**row["policy"]), row["share"], row["uid"],
+            ),
+        )
+        if selected is None:
+            raise ResourceBusy("fewer than four idle GPUs or waiting for role/FIFO admission")
+        for device in selected:
+            safe_uuid = re.sub(r"[^A-Za-z0-9_.-]", "_", device.uuid)
+            stream = _lock_file(lock_dir / f"{safe_uuid}.lock")
             streams.append(stream)
-            selected.append(device)
-            if len(selected) == count:
-                break
-        if len(selected) != count:
-            raise ResourceBusy("fewer than four idle GPUs (or eligible shared GPUs)")
         second = inventory_provider()
         by_uuid = {device.uuid: device for device in second.devices}
         confirmed = tuple(by_uuid.get(device.uuid) for device in selected)
         if any(device is None or not _eligible(device, policy, share, uid)
                for device in confirmed):
             raise ResourceBusy("fewer than four idle GPUs after reservation recheck")
-        return GpuReservation(confirmed, streams, second.topology,
+        request.reserved(d.uuid for d in confirmed)
+        held = GpuReservation(confirmed, streams, second.topology,
                               inventory_provider=inventory_provider)
+        held._request = request
+        return held
     except BaseException:
         GpuReservation((), streams, "").release()
         raise
@@ -355,6 +369,9 @@ def reserve_idle_gpus(
     poll_interval: float = 5,
     check_cancelled: Callable[[], None] | None = None,
     on_event: Callable | None = None,
+    source_role: str = "researcher",
+    execution_group: str | None = None,
+    execution_limit: int = 1,
 ) -> GpuReservation:
     if (isinstance(count, bool) or not isinstance(count, int) or count <= 0
             or not isinstance(allow_other_users, bool)
@@ -371,13 +388,35 @@ def reserve_idle_gpus(
         raise InfraFailure(f"GPU lock directory unavailable: {exc}") from exc
     uid = os.getuid() if current_uid is None else current_uid
     deadline = time.monotonic() + wait_timeout
+    from .scheduling import GpuRequest
+
+    request = GpuRequest(
+        lock_dir, role=source_role, count=count, policy=asdict(policy),
+        share=allow_other_users, uid=uid, deadline=deadline,
+        group=execution_group, limit=execution_limit,
+    )
+    try:
+        return _wait_for_reservation(count, lock_dir, policy, inventory_provider,
+                                     allow_other_users, uid, wait_timeout, poll_interval,
+                                     check_cancelled, on_event, deadline, request)
+    except BaseException:
+        request.close()
+        raise
+
+
+def _wait_for_reservation(count, lock_dir, policy, inventory_provider, share, uid,
+                         wait_timeout, poll_interval, check_cancelled, on_event, deadline, request):
     inventory_errors = 0
+    attempted = False
     while True:
         if check_cancelled:
             check_cancelled()
+        if attempted and time.monotonic() >= deadline:
+            raise InfraFailure("timed out waiting for GPU role/FIFO admission")
+        attempted = True
         try:
             held = _reserve_once(count, lock_dir, policy, inventory_provider,
-                                 allow_other_users, uid)
+                                 share, uid, request)
         except ResourceBusy as exc:
             reason = str(exc)
             inventory_errors = 0
@@ -391,6 +430,7 @@ def reserve_idle_gpus(
             try:
                 if on_event:
                     on_event("reserved", gpu_uuids=held.uuids, gpu_indices=held.indices,
+                             source_role=request.row["role"],
                              devices=[{"uuid": d.uuid, "memory_used_mib": d.memory_used_mib,
                                        "utilization_percent": d.utilization_percent,
                                        "compute_pids": d.compute_pids,
@@ -405,7 +445,7 @@ def reserve_idle_gpus(
         if time.monotonic() >= deadline:
             raise InfraFailure(f"timed out waiting for GPUs: {reason}")
         if on_event:
-            on_event("waiting", reason=reason)
+            on_event("waiting", reason=reason, source_role=request.row["role"])
         wake = min(deadline, time.monotonic() + poll_interval * random.uniform(0.9, 1.1))
         while time.monotonic() < wake:
             if check_cancelled:
