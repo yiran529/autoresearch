@@ -284,7 +284,38 @@ processed_analyses:
 
 每类快照归档上限为 64 MiB / 4096 条目，超出明确记录归档失败，不保证完整保留超大输出。环境不可用、申请失败或执行中断时可能只有部分记录；诊断身份、预算及宿主控制状态另存于私有诊断目录。诊断结果用于支持 Analysis，不直接替代正式质量或速度评分。
 
-## 7. 重试、分阶段运行与保留边界
+## 7. Analyzer 自身的产物与日志
+
+Analyzer 是独立的新会话，不是生产 Researcher / Engineer Session 的延续。它的正式产物与模型原始输出需要分开看：
+
+| 产物 | 位置 | 含义 |
+| --- | --- | --- |
+| 正式 Research / Engineering Analysis | `public/notes/nodes/<Node>/<mode>_analysis_vN.md` | 校验并发布后的 JSON，是供工作流和后续节点使用的正式结论 |
+| 本轮 Evaluation | `public/notes/nodes/<Node>/evaluation.md` | Analyzer 调用前由宿主从正式记录刷新，不是模型生成的结果 |
+| 模型原始最终回复（受控诊断模式） | `public/diagnostics/<Node>-<mode>-vN/workspace/results/output.json` | Codex `--output-last-message` 保存的原始 JSON；宿主随后补入固定证据封装并校验，不能与正式 Analysis 等同 |
+| Analyzer 会话标准输出与错误（受控诊断模式） | `private/diagnostics/<Node>-<mode>-vN/session.stdout.log`、`session.stderr.log` | Analyzer 的 Codex 进程输出，用于排查模型、工具或会话失败；与 `records/<request-id>/stdout.log` 等诊断实验日志不同 |
+| 诊断任务状态 | `private/diagnostics/<Node>-<mode>-vN/task.json` | 固定节点、模式、版本、Research SHA、证据 hash、当前进程和已消耗执行预算等 |
+| 输出 schema | `public/diagnostics/<Node>-<mode>-vN/workspace/analysis.schema.json` | 传给 Codex 的输出结构约束，不是评估结果 |
+| 固定输入与实验产物 | 同 workspace 下的 `code/`、`evidence/`、`experiments/`、`results/` 及兄弟 `records/` | 代码和证据快照、诊断脚本与归档；见上一节 |
+
+这里的 `public/`、`private/` 均相对于 `.coral/`。私有目录还包含独立的 `codex-home/` 用于 Codex 运行状态及认证挂载，不应作为公共实验产物分发。Analyzer 使用 ephemeral 会话，不能据此承诺保留完整可恢复的对话历史。`session.stdout.log` / `session.stderr.log` 在 `communicate()` 返回后写入，进程被强制中断时可能尚未落盘；它们也不是结构化的完整工具调用审计记录。
+
+受控诊断未启用或隔离条件不可用时，普通 Analyzer 使用系统临时目录，例如：
+
+```text
+/tmp/autoresearch-analyzer-<随机后缀>/
+├── code/...
+├── evidence/...
+└── output.json
+```
+
+实际临时目录根由系统 tempfile 配置决定。普通 runner 捕获 stdout/stderr，但没有将它们写成独立持久会话日志；失败时 stderr 用于异常信息。实现使用 `mkdtemp`，当前没有在此函数中自动删除目录，但该目录不属于 Run 的稳定归档，系统临时清理后可能丢失。
+
+正式发布顺序为“读取原始输出 → 宿主补入固定证据封装 → schema 与证据一致性校验 → 发布版本化 Analysis”。因此 `output.json` 已存在不代表节点已完成，发布失败时也不能用原始回复替代正式 Analysis。受控诊断模式的 workspace 输出和会话日志按同一个 Node/mode/version 路径写入，再次尝试同版本可能覆盖这些中间文件；不可变保证针对已发布的版本化 Analysis，不应套用于所有中间产物。
+
+实现见 [Analyzer 主流程及普通 runner](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py)、[受控诊断 Analyzer runner](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/diagnostic_session.py)。
+
+## 8. 重试、分阶段运行与保留边界
 
 同 SHA 的基础设施失败重试保留为：
 
@@ -311,7 +342,7 @@ coral resume --task <task> --run <run> agents.dynamic.max_engineers=0
 
 备份可恢复的 Run 时，应保留完整 Run 目录，包括 `.coral/private` 中的权威状态和基线、公开证据以及 Git 对象；只复制 `notes/` 无法重建正式身份与工作流。对外分享时则需单独选择公开产物，私有状态不属于 Agent 可见输入。
 
-## 8. 阅读与核实入口
+## 9. 阅读与核实入口
 
 - 看节点定义与结论：`notes/nodes/<Node>/spec.md`、版本化 Analysis。
 - 看该节点所有正式结果：`evaluation.md` → `attempts/<SHA>.json`。
