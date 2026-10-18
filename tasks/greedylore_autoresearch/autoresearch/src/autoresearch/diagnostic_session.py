@@ -75,6 +75,16 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
         command.extend(['--model', config['analyzer_model']])
     if config.get('analyzer_reasoning_effort'):
         command.extend(['-c', 'model_reasoning_effort=' + json.dumps(config['analyzer_reasoning_effort'])])
+    if config.get('analyzer_allow_unix_sockets') is True:
+        # Opt-in only for this externally isolated Analyzer. Keep outbound
+        # destinations denied by the tool proxy while permitting local IPC.
+        for option in (
+            'sandbox_workspace_write.network_access=true',
+            'features.network_proxy.enabled=true',
+            'features.network_proxy.domains={}',
+            'features.network_proxy.dangerously_allow_all_unix_sockets=true',
+        ):
+            command.extend(['-c', option])
     # Codex creates protected metadata paths inside each writable root. Keep its
     # cwd in results rather than the outer namespace's read-only workspace root.
     command.extend(['--sandbox', 'workspace-write', '--skip-git-repo-check',
@@ -85,7 +95,10 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                    'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
                    'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
     # API-key based installations may not have auth.json.
-    for key in ('OPENAI_API_KEY', 'SSL_CERT_FILE'):
+    # Preserve model API proxy configuration. Diagnostic experiments receive a
+    # separate sanitized environment in diagnostic_sandbox, not these variables.
+    for key in ('OPENAI_API_KEY', 'SSL_CERT_FILE', 'HTTP_PROXY', 'HTTPS_PROXY',
+                'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
         if key in os.environ:
             environment[key] = os.environ[key]
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

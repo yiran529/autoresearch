@@ -108,11 +108,16 @@ def test_missing_sandbox_returns_unavailable_before_allocation(task, monkeypatch
     assert 'bubblewrap' in result['reason']
 
 
-def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch):
+@pytest.mark.parametrize('allow_unix', [False, True])
+def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch, allow_unix):
     task.close()
     from pathlib import Path
     from autoresearch import diagnostic_session
-    config = {'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'medium'}
+    config = {'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'medium',
+              'analyzer_allow_unix_sockets': allow_unix}
+    monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:9999')
+    monkeypatch.setenv('no_proxy', 'localhost,127.0.0.1')
+    monkeypatch.setenv('UNRELATED_SECRET', 'must not reach the model')
     monkeypatch.setattr(diagnostic_session, 'settings', lambda _: config)
     monkeypatch.setattr(diagnostic_session.shutil, 'which', lambda name:
                         '/opt/coral-tools/bwrap' if name == 'bwrap' else '/usr/bin/true')
@@ -128,6 +133,9 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch)
             self.command = command
             # Codex's own tool sandbox needs the isolation binary inside the outer namespace.
             assert '/opt/coral-tools' in kwargs['env']['PATH'].split(':')
+            assert kwargs['env']['HTTPS_PROXY'] == 'http://127.0.0.1:9999'
+            assert kwargs['env']['no_proxy'] == 'localhost,127.0.0.1'
+            assert 'UNRELATED_SECRET' not in kwargs['env']
 
         def communicate(self, prompt):
             command = self.command
@@ -137,6 +145,12 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch)
             assert 'resolved relative to the workspace root' in prompt
             assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
             assert 'model_reasoning_effort="medium"' in command
+            assert ('features.network_proxy.dangerously_allow_all_unix_sockets=true' in command) == allow_unix
+            if allow_unix:
+                assert 'sandbox_workspace_write.network_access=true' in command
+                assert 'features.network_proxy.enabled=true' in command
+                assert 'features.network_proxy.domains={}' in command
+            assert 'danger-full-access' not in command
             Path(command[command.index('--output-last-message') + 1]).write_text('{}')
             return '', ''
 
@@ -283,6 +297,8 @@ def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
     import sys
 
     from autoresearch import diagnostic_sandbox as sandbox
+    monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:9999')
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-only-never-forward')
     released = task.workspace / 'results/released'
     class Reservation:
         indices = (0,)
@@ -298,12 +314,15 @@ def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
     # Only namespace/GPU dependencies are replaced; run a real process and timeout.
     monkeypatch.setattr(sandbox, 'build_sandbox', lambda _ws, _roots, _devices, argv, **_kw: argv)
     script = task.workspace / 'experiments' / 'slow.py'
-    script.write_text('import time\nprint("started", flush=True)\ntime.sleep(30)\n')
+    script.write_text('import os,time\nprint("started", flush=True)\n'
+                      'print("model_environment_leaked", any(k in os.environ for k in '
+                      '("HTTPS_PROXY", "OPENAI_API_KEY")), flush=True)\ntime.sleep(30)\n')
     result = task.run(request(argv=[sys.executable, str(script)], timeout=0.2),
                       os.getpid(), sandbox.execute_diagnostic)
     assert result['status'] == 'timed_out'
     assert released.read_text() == 'released'
     assert 'started' in (task.records / 'request-1/stdout.log').read_text()
+    assert 'model_environment_leaked False' in (task.records / 'request-1/stdout.log').read_text()
     assert (task.records / 'request-1/scripts/slow.py').read_text() == script.read_text()
 
 
