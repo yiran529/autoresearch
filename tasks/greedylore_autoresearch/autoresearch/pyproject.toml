@@ -14,3 +14,7 @@ autoresearch = "autoresearch.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/autoresearch"]
+
+[tool.hatch.build]
+# Explicit editable path: ancestor autoresearch/ ignore rules can hide auto-discovery.
+dev-mode-dirs = ["src"]
