@@ -89,6 +89,8 @@ CORAL grader daemon 发现 pending Attempt 后，在对应 commit 的独立 deta
 
 当前探索预算：60M AdamW 保留 8,393 步学习率调度，只训练 4,000 步；130M Muon 保留 20,000 步调度，只训练 2,500 步。两项 Quality 均比较训练结束时的 validation loss（`final_eval_loss`），不使用 training loss、历史最低 loss 或 PPL 替代。Dense 对照必须采用相同截断步数和调度；修改预算会改变 contract hash，旧 8,393 步的 60M 基线不能直接复用为 4,000 步基线。这是短预算探索证据，不代表完整训练的最终质量。Timing 协议不变。
 
+当前 Quality 门槛为两项 workload 的 final validation loss 均不超过对应 Dense 的 1.06 倍（最多退化 6%）；评分器读取 Contract 中的 `quality.max_relative_eval_loss`。门槛也参与 Contract hash，不能覆盖或重标此前 10% 门槛下的 Attempt 与 Dense 记录。角色和运行时提示使用英文；Analysis 仍保存为 schema 约束的 JSON，UTF-8 文本不转义非 ASCII 字符。
+
 Research 模式同时评估质量与效率。质量门槛失败时，汇总分数为零；效率使用 BF16、FP32 相对 dense 基线加速比的几何平均。Engineering 模式只执行效率评估，质量指标标为 `inherited (provisional)`，不代表重新实测。硬件不可比时不产生有效汇总效率分数。
 
 输出包括 `ScoreBundle`、反馈、失败类别、协议 hash、硬件信息和原始日志。持久证据写入专门的评估日志目录；评分 checkout 会被清理，不适合作为长期产物存储位置。
@@ -118,6 +120,8 @@ autoresearch diagnostic run --gpus 4 --timeout 300 -- \
 
 启用条件是 `grader.args.analyzer_diagnostics: true`、可用的 bubblewrap namespace，以及显式配置的公共运行依赖。`diagnostic_runtime_roots` 只读挂载所需 Python 环境（含其公开的解释器/链接目标）、CUDA 依赖、本地 C4 和 tokenizer；`diagnostic_path` 指向该环境的 bin 目录。不要挂载整个 home、run、其他 workspace、凭据或 grader 私有环境。它们是宿主配置，不由 Analyzer 请求指定；不会自动安装依赖或下载数据。未安装 bubblewrap 或 namespace 探测失败时保留普通分析并提示诊断未启用；已启用但运行环境不完整时诊断明确失败，不直接在宿主执行命令。
 
+可通过 `analyzer_model` 和 `analyzer_reasoning_effort` 指定诊断 Analyzer 的模型和推理强度。Codex 从可写的 `results/` 启动，并通过 `--add-dir` 获准写 `experiments/`；外层 workspace 根目录及 `code/`、`evidence/` 仍只读。提示中提供 workspace 和固定输入的绝对路径；权威诊断命令仍以 workspace 根目录为工作目录，与 Codex 的初始目录不同。这样避免 Codex 内层 sandbox 在只读根目录创建 `.git`、`.aws` 等保护路径时失败。真实 Codex smoke 已验证读取固定输入、写脚本/结果及拒绝修改证据；该 smoke 不申请 GPU，不能替代 GPU 诊断端到端验证。仅通过 namespace 探针不代表模型工具可用，工具启动失败不得视为有效研究结论。
+
 现阶段 CPU/可信 socket/预算与回归测试已覆盖；当前开发机缺少 bubblewrap，真实 namespace 隔离、四卡通信及 Codex 在该 namespace 中的运行仍须单独验证，不能仅凭命令构造测试宣称安全性已验证。
 
 `memory.py` 在累计达到条件时整理全局记忆，发布 `research_summary.md` 和 `engineering_summary.md`，并记录所覆盖的 Analysis 引用。Summary 帮助新 Agent 定位证据，具体判断仍需追溯到固定 SHA、Analysis 和原始记录。
@@ -125,6 +129,8 @@ autoresearch diagnostic run --gpus 4 --timeout 300 -- \
 主要代码：[evaluation.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/evaluation.py)、[analysis.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py)、[memory.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/memory.py)、[research_analysis.md](../tasks/greedylore_autoresearch/prompts/research_analysis.md)、[engineering_analysis.md](../tasks/greedylore_autoresearch/prompts/engineering_analysis.md)。
 
 ## 8. 状态存储与可观测性
+
+Artifacts 的完整目录、文件名含义、内容格式、重试和分阶段恢复规则见 [artifacts 组织与保存说明](greedylore-autoresearch-artifacts.md)。该文包含 Quality、Timing、Attempt、Analysis 与诊断归档的示例。
 
 系统以文件和 Git 保存状态，不依赖独立数据库。不同记录承担不同职责：
 
