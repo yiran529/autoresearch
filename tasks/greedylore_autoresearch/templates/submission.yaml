@@ -1,20 +1,21 @@
-# 放在候选代码仓库根目录，随 coral eval 自动提交；grader 从固定 checkout 读取。
+# Place at the candidate repository root; coral eval commits it automatically and the grader reads the fixed checkout.
 mode: research                 # research | engineering
 node_id: N023
-node_type: research             # research | seed；仅 Root N000 为 seed，node_type 不改变 grader profile
-base_commit: "<full sha>"      # 候选代码实际上选择的 parent/engineering base
-quality_anchor: null           # engineering 必填：唯一完成 quality 的 research SHA
+node_type: research             # research | seed; only N000 is seed; this does not change the grader profile
+base_commit: "<full sha>"      # selected Parent base for Research; this Node's Research SHA for Engineering
+quality_anchor: null           # required for Engineering: the unique quality-evaluated Research SHA
 analysis_refs:
-  parent_research: "N017/research_analysis_v1.md"  # seed Root 为 null
+  parent_research: "N017/research_analysis_v1.md"  # null for seed Root
   parent_engineering: null
 
-# Seed Root：先固定已有 baseline SHA S0；本文件新增后 coral eval 生成 A0（正式 Research Attempt），S0 和 A0 分别记录，算法实现不得在 Bootstrap 中改变。
-# 同一 node 只允许一个不同 SHA 的正式 Research Attempt；infra retry 必须使用完全相同 SHA。
-change_summary: "<本次代码改动；research 代表本 Node 唯一的算法实现>"
-selection_rationale: "<1–3 句：为何选择此 parent/Node + base commit；工程模式尤其要求>"
+# Seed Root: pin baseline SHA S0 first; coral eval creates A0 after this file is added.
+# Record S0 and A0 separately; Bootstrap must not change the algorithm implementation.
+# One distinct formal Research SHA per Node; infrastructure retries use exactly the same SHA.
+change_summary: "<Code changes; Research identifies this Node's unique algorithm implementation.>"
+selection_rationale: "<1–3 sentences: why this Parent/Node and base commit; especially important for Engineering.>"
 
-# soft semantic evidence，不是 grader 的严格等价证明。
+# Soft semantic evidence, not a strict equivalence proof from the grader.
 semantic_self_check:
   status: not_applicable      # pass | fail | partial | not_run | not_applicable
-  commands: []                # 实际执行的命令 / log paths
-  limitations: ""            # 未覆盖行为和数值疑点
+  commands: []                # commands actually executed / log paths
+  limitations: ""            # uncovered behavior and numerical uncertainties

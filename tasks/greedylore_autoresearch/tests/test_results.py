@@ -13,8 +13,8 @@ from greedylore_autoresearch_grader.results import (
 
 
 def test_quality_gate_boundary():
-    assert quality_gate(1.10, 1.0)
-    assert not quality_gate(1.1000001, 1.0)
+    assert quality_gate(1.06, 1.0)
+    assert not quality_gate(1.0600001, 1.0)
 
 
 def test_two_repetition_mean_and_speedup():

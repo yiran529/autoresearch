@@ -54,7 +54,8 @@ def test_exploration_rejects_old_full_budget_dense_reference(contract, tmp_path)
         grader._load_references(contract.contract_hash)
 
 
-def test_research_scores_quality_gate_and_comparable_speedup():
+@pytest.mark.parametrize("max_relative,passes", [(1.06, True), (1.04, False)])
+def test_research_scores_quality_gate_and_comparable_speedup(max_relative, passes):
     reference = {
         "quality": {
             "contract_hash": "contract",
@@ -83,18 +84,19 @@ def test_research_scores_quality_gate_and_comparable_speedup():
     bundle = score_results(
         "research", quality, timing, reference,
         contract_hash="contract", comparable=True, evidence_paths=["eval_logs/a"],
+        max_relative_eval_loss=max_relative,
     )
 
     assert bundle.scores["llama60m_loss_ratio"].value == 1.05
     assert bundle.scores["llama60m_eval_loss"].value == 1.05
     assert bundle.scores["llama130m_eval_loss"].value == 2.1
     assert bundle.scores["llama130m_loss_ratio"].value == 1.05
-    assert bundle.scores["llama130m_quality_pass"].value == 1.0
+    assert bundle.scores["llama130m_quality_pass"].value == float(passes)
     assert bundle.scores["bf16_speedup"].value == 2.0
     assert bundle.scores["fp32_speedup"].value == 1.0
-    assert bundle.scores["quality_gate"].value == 1.0
+    assert bundle.scores["quality_gate"].value == float(passes)
     assert bundle.scores["efficiency_score"].value == pytest.approx(2 ** 0.5)
-    assert bundle.aggregated == pytest.approx(2 ** 0.5)
+    assert bundle.aggregated == pytest.approx(2 ** 0.5 if passes else 0.0)
     assert bundle.metadata["evidence_paths"] == ["eval_logs/a"]
 
 

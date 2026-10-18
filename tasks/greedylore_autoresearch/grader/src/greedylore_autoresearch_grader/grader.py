@@ -15,6 +15,7 @@ from .results import geometric_mean_speedup, quality_gate
 
 def score_results(
     mode, quality, timing, reference, *, contract_hash, comparable, evidence_paths,
+    max_relative_eval_loss=1.06,
 ):
     scores = {}
     quality_ok = True
@@ -27,7 +28,7 @@ def score_results(
             candidate_loss = float(quality[workload]["final_eval_loss"])
             dense_loss = float(reference["quality"]["workloads"][workload]["final_eval_loss"])
             ratio = candidate_loss / dense_loss
-            passed = quality_gate(candidate_loss, dense_loss)
+            passed = quality_gate(candidate_loss, dense_loss, max_relative=max_relative_eval_loss)
             quality_ok = quality_ok and passed
             scores[f"{label}_eval_loss"] = Score(candidate_loss, f"{label}_eval_loss")
             scores[f"{label}_loss_ratio"] = Score(ratio, f"{label}_loss_ratio")
@@ -343,6 +344,7 @@ class Grader(TaskGrader):
             mode, quality_results, timing, reference,
             contract_hash=contract.contract_hash, comparable=comparable,
             evidence_paths=evidence_paths + self._resource_paths(),
+            max_relative_eval_loss=contract.raw["quality"]["max_relative_eval_loss"],
         )
 
     def evaluate(self) -> ScoreBundle:

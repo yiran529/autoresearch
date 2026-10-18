@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import yaml
 
 from coral.grader.trusted_writes import _atomic_json
 
+from .atomic import atomic_write_text
 from .diagnostic_sandbox import build_sandbox
 
 
@@ -53,8 +55,9 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     # Codex needs its own API credentials. These are never mounted in experiments.
     auth = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'auth.json'
     binary = Path(binary).resolve()
+    isolation_binary = Path(shutil.which('bwrap')).resolve()
     socket = task.coral_dir / 'public/trusted.sock'
-    mounts = [*runtime_roots, binary.parent, *read_roots, schema, tools, socket,
+    mounts = [*runtime_roots, binary.parent, isolation_binary.parent, *read_roots, schema, tools, socket,
               task.records]
     task.records.mkdir(exist_ok=True)
     for name in ('/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ssl/certs'):
@@ -67,10 +70,18 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     command.extend(['--bind', str(home), str(home)])
     if auth.is_file():
         command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
-    command.extend(['--', str(binary), 'exec', '--ephemeral', '--ignore-user-config',
-                    '--sandbox', 'workspace-write', '--skip-git-repo-check', '--cd', str(scratch),
+    command.extend(['--', str(binary), 'exec', '--ephemeral', '--ignore-user-config'])
+    if config.get('analyzer_model'):
+        command.extend(['--model', config['analyzer_model']])
+    if config.get('analyzer_reasoning_effort'):
+        command.extend(['-c', 'model_reasoning_effort=' + json.dumps(config['analyzer_reasoning_effort'])])
+    # Codex creates protected metadata paths inside each writable root. Keep its
+    # cwd in results rather than the outer namespace's read-only workspace root.
+    command.extend(['--sandbox', 'workspace-write', '--skip-git-repo-check',
+                    '--cd', str(task.workspace / 'results'),
+                    '--add-dir', str(task.workspace / 'experiments'),
                     '--output-schema', str(schema), '--output-last-message', str(output), '-'])
-    environment = {'PATH': f'{tools}:{runtime_path}', 'HOME': str(home),
+    environment = {'PATH': f'{tools}:{isolation_binary.parent}:{runtime_path}', 'HOME': str(home),
                    'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
                    'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
     # API-key based installations may not have auth.json.
@@ -81,7 +92,18 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                                stderr=subprocess.PIPE, text=True, env=environment)
     try:
         task.bind(process.pid)
-        _stdout, stderr = process.communicate(prompt)
+        location = (
+            f'\nWorkspace root: {task.workspace}\n'
+            f'Your initial working directory is {task.workspace / "results"}. '
+            'Only experiments/ and results/ beneath the workspace root are writable. '
+            'Use absolute workspace paths for reading fixed code/evidence and writing scripts. '
+            'The authoritative diagnostic command argv is resolved relative to the workspace root, '
+            'not this initial working directory. Do not change code/ or evidence/.\n'
+            'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
+        )
+        _stdout, stderr = process.communicate(prompt + location)
+        atomic_write_text(task.private / 'session.stdout.log', _stdout)
+        atomic_write_text(task.private / 'session.stderr.log', stderr)
         if process.returncode:
             raise RuntimeError(stderr.strip()[-2000:] or 'diagnostic Analyzer session failed')
         if not output.is_file():

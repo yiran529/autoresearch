@@ -599,20 +599,24 @@ def analyze(
             if task is not None:
                 remaining = max(0, 3 - task.read()['executions'])
                 guidance = (
-                    "\n诊断已启用：每个分析任务最多 3 次执行，"
-                    f"剩余 {remaining} 次；每次按需申请 1–4 卡，运行最多 300 秒，排队最多 300 秒。"
-                    "在 experiments/ 写脚本，结果写入 results/，通过权威入口运行：\n"
+                    "\nControlled diagnostics are enabled: at most 3 executions per analysis task; "
+                    f"{remaining} remaining. Request 1–4 GPUs as needed, at most 300 seconds "
+                    "per execution and 300 seconds per queue wait. Write scripts in experiments/ "
+                    "and outputs in results/. Run only through the authoritative entrypoint:\n"
                     "autoresearch diagnostic run --gpus 4 --timeout 300 -- "
                     "python experiments/probe.py --output results/probe.json\n"
-                    "仅在关键证据不足且能区分主要解释时诊断，不重复已有充分验证；"
-                    "不得绕过入口直接启动 GPU 工作。引用诊断 ID 和持久记录中的结果；"
-                    "失败或预算不足时明确不确定性，不猜测机制结论。"
+                    "Use diagnostics only when key evidence is missing and a bounded experiment "
+                    "can distinguish leading explanations; do not repeat sufficient existing tests. "
+                    "Never bypass this entrypoint to launch GPU work. Cite diagnostic IDs and "
+                    "persistent results. Report uncertainty when execution fails or budget is "
+                    "insufficient; do not invent mechanism conclusions."
                 )
                 output = diagnostic_runner(_prompt(evidence) + guidance, analyzer_roots,
                                            _schema("analysis"), analyzer_scratch, task)
             else:
                 output = runner(
-                    _prompt(evidence) + "\n本次未启用受控诊断；不要自行启动 GPU 实验，缺失证据请列为局限。",
+                    _prompt(evidence) + "\nControlled diagnostics are unavailable for this session. "
+                    "Do not launch GPU experiments yourself; report missing evidence as a limitation.",
                     analyzer_roots,
                     _schema("analysis"),
                     analyzer_scratch,
@@ -620,7 +624,7 @@ def analyze(
             analysis_document = validate_analysis(
                 seal_document(load_document(output), evidence), evidence
             )
-            content = json.dumps(analysis_document, indent=2, sort_keys=True) + "\n"
+            content = json.dumps(analysis_document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             analysis_path = _publish(publish, ctx, "analysis", mode, version, content)
 
     return AnalysisResult(

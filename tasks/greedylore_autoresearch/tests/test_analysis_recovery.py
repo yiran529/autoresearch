@@ -97,6 +97,19 @@ def _analysis_payload(_evidence):
     }
 
 
+def test_published_analysis_preserves_readable_unicode(tmp_path):
+    context = _context(tmp_path)
+    runner = FakeCodex(context, [{
+        "summary": "中文机制分析", "findings": ["引用实测证据"], "limitations": ["单次实验"],
+    }])
+    runner.mode = "research"
+    result = _analyze("N001", "research", context=context, runner=runner,
+                      publisher=_publisher(context.notes_root))
+    content = result.analysis_path.read_text()
+    assert "中文机制分析" in content
+    assert json.loads(content)["summary"] == "中文机制分析"
+
+
 def test_diagnostic_runner_keeps_results_and_revokes_identity(tmp_path):
     import os
 
@@ -111,7 +124,7 @@ def test_diagnostic_runner_keeps_results_and_revokes_identity(tmp_path):
         observed['task'] = task
         assert scratch == task.workspace
         assert 'diagnostic run' in prompt
-        assert '最多 3 次' in prompt
+        assert 'at most 3 executions' in prompt
         script = scratch / 'experiments/probe.py'
         script.write_text('print("evidence")')
         def execute(item, payload, cancelled):

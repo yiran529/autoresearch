@@ -7,18 +7,18 @@
 **Quality contract:** `<metrics, fixed steps, seed, tolerance>`
 
 ## 1. Quality observations
-- <原始事实、达标与否、环境有效性 + 证据引用>
+- <Raw observations, quality pass/fail, environment validity and evidence citations.>
 
 ## 2. Gradient gap and possible mechanisms
-- <Seed Root：分析给定 baseline 的初始 gap/可改进空间；无 parent 时不填写虚构的 design delta>
-- <原始梯度/EF 输入、local/global 定义；假设与支持证据>
+- <Seed Root: analyze the provided baseline's gap and improvement opportunities; do not invent a design delta without a parent.>
+- <Raw gradients / EF inputs, local/global definitions, hypotheses and supporting evidence.>
 
 ## 3. Counterevidence / uncertainties
-- <反例、混杂因素、无效评测或缺少的数据>
+- <Counterexamples, confounders, invalid evaluations or missing data.>
 
 ## 4. Assessment
 - `supported | partially_supported | unsupported | inconclusive`
-- <confidence/scope：此结论不等于 CORAL improved 状态>
+- <Confidence/scope: this assessment is not equivalent to CORAL's improved status.>
 
 ## 5. Actionable next-node hypotheses
-- <拟修改的算法部分、预期 quality/efficiency、如何反证；若当前实现有 bug/失败，建议新 child 而非重写本 Node>
+- <Algorithm component to change, expected quality/efficiency and falsification test; bugs/failures should motivate a new child, not rewriting this Node.>

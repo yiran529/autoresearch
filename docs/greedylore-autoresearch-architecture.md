@@ -122,6 +122,8 @@ autoresearch diagnostic run --gpus 4 --timeout 300 -- \
 
 可通过 `analyzer_model` 和 `analyzer_reasoning_effort` 指定诊断 Analyzer 的模型和推理强度。Codex 从可写的 `results/` 启动，并通过 `--add-dir` 获准写 `experiments/`；外层 workspace 根目录及 `code/`、`evidence/` 仍只读。提示中提供 workspace 和固定输入的绝对路径；权威诊断命令仍以 workspace 根目录为工作目录，与 Codex 的初始目录不同。这样避免 Codex 内层 sandbox 在只读根目录创建 `.git`、`.aws` 等保护路径时失败。真实 Codex smoke 已验证读取固定输入、写脚本/结果及拒绝修改证据；该 smoke 不申请 GPU，不能替代 GPU 诊断端到端验证。仅通过 namespace 探针不代表模型工具可用，工具启动失败不得视为有效研究结论。
 
+2026-10-18 的 v5 Analyzer 已可正常读取证据和编写诊断脚本，但本机 Codex 0.160.0 网络过滤器仍拒绝 Unix socket 创建，请求未到达可信服务，实际 GPU 诊断次数为 0。无模型探针显示单路径 Unix socket allow 配置未解除该限制；扩大 Unix socket 授权或直连网络的对照可以连接。尚未将这些权限扩展应用于实际 Analyzer；不能将模型自行写出的请求失败说明当作服务端执行记录。公共 Python 运行时挂载还须包含解释器符号链接的中间路径，不能只挂载最终解析到的版本目录。
+
 现阶段 CPU/可信 socket/预算与回归测试已覆盖；当前开发机缺少 bubblewrap，真实 namespace 隔离、四卡通信及 Codex 在该 namespace 中的运行仍须单独验证，不能仅凭命令构造测试宣称安全性已验证。
 
 `memory.py` 在累计达到条件时整理全局记忆，发布 `research_summary.md` 和 `engineering_summary.md`，并记录所覆盖的 Analysis 引用。Summary 帮助新 Agent 定位证据，具体判断仍需追溯到固定 SHA、Analysis 和原始记录。

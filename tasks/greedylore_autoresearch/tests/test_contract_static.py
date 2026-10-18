@@ -34,7 +34,7 @@ def test_contract_freezes_quality_workloads() -> None:
     assert contract["hardware"]["gpu_count"] == 4
     assert contract["training"]["seed"] == 1243
     assert contract["training"]["sequence_length"] == 256
-    assert quality["max_relative_eval_loss"] == 1.10
+    assert quality["max_relative_eval_loss"] == 1.06
     assert quality["workloads"]["llama60m_adamw"] == {
         "model": "llama60m",
         "optimizer": "adamw",

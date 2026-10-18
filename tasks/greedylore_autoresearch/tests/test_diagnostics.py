@@ -108,6 +108,47 @@ def test_missing_sandbox_returns_unavailable_before_allocation(task, monkeypatch
     assert 'bubblewrap' in result['reason']
 
 
+def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch):
+    task.close()
+    from pathlib import Path
+    from autoresearch import diagnostic_session
+    config = {'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'medium'}
+    monkeypatch.setattr(diagnostic_session, 'settings', lambda _: config)
+    monkeypatch.setattr(diagnostic_session.shutil, 'which', lambda name:
+                        '/opt/coral-tools/bwrap' if name == 'bwrap' else '/usr/bin/true')
+    monkeypatch.setattr(diagnostic_session, 'build_sandbox', lambda *a, **k: ['true', '--', 'true'])
+    schema = task.workspace / 'input.schema.json'
+    schema.write_text('{}')
+
+    class Process:
+        pid = os.getpid()
+        returncode = 0
+
+        def __init__(self, command, **kwargs):
+            self.command = command
+            # Codex's own tool sandbox needs the isolation binary inside the outer namespace.
+            assert '/opt/coral-tools' in kwargs['env']['PATH'].split(':')
+
+        def communicate(self, prompt):
+            command = self.command
+            assert command[command.index('--cd') + 1] == str(task.workspace / 'results')
+            assert command[command.index('--add-dir') + 1] == str(task.workspace / 'experiments')
+            assert f'Workspace root: {task.workspace}' in prompt
+            assert 'resolved relative to the workspace root' in prompt
+            assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
+            assert 'model_reasoning_effort="medium"' in command
+            Path(command[command.index('--output-last-message') + 1]).write_text('{}')
+            return '', ''
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', Process)
+    output = diagnostic_session.run_diagnostic_codex('analyze', [], schema, task.workspace, task)
+    assert output.read_text() == '{}'
+    assert task.read()['process'] is None
+
+
 def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task):
     from autoresearch.diagnostic_sandbox import build_sandbox
     command = build_sandbox(task.workspace, [], [2, 5], ['python', 'experiments/p.py'])
@@ -120,6 +161,13 @@ def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task)
     assert ['/dev/nvidia0', '/dev/nvidia0'] not in binds
     writable = [command[index + 1] for index, arg in enumerate(command) if arg == '--bind']
     assert writable == [str(task.workspace / 'experiments'), str(task.workspace / 'results')]
+
+
+def test_sandbox_resolves_host_binary_before_sanitizing_child_path(task, monkeypatch):
+    from autoresearch import diagnostic_sandbox
+    monkeypatch.setattr(diagnostic_sandbox.shutil, 'which', lambda _: '/opt/tools/bwrap')
+    command = diagnostic_sandbox.build_sandbox(task.workspace, [], [], ['true'])
+    assert command[0] == '/opt/tools/bwrap'
 
 
 def test_sandbox_refuses_symlink_workspace(task, tmp_path):

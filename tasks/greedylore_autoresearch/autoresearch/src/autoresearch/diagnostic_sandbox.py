@@ -48,7 +48,7 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
     workspace = Path(workspace).absolute()
     for path in (workspace, workspace / 'experiments', workspace / 'results'):
         _no_symlinks(path)
-    command = ['bwrap', '--die-with-parent', '--unshare-all', '--new-session',
+    command = [shutil.which('bwrap') or 'bwrap', '--die-with-parent', '--unshare-all', '--new-session',
                '--cap-drop', 'ALL']
     if network:
         command.append('--share-net')

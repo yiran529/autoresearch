@@ -30,7 +30,7 @@ def test_child_freezes_selected_parent_versions(tmp_path):
             "selection_rationale": "The parent Analysis identified communication as the bottleneck.",
             "delta": "Gate compression by stability.",
             "risk": "The gate may reduce compression.",
-            "falsification_criteria": "Reject if either quality workload exceeds the 10% gate.",
+            "falsification_criteria": "Reject if either quality workload exceeds the 6% gate.",
         },
         evidence,
     )
