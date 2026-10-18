@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +10,24 @@ from greedylore_autoresearch_grader.gpu import (
     InfraFailure,
     reserve_idle_gpus,
 )
+
+
+@pytest.mark.parametrize("slow_query", ["gpu", "apps", "topology"])
+def test_inventory_tolerates_driver_query_latency_under_load(tmp_path, slow_query):
+    """Real subprocess delays reproduce the busy-host one-second timeout."""
+    def runner(command, **kwargs):
+        if "--query-gpu" in " ".join(command):
+            query, output = "gpu", "0, GPU-a, RTX 4090, 0000:65:00.0, 9000, 99\n"
+        elif "--query-compute-apps" in " ".join(command):
+            query, output = "apps", "GPU-a, 4321\n"
+        else:
+            query, output = "topology", "GPU0 X\n"
+        code = f"import time; time.sleep({1.2 if query == slow_query else 0}); print({output!r}, end='')"
+        return subprocess.run([sys.executable, "-c", code], **kwargs)
+
+    found = GpuInventory.from_nvidia_smi(runner=runner, sysfs_root=tmp_path)
+    assert found.devices[0].compute_pids == (4321,)
+    assert found.devices[0].memory_used_mib == 9000
 
 
 def inventory(busy=False):

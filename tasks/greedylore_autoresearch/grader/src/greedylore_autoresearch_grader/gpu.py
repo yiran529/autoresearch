@@ -17,6 +17,9 @@ from pathlib import Path
 
 from .runtime import InfraFailure, ProcessIdentity
 
+# Busy drivers can take over a second, especially while CUDA contexts initialize.
+_NVIDIA_SMI_TIMEOUT_SECONDS = 5
+
 
 class ResourceBusy(InfraFailure):
     """Transient contention; distinct from a failed inventory or configuration."""
@@ -102,13 +105,13 @@ class GpuInventory:
             capture_output=True,
             text=True,
             check=True,
-            timeout=1,
+            timeout=_NVIDIA_SMI_TIMEOUT_SECONDS,
         )
         apps = runner(
             ["nvidia-smi", "--query-compute-apps=gpu_uuid,pid", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
-            timeout=1,
+            timeout=_NVIDIA_SMI_TIMEOUT_SECONDS,
         )
         if apps.returncode != 0:
             raise InfraFailure("incomplete GPU inventory evidence: compute-app query failed")
@@ -120,7 +123,8 @@ class GpuInventory:
             if len(parts) != 2 or not parts[1].isdigit():
                 raise InfraFailure("incomplete GPU inventory evidence: invalid compute-app row")
             pids.setdefault(parts[0], []).append(int(parts[1]))
-        topo = runner(["nvidia-smi", "topo", "-m"], capture_output=True, text=True, timeout=1)
+        topo = runner(["nvidia-smi", "topo", "-m"], capture_output=True, text=True,
+                      timeout=_NVIDIA_SMI_TIMEOUT_SECONDS)
         if topo.returncode != 0 or not topo.stdout.strip():
             raise InfraFailure("incomplete GPU inventory evidence: topology query failed")
         devices = []

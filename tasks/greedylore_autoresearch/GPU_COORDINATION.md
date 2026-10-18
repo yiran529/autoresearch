@@ -20,6 +20,8 @@ timing_monitor_interval_seconds: 1
 - `gpu_wait_timeout_seconds`：每阶段资源等待上限；`0` 表示只尝试一次。等待不计入候选执行时间，但仍受整个 grader timeout 限制。
 - `timing_monitor_interval_seconds`：timing 运行中的检查间隔，必须大于零。改变它需要重新验证 Dense reference 监测条件。
 
+每条 `nvidia-smi` 查询的超时为 5 秒，以容纳繁忙宿主、CUDA context 初始化时的驱动延迟。一次完整 inventory 顺序执行三条查询，最坏约 15 秒；监测间隔不包含查询自身耗时。等待截止和取消检查也可能因正在执行的查询延后，分配还会执行二次状态检查。查询失败仍拒绝准入或使 timing 返回 infra failure。
+
 配置不热更新。升级时先让旧 grader 退出，再启动新版；旧版使用 run 私有锁，与公共锁不互通。需同步升级 CORAL 框架和任务 grader：框架提供可信父进程启动身份，缺少该上下文的旧框架会被任务 grader 明确拒绝。不同自定义锁目录、不同 UID 或不共享相同宿主文件系统的容器不会通过这些锁互相协调。本实现要求宿主 PID/UID 和 procfs 视图一致，不支持把 NVML 宿主 PID 与隔离容器 PID 混用。
 
 ## 角色优先级与等待名额
