@@ -28,11 +28,11 @@
 
 ## Part 2 — Engineer-authored completion
 
-- [ ] Test authenticated final-summary submission, all-attempt coverage, two-candidate enforcement, retry/recovery and stale/foreign evidence rejection; observe failures.
-- [ ] Extend `engineering finish --analysis-file` to send structured text and SHA coverage, not a host file path. Validate ownership and terminal attempts under the host lock.
-- [ ] Persist the sealed author submission before finalizing; publish idempotently and complete only after verified publication. Never invoke Engineering Analyzer in the finalizer.
-- [ ] Preserve historical Analysis readability and recover interrupted publication. Keep Engineer alive after its second eval until it submits the summary.
-- [ ] Update Engineer instructions, runtime reference, shared rules and workflow simulations; run focused plus end-to-end workflow tests; commit.
+- [x] Test authenticated final-summary submission, all-attempt coverage, two-candidate enforcement, retry/recovery and stale/foreign evidence rejection; observe failures.
+- [x] Extend `engineering finish --analysis-file` to send structured text and SHA coverage, not a host file path. Validate ownership and terminal attempts under the host lock.
+- [x] Persist the sealed author submission before finalizing; publish idempotently and complete only after verified publication. Never invoke Engineering Analyzer in the finalizer.
+- [x] Preserve historical Analysis readability and recover interrupted publication. Keep Engineer alive after its second eval until it submits the summary.
+- [x] Update Engineer instructions, runtime reference, shared rules and workflow simulations; run focused plus end-to-end workflow tests; commit.
 
 ## Part 3 — Memory
 
@@ -52,3 +52,5 @@
 Workflow simulation uses scripted agents and synthetic results. No scientific improvement, training-quality gain or hardware speedup is claimed without a separate real pilot using permitted data/state and matched diagnostic budgets.
 
 Part 1 validation: 242 passed, 1 namespace-availability skip; core/task changed Python lint clean. Scientific pilot remains unrun: no real training states or model/GPU runs were used.
+
+Part 2 validation: 300 passed, 1 namespace-availability skip, including normal/fault scripted-agent simulations. No Engineering Analyzer is launched by the finalizer. Historical analyses remain unchanged.

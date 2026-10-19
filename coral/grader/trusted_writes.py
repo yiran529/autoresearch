@@ -500,7 +500,10 @@ class TrustedWriteService:
         self, operation: str, payload: dict[str, Any],
         binding: AgentBinding | None,
     ) -> dict[str, Any]:
-        if set(payload) != _WORKFLOW_FIELDS[operation]:
+        expected = _WORKFLOW_FIELDS[operation]
+        if operation == "finish_assignment" and payload.get("mode") == "engineering" and "analysis" in payload:
+            expected = expected | {"analysis"}
+        if set(payload) != expected:
             raise TrustedWriteError(f"{operation} contains unknown or missing fields")
         dynamic = getattr(getattr(self.config, "agents", None), "dynamic", None)
         context = {
@@ -738,6 +741,8 @@ class TrustedWriteService:
                         "coral_dir": str(self.coral_dir),
                         "agent_id": binding.agent_id,
                         "island_id": binding.island_id,
+                        "commit_hash": commit_hash,
+                        "budget_class": payload["budget_class"],
                     },
                 )
             existing_same = read_attempt(
@@ -828,6 +833,8 @@ class TrustedWriteService:
                     "coral_dir": str(self.coral_dir),
                     "agent_id": binding.agent_id,
                     "island_id": binding.island_id,
+                    "commit_hash": commit_hash,
+                    "budget_class": "real",
                 },
             )
 

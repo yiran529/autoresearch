@@ -41,7 +41,8 @@ def generate_coral_md(
                 "Inspect the Tree and evidence, choose one eligible Research Node, "
                 "then atomically run `autoresearch engineering claim <node-id>`. "
                 "Optimize from its Research commit. When finished evaluating candidates, "
-                "run `autoresearch engineering finish` and wait for automatic Analysis, "
+                "author a final JSON summary and run `autoresearch engineering finish "
+                "--analysis-file /absolute/scratch/final.json`. Wait for host publication, "
                 "completion and Agent retirement. "
                 "If no target is eligible, run `autoresearch engineering cancel` and exit."
             )

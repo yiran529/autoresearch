@@ -423,7 +423,17 @@ def agent(coral_dir: Path, aid: str):
                 commit=git(Path.cwd(), "rev-parse", "HEAD"),
                 round=number,
             )
-        cli("autoresearch.cli", "engineering", "finish")
+        from coral.hub.attempts import read_attempts
+        summary = root() / f"{aid}-final.json"
+        shas = [a.commit_hash for a in read_attempts(coral_dir)
+                if a.agent_id == aid and a.metadata.get("mode") == "engineering"]
+        summary.write_text(json.dumps({
+            "summary": "SIMULATED Engineer-authored result; no scientific measurement.",
+            "findings": ["Both scripted candidate results are recorded."],
+            "limitations": ["No training, real profiling or speedup validation."],
+            "attempt_shas": shas,
+        }))
+        cli("autoresearch.cli", "engineering", "finish", "--analysis-file", str(summary))
         event("finish_requested", agent=aid)
     wait_for(lambda: gate("stop").exists(), "Agent retirement")
 
@@ -686,7 +696,7 @@ def make_report(paths):
         "真实 Seed Root bootstrap、S0/A0 与固定提交快照",
         "两 Researcher 并行初始化、唯一 Node ID、真实 UDS/PID 认证与提交校验",
         "模拟 quality 通过/失败后自动 Analysis、完成、干净 Worktree 回收与槽位补位",
-        "Engineering 原子认领、独立 Worktree、两个候选、finish 后自动收尾",
+        "Engineering 原子认领、独立 Worktree、两个候选、Engineer 提交总结后由宿主发布收尾",
         "Memory 三不同 Research Node 门槛（含 N000）、两 Summary 发布与幂等跳过",
         "普通 Agent 无法 reconcile、写 Tree/Spec 或其他 Node Analysis",
         "所有测试进程收尾后按 PID 和启动时间核查无残留",

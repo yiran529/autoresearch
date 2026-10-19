@@ -178,7 +178,7 @@ class WorkflowStore:
         ]
         assignments.extend(
             WorkflowAssignment(agent_id, "engineering", worker.get("node_id"),
-                               "finalizing" if worker.get("finish_requested") else worker["status"])
+                               "finalizing" if worker.get("finish_requested") and worker.get("analysis_submission") else worker["status"])
             for agent_id, worker in sorted(state["engineering_workers"].items())
             if worker["status"] in {"reserved", "active"}
         )
@@ -471,6 +471,17 @@ class WorkflowStore:
                     raise WorkflowError("Engineering assignment is not active")
                 self._terminal_engineering_unlocked(agent_id, node_id)
                 self._validated_analysis_ref_unlocked(node_id, "engineering")
+                submission = worker.get("analysis_submission")
+                if not submission:
+                    raise WorkflowError("Engineering completion requires an Engineer-authored summary")
+                path = self.notes_root / "nodes" / node_id / f"engineering_analysis_v{submission['version']}.md"
+                current = resolve_evidence(node_id, "engineering", context=AnalysisContext(
+                    self.coral_dir, self.notes_root, self.island_id,
+                    tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
+                    self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent))
+                validate_analysis(submission["document"], current)
+                if load_document(path) != submission["document"]:
+                    raise WorkflowError("published Engineering Analysis differs from author submission")
                 claims = state["nodes"][node_id]["engineering_claims"]
                 match = [claim for claim in claims if claim["agent_id"] == agent_id]
                 if len(match) != 1 or match[0]["status"] != "active":
@@ -480,6 +491,11 @@ class WorkflowStore:
                 self._save_unlocked(state)
                 return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
             raise WorkflowError("assignment owner was not found")
+
+    def submit_engineering_analysis(self, agent_id: str, body: dict) -> dict[str, Any]:
+        from .engineering import submit
+
+        return submit(self, agent_id, body)
 
     def request_finish(self, agent_id: str, mode: str) -> dict[str, Any]:
         """Freeze an owned flow for asynchronous Analysis and completion."""
@@ -498,6 +514,8 @@ class WorkflowStore:
                 else:
                     self._terminal_engineering_unlocked(agent_id, item.node_id)
                     record = state["engineering_workers"][agent_id]
+                    if not record.get("analysis_submission"):
+                        raise WorkflowError("Engineering finish requires an Engineer-authored summary")
                 if not record.get("finish_requested"):
                     record["finish_requested"] = True
                     self._save_unlocked(state)
@@ -548,6 +566,12 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
     ):
         raise WorkflowError("Attempt owner is not the active Node assignment")
     _reject_finalizing(state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode"))
+    if canonical.get("mode") == "engineering" and context.get("budget_class", "real") == "real":
+        shas = {a.commit_hash for a in read_attempts(store.coral_dir, island_id=store.island_id)
+                if a.agent_id == context.get("agent_id") and a.metadata.get("node_id") == canonical.get("node_id")
+                and a.metadata.get("mode") == "engineering" and a.budget_class == "real"}
+        if len(shas) >= 2 and context.get("commit_hash") not in shas:
+            raise WorkflowError("Engineering allows at most two distinct formal candidates per claim")
     return {}
 
 
@@ -569,6 +593,8 @@ def authorize_artifact(kind: str, context: dict[str, Any]) -> dict[str, Any]:
     node_id = context.get("node_id")
     agent_id = context.get("agent_id")
     if kind == "analysis":
+        if context.get("mode") == "engineering":
+            raise WorkflowError("Engineering Analysis requires the trusted Engineering finish summary workflow")
         if not _owned_active(state, agent_id, node_id, context.get("mode")):
             raise WorkflowError("Artifact owner is not the active Node assignment")
         _reject_finalizing(state, agent_id, node_id, context.get("mode"))
@@ -635,6 +661,8 @@ def handle_workflow(
     if operation == "complete_assignment":
         return store.complete_assignment(owner, payload["mode"])
     if operation == "finish_assignment":
+        if payload["mode"] == "engineering" and "analysis" in payload:
+            return store.submit_engineering_analysis(owner, payload["analysis"])
         return store.request_finish(owner, payload["mode"])
     if operation == "cancel_assignment":
         return store.cancel_assignment(owner)

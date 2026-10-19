@@ -181,7 +181,9 @@ def _parser() -> argparse.ArgumentParser:
     claim = engineering_commands.add_parser("claim", help="atomically claim one Research Node")
     claim.add_argument("node_id")
     engineering_commands.add_parser("cancel", help="cancel an unbound Engineer assignment")
-    engineering_commands.add_parser("finish", help="end optimization and request automatic Analysis")
+    finish = engineering_commands.add_parser("finish", help="submit your final Engineering Analysis")
+    finish.add_argument("--analysis-file", type=Path, required=True,
+                        help="scratch JSON with summary, findings, limitations and all attempt_shas")
 
     refresh = commands.add_parser(
         "refresh-evaluation", help="rebuild and publish one Node evaluation"
@@ -243,10 +245,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif args.command == "engineering" and args.engineering_command == "cancel":
         result = request_trusted(_coral_dir(), "cancel_assignment", {})
     elif args.command == "engineering" and args.engineering_command == "finish":
-        result = request_trusted(_coral_dir(), "finish_assignment", {"mode": "engineering"})
+        from autoresearch.validation import load_document
+
+        result = request_trusted(_coral_dir(), "finish_assignment", {
+            "mode": "engineering", "analysis": load_document(args.analysis_file),
+        })
     elif args.command == "refresh-evaluation":
         result = _refresh_evaluation(args)
     elif args.command == "analyze":
+        if args.mode == "engineering":
+            raise SystemExit("Author the summary and use engineering finish --analysis-file; no independent Engineering Analyzer")
         from autoresearch.analysis import analyze
 
         analysis = analyze(args.node, args.mode, revise=args.revise)

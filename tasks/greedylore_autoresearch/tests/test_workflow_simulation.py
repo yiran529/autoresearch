@@ -61,6 +61,9 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
     assert report["quality_failed"] == ["N002"]
     assert report["engineering_attempts"] == 2
     assert report["engineering_completed"] == 1
+    timeline = [json.loads(line) for line in (root / "timeline.jsonl").read_text().splitlines()]
+    assert any(e.get("event") == "analyzer" and e.get("mode") == "research" for e in timeline)
+    assert not any(e.get("event") == "analyzer" and e.get("mode") == "engineering" for e in timeline)
     assert report["parallel_research_verified"] is True
     assert report["retired_worktrees"] is True
     assert report["memory_idempotent"] is True

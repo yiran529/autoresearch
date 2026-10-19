@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 from pathlib import Path
 
@@ -107,6 +108,14 @@ def _advance(store, runner, code_snapshotter, memory_launcher):
                     record = store._load_unlocked()["engineering_workers"][item.agent_id]
                     if not record.get("finish_requested"):
                         continue
+                    submission = record.get("analysis_submission")
+                if not submission:
+                    raise WorkflowError("Engineering requires an Engineer-authored summary; resume its owner to submit it")
+                _publisher(store, item)("analysis", json.dumps(submission["document"], sort_keys=True, ensure_ascii=False) + "\n",
+                                        {"node_id": item.node_id, "mode": "engineering", "version": submission["version"]})
+                store.complete_assignment(item.agent_id, item.role)
+                completed.append(item.agent_id)
+                continue
             # Research automatically freezes only after a non-retryable terminal Attempt.
             try:
                 store.request_finish(item.agent_id, item.role)
