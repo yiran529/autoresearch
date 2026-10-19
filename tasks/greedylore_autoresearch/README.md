@@ -36,3 +36,14 @@ For bounded verification, Memory can read public diagnostic records matching a p
 The host draws a mode once when reserving a Research assignment, using trusted `grader.args.p_explore` (initially `0.20`). It persists the result in private workflow state, sends it through the authenticated roster and generated Agent instructions, and records it in new Node Specs. Resumes, same-SHA retries and duplicate reconcile/initialize requests retain the original mode even if the configured probability changes. Pre-upgrade assignments missing a mode use `REFINE`; existing immutable Specs are not rewritten.
 
 `REFINE` starts from supported gaps or important unresolved mechanisms in published analyses. `EXPLORE` prioritizes another communication mechanism or a falsifiable cross-mechanism interaction that the current evaluation contract can fairly evaluate. It does not relax the contract or quality gate. Researcher cannot set the mode in `node initialize`, draw it locally, or use multiple code Parents. The host-assigned mode is part of assignment context, not an additional Research initialization field.
+
+
+## Prompt delivery audit
+
+`tests/test_workflow_simulation.py` runs normal and fault/recovery scenarios through the actual `CodexRuntime` launcher and the actual one-shot Analyzer/Memory launcher. A test-only `codex` executable records argv/stdin, then runs the scripted agents or supplies synthetic JSON. The host's random draws are fixed in the test handler to exercise both REFINE and EXPLORE. No live model or GPU workload is started.
+
+Every run writes `prompt_audit/*.json` alongside its `report.json`. Producer captures include their startup/resume text, generated `AGENTS.md`, exact role content and task resource snapshots. Analyzer/Memory captures include their final stdin, supplied Schema, staged evidence paths and identities. The tests verify mode pinning, resume arguments and instruction-file continuity, role/reference delivery, full code-snapshot hashes against the fixed Git commit, staged evidence hashes against the manifest (including parent Analysis), Memory Analysis hashes against published sources and trigger coverage and absence of independent Engineering Analyzer calls. `prompt_audit/CHECKS.md` is written only after the delivery assertions pass.
+
+The diagnostic-enabled Analyzer has an additional final-input test at the namespace/process boundary, checking the 3 × 600-second execution limit, separate 3600-second queue wait, fixed roots, writable scratch and JSON Schema. That test substitutes namespace/process execution, so it does not establish OS isolation or GPU execution.
+
+These checks establish application input delivery. Live Codex instruction loading, conversation persistence, model compliance and scientific effectiveness require separate live acceptance tests.

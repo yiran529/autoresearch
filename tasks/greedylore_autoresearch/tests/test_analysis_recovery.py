@@ -471,3 +471,73 @@ def test_fixed_snapshot_includes_only_referenced_parent_analysis(tmp_path):
     snapshot = _prepare_evidence_snapshot(evidence, context, tmp_path / 'scratch')
     assert (snapshot / 'notes/nodes/N000/research_analysis_v1.md').read_bytes() == parent.read_bytes()
     assert not (snapshot / 'notes/nodes/N000/unrelated-secret').exists()
+
+
+def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, monkeypatch):
+    import os
+    from autoresearch import diagnostic_session
+
+    context = _context(tmp_path)
+    context.attempts[0].commit_hash = 'a' * 40
+    captured = {}
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'empty-codex-home'))
+    monkeypatch.setattr(diagnostic_session.shutil, 'which', lambda name:
+                        '/usr/bin/true')
+    monkeypatch.setattr(diagnostic_session, 'settings', lambda _: {})
+    def record_sandbox(workspace, mounts, gpu_indices, argv, **kwargs):
+        captured['sandbox'] = {'workspace': str(workspace), 'mounts': [str(p) for p in mounts],
+                               'gpu_indices': gpu_indices, 'argv': argv, **kwargs}
+        return ['true', '--', 'true']
+
+    monkeypatch.setattr(diagnostic_session, 'build_sandbox', record_sandbox)
+
+    class InputRecorder:
+        pid = os.getpid()
+        returncode = 0
+
+        def __init__(self, command, **_kwargs):
+            self.command = command
+            captured['argv'] = command
+
+        def communicate(self, prompt):
+            captured['stdin'] = prompt
+            output = Path(self.command[self.command.index('--output-last-message') + 1])
+            output.write_text(json.dumps({
+                'summary': 'Input-delivery test only.',
+                'findings': ['No scientific measurement.'],
+                'limitations': ['No actual namespace or GPU execution.'],
+            }))
+            return '', ''
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', InputRecorder)
+    result = _analyze('N001', 'research', context=context, publisher=_publisher(context.notes_root),
+                      diagnostic_runner=diagnostic_session.run_diagnostic_codex)
+    prompt = captured['stdin']
+    role = (Path(__file__).resolve().parents[1] / 'prompts/research_analysis.md').read_text()
+    assert prompt.startswith(role)
+    assert 'at most 3 executions per analysis task' in prompt
+    assert 'at most 600 seconds per execution and 3600 seconds per queue wait' in prompt
+    assert '--timeout 600 --' in prompt
+    assert 'resolved relative to the workspace root' in prompt
+    sandbox = captured['sandbox']
+    workspace = Path(sandbox['workspace'])
+    expected_roots = [workspace / 'code', workspace / 'evidence',
+                      Path(__file__).resolve().parents[1] / 'references']
+    assert prompt.split('Fixed read roots:\n', 1)[1].splitlines() == [str(p) for p in expected_roots]
+    assert set(map(str, expected_roots)) <= set(sandbox['mounts'])
+    assert sandbox['gpu_indices'] == [] and sandbox['network'] is True
+    assert (workspace / 'code' / ('a' * 40) / 'SOURCE_SNAPSHOT').read_text() == 'a' * 40
+    assert (workspace / 'evidence/spec.md').read_bytes() == (context.notes_root / 'nodes/N001/spec.md').read_bytes()
+    assert (workspace / 'evidence/evaluation.md').read_bytes() == (context.notes_root / 'nodes/N001/evaluation.md').read_bytes()
+    command = captured['argv']
+    assert '--ephemeral' in command and 'resume' not in command
+    assert command[command.index('--sandbox') + 1] == 'workspace-write'
+    assert command[command.index('--cd') + 1].endswith('/workspace/results')
+    assert command[command.index('--add-dir') + 1].endswith('/workspace/experiments')
+    schema = json.loads(Path(command[command.index('--output-schema') + 1]).read_text())
+    assert set(schema['required']) == {'summary', 'findings', 'limitations'}
+    assert result.analysis_path.is_file()
+    (tmp_path / 'controlled-analyzer-input.json').write_text(json.dumps(captured, indent=2))

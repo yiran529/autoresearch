@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import yaml
 
-from coral.agent.runtime import AgentHandle
+from coral.agent.builtin.codex import CodexRuntime
 from coral.grader.task_grader import TaskGrader
 from coral.grader.trusted_worker import start_task_worker as _real_start_task_worker
 from coral.grader.trusted_writes import process_start_time
@@ -105,49 +105,17 @@ def cli(module: str, *args: str, check=True):
     return result
 
 
-class ScriptRuntime:
-    instruction_filename = "AGENTS.md"
-    shared_dir_name = ".claude"
+class ScriptRuntime(CodexRuntime):
+    """Use the real Codex launcher with an offline executable at its boundary."""
 
     def start(self, worktree_path, coral_md_path, log_dir=None, resume_session_id=None, **kwargs):
         aid = (worktree_path / ".coral_agent_id").read_text().strip()
-        sid = resume_session_id or f"simulation-{aid}"
-        coral_dir = Path((worktree_path / ".coral_dir").read_text().strip())
-        session = coral_dir / "public/sessions/scripted" / f"{sid}.jsonl"
-        session.parent.mkdir(parents=True, exist_ok=True)
-        if not session.exists():
-            session.write_text(json.dumps({"simulated": True, "session_id": sid}) + "\n")
-        log_path = log_dir / f"{aid}-simulation.log"
-        stream = log_path.open("a")
-        stream.write(json.dumps({"simulation_session": sid}) + "\n")
-        stream.flush()
-        process = subprocess.Popen(
-            [sys.executable, "-m", "simulation_support", "agent", str(coral_dir), aid],
-            cwd=worktree_path,
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        event(
-            "runtime_start",
-            agent=aid,
-            session=sid,
-            resume=resume_session_id,
-            worktree=str(worktree_path),
-            child_pid=process.pid,
-            child_start=process_start_time(process.pid),
-        )
-        return AgentHandle(aid, process, worktree_path, log_path, session_id=sid, _log_file=stream)
-
-    def extract_session_id(self, log_path):
-        for line in log_path.read_text().splitlines():
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if "simulation_session" in record:
-                return record["simulation_session"]
-        return None
+        handle = super().start(worktree_path, coral_md_path, log_dir=log_dir,
+                               resume_session_id=resume_session_id, **kwargs)
+        event("runtime_start", agent=aid, session=resume_session_id or f"simulation-{aid}",
+              resume=resume_session_id, worktree=str(worktree_path),
+              child_pid=handle.process.pid, child_start=process_start_time(handle.process.pid))
+        return handle
 
 
 class SyntheticGrader(TaskGrader):
@@ -200,49 +168,25 @@ class SyntheticGrader(TaskGrader):
         )
 
 
+
+def workflow_handler(operation, payload, context):
+    from itertools import cycle
+
+    from autoresearch.state import handle_workflow
+
+    # Fixed host draws exercise both modes without changing production policy.
+    with patch("autoresearch.state.random.random", side_effect=cycle((0.1, 0.8))):
+        return handle_workflow(operation, payload, context)
+
+
 def analysis_runner(prompt, read_roots, schema, scratch):
-    evidence_root = next(p for p in read_roots if (p / "spec.md").is_file())
-    code_root = next(p for p in read_roots if p.name == "code")
-    spec = yaml.safe_load((evidence_root / "spec.md").read_text())
-    node = spec["node_id"]
-    mode = "engineering" if '"mode": "engineering"' in prompt else "research"
-    event("analyzer", node=node, mode=mode, code_snapshots=[str(p) for p in code_root.iterdir()])
-    if (
-        os.environ["CORAL_SIM_SCENARIO"] == "faults"
-        and node == "N002"
-        and not gate("analyzer-failed").exists()
-    ):
-        gate("analyzer-failed").touch()
-        event("analyzer_failure", node=node)
-        raise RuntimeError("injected first Analyzer failure")
-    output = scratch / "synthetic-analysis.json"
-    output.write_text(
-        json.dumps(
-            {
-                "summary": f"SIMULATED {mode} result for {node}; no scientific measurement.",
-                "findings": ["Only workflow behavior was exercised."],
-                "limitations": [
-                    "No model reasoning, training, correctness, or efficiency validation."
-                ],
-            }
-        )
-    )
-    return output
+    from autoresearch.analysis import run_fresh_codex
+    return run_fresh_codex(prompt, read_roots, schema, scratch)
 
 
 def memory_runner(prompt, read_roots, schema, scratch):
-    from autoresearch.memory import list_analysis_refs
-
-    refs = list(list_analysis_refs(read_roots[0]))
-    event("memory_model", refs=refs)
-    summary = (
-        "---\n"
-        + yaml.safe_dump({"processed_analyses": refs})
-        + ("---\n# SIMULATED Summary\n\nWorkflow exercise only; no scientific conclusions.\n")
-    )
-    output = scratch / "synthetic-memory.json"
-    output.write_text(json.dumps({"research_summary": summary, "engineering_summary": summary}))
-    return output
+    from autoresearch.analysis import run_fresh_codex
+    return run_fresh_codex(prompt, read_roots, schema, scratch)
 
 
 
@@ -474,6 +418,7 @@ def prepare():
         timeout=30,
         private=["taskdata/eval_contract.yaml"],
     )
+    config["grader"]["args"]["trusted_workflow_handler"] = "simulation_support:workflow_handler"
     config["grader"]["args"]["trusted_workflow_worker"] = "simulation_support:run_finalization"
     config["grader"]["args"]["trusted_memory_worker"] = "simulation_support:run_memory"
     config["agents"].update(
@@ -672,8 +617,8 @@ def make_report(paths):
             aid for aid, w in state["engineering_workers"].items() if w["status"] == "reserved"
         ],
         "not_covered": [
-            "Real Codex and session files",
-            "Prompt compliance and target judgment",
+            "Live Codex model execution, instruction loading and model session persistence",
+            "Model compliance with the delivered prompts and scientific judgment",
             "Real quality/semantic/efficiency/GPU training",
             "SRT/OS permissions and network isolation",
             "Cold start_all and dependency installation",
@@ -753,7 +698,7 @@ def driver(output: Path, scenario: str):
     os.environ["CORAL_SIM_SCENARIO"] = scenario
     forbidden = output / "blocked-bin"
     forbidden.mkdir()
-    for name in ("codex", "torchrun", "nvidia-smi"):
+    for name in ("torchrun", "nvidia-smi"):
         command = forbidden / name
         command.write_text(
             "#!/bin/sh\nprintf '%s\\n' "
@@ -763,6 +708,9 @@ def driver(output: Path, scenario: str):
             + "\nexit 90\n"
         )
         command.chmod(0o755)
+    recorder = forbidden / "codex"
+    recorder.write_text(f"#!{sys.executable}\nfrom prompt_audit_support import main\nmain()\n")
+    recorder.chmod(0o755)
     os.environ["PATH"] = str(forbidden) + os.pathsep + os.environ["PATH"]
     config, paths = prepare()
     manager = AgentManager(config, config_dir=TASK)
