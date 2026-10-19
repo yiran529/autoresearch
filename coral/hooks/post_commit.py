@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from coral.config import CoralConfig
+from coral.grader.timeouts import default_eval_wait
 from coral.hub.attempts import (
     agent_in_grader_queue,
     count_agent_pending,
@@ -248,9 +249,7 @@ def submit_eval(
     # Block until grader daemon finalizes. We give it plenty of slack above the
     # grader's own per-eval timeout so the daemon has room to finish + write back.
     if poll_timeout is None:
-        grader_timeout = config.grader.timeout if config.grader.timeout > 0 else 0
-        # 2x the grader budget + 60s slack, with a floor of 300s for fast graders.
-        poll_timeout = max(grader_timeout * 2 + 60, 300) if grader_timeout else 3600
+        poll_timeout = default_eval_wait(config)
 
     final = _poll_until_graded(coral_dir, commit_hash, poll_timeout, island_id=island_id)
 

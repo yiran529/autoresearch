@@ -704,3 +704,31 @@ def test_submit_eval_trusted_mode_delegates_formal_write(tmp_path, monkeypatch):
     assert captured["operation"] == "submit_attempt"
     assert captured["payload"]["commit_hash"] == _head_hash(repo)
     assert captured["payload"]["budget_class"] == "real"
+
+
+@pytest.mark.parametrize('gpu_wait,ready_after', [(0, 2400), (86400, 90000)])
+def test_submit_wait_survives_long_gpu_queue(tmp_path, monkeypatch, gpu_wait, ready_after):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from coral.hooks import post_commit
+    from coral.hub.attempts import read_attempt
+
+    repo = _setup_repo_with_config(tmp_path)
+    config_path = repo / '.coral/config.yaml'
+    config = yaml.safe_load(config_path.read_text())
+    config['grader'].update(timeout=30, args={'gpu_wait_timeout_seconds': gpu_wait})
+    config_path.write_text(yaml.safe_dump(config))
+    (repo / 'hello.py').write_text("print('candidate')\n")
+    clock = [0.0]
+
+    def read(coral_dir, commit_hash, *, island_id=None):
+        attempt = read_attempt(coral_dir, commit_hash, island_id=island_id)
+        if clock[0] >= ready_after:
+            return replace(attempt, status='improved', score=0.75)
+        return attempt
+
+    monkeypatch.setattr(post_commit, 'time', SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda _: clock.__setitem__(0, clock[0] + 600)))
+    monkeypatch.setattr(post_commit, 'read_attempt', read)
+    assert submit_eval('candidate', 'agent-0', str(repo)).status == 'improved'

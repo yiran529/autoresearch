@@ -12,6 +12,7 @@ from pathlib import Path
 
 from autoresearch.client import request_trusted
 from autoresearch.evaluation import refresh_node_evaluation
+from coral.grader.timeouts import DIAGNOSTIC_CLIENT_TIMEOUT, DIAGNOSTIC_EXECUTION_TIMEOUT
 from coral.hub._island import island_root
 from coral.hub.attempts import read_attempts
 from coral.workspace.breadcrumbs import (
@@ -144,7 +145,7 @@ def _parser() -> argparse.ArgumentParser:
     diagnostic_commands = diagnostic.add_subparsers(dest="diagnostic_command", required=True)
     diagnostic_run = diagnostic_commands.add_parser("run")
     diagnostic_run.add_argument("--gpus", type=int, default=1)
-    diagnostic_run.add_argument("--timeout", type=float, default=300)
+    diagnostic_run.add_argument("--timeout", type=float, default=DIAGNOSTIC_EXECUTION_TIMEOUT)
     diagnostic_run.add_argument("--request-id", default=None, help="reuse this ID after a channel timeout")
     diagnostic_run.add_argument("argv", nargs=argparse.REMAINDER)
 
@@ -208,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         payload = {"request_id": args.request_id or uuid.uuid4().hex,
                    "argv": argv, "gpus": args.gpus, "timeout": args.timeout}
         _validate_request(payload)
-        result = request_trusted(Path(run), "run_diagnostic", payload, timeout=660)
+        result = request_trusted(Path(run), "run_diagnostic", payload, timeout=DIAGNOSTIC_CLIENT_TIMEOUT)
     elif args.command == "retry":
         result = request_trusted(_coral_dir(), "retry_attempt", {"commit_hash": args.commit_hash})
     elif args.command == "bootstrap-root-analysis":

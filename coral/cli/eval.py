@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from coral.cli._helpers import find_coral_dir_and_island, read_agent_id
+from coral.grader.timeouts import default_eval_wait
 
 # Poll cadence used by `coral wait` while blocking on the attempt file.
 _WAIT_POLL_INTERVAL_SEC = 0.2
@@ -148,8 +149,7 @@ def cmd_wait(args: argparse.Namespace) -> None:
     if timeout is None:
         try:
             config = CoralConfig.from_yaml(coral_dir / "config.yaml")
-            grader_timeout = config.grader.timeout if config.grader.timeout > 0 else 0
-            timeout = max(grader_timeout * 2 + 60, 300) if grader_timeout else 3600
+            timeout = default_eval_wait(config)
         except Exception:
             timeout = 3600
 

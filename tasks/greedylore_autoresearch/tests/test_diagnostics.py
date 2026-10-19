@@ -52,7 +52,7 @@ def test_duplicate_requests_execute_once(task):
 
 
 @pytest.mark.parametrize('changes', [
-    {'gpus': 0}, {'gpus': 5}, {'gpus': True}, {'timeout': 301},
+    {'gpus': 0}, {'gpus': 5}, {'gpus': True}, {'timeout': 601},
     {'timeout': 0}, {'timeout': float('nan')}, {'argv': []}, {'argv': 'python a.py'},
     {'argv': ['python', '\x00']}, {'workspace': '/tmp/other'}, {'request_id': '../escape'},
 ])
@@ -271,10 +271,11 @@ def test_cli_diagnostic_preserves_argv_and_returns_record(task, monkeypatch, cap
     def channel(coral_dir, operation, payload, **kwargs):
         assert operation == 'run_diagnostic'
         assert payload['argv'] == ['python', 'experiments/probe.py', '--output', 'results/my result.json']
-        assert kwargs['timeout'] >= 600
+        assert kwargs['timeout'] >= 4800
+        assert payload['timeout'] == 600
         return task.run(payload, os.getpid(), execute)
     monkeypatch.setattr(cli, 'request_trusted', channel)
-    cli.main(['diagnostic', 'run', '--gpus', '4', '--timeout', '300', '--',
+    cli.main(['diagnostic', 'run', '--gpus', '4', '--',
               'python', 'experiments/probe.py', '--output', 'results/my result.json'])
     assert json.loads(capsys.readouterr().out)['status'] == 'completed'
 
@@ -312,6 +313,7 @@ def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
             pass
     monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/unused/bwrap')
     def reserve(*_args, **kwargs):
+        assert kwargs['wait_timeout'] >= 3600
         assert kwargs['source_role'] == 'analyzer'
         assert kwargs['execution_group'] == str(task.coral_dir)
         assert kwargs['execution_limit'] == 1
@@ -476,3 +478,7 @@ def test_configured_handler_runs_in_validator_process_without_gpu(task, monkeypa
     assert result['started'] is False
     assert task.read()['executions'] == 0
     assert (task.records / 'request-1/record.json').is_file()
+
+
+def test_ten_minute_diagnostic_is_accepted(task):
+    assert task.run(request(timeout=600), os.getpid(), execute)["status"] == "completed"

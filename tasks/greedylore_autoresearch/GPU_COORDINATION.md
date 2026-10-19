@@ -104,3 +104,12 @@ Timing 允许的计算进程必须属于本次创建的进程组/session，不�
 - 各命令的 `process.json` 和 stdout/stderr：包括监测/取消导致的 `infra_failure`。
 
 同 SHA infra failure 继续使用既有 retry 流程。Quality 完成后等待 timing 不会在同一存活 worker 内重跑 quality；worker 退出后的 retry 仍重新执行，不新增跨 worker checkpoint。
+
+
+## Agent 与诊断等待预算
+
+受控诊断每份 Analysis 最多执行三次，每次 GPU 执行最多 600 秒；取得卡前最多排队 3600 秒，排队不消耗执行时间。诊断宿主 worker 上限为 4500 秒，客户端等待为 4800 秒，包含清理与返回余量。客户端中断后沿用原 request ID 查询，不能自动重跑同一诊断。
+
+普通可信调用的宿主／客户端默认等待为 3600／3660 秒。`coral eval` 与 `coral wait` 默认至少等待一小时，并额外覆盖配置中的两次 GPU 排队（quality、timing）；显式 `--timeout` 仍优先。本任务保留每阶段 86400 秒的 GPU 等待，默认客户端预算和 pending 看门狗豁免为 176400 秒。Agent 静默看门狗默认 3600 秒。已存在的 run 使用保存的配置，升级后需同步对应设置并重启；这些配置不会热更新。
+
+单次诊断执行预算、客户端等待和 GPU 排队是不同限制。长等待不改变正式训练、质量门槛、正式候选数量、基础设施重试计数或 GPU 资源公平性。

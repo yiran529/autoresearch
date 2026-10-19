@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from coral.grader.timeouts import TRUSTED_WORKER_TIMEOUT
 from coral.workspace.grader_env import grader_python_path
 
 _WORKER = r"""
@@ -36,7 +37,7 @@ def invoke_task_validator(
     coral_dir: str | Path,
     entrypoint: str,
     *args: Any,
-    timeout: float = 60.0,
+    timeout: float = TRUSTED_WORKER_TIMEOUT,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Call one configured function in the already-created grader venv."""

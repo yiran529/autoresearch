@@ -260,10 +260,9 @@ class AgentConfig:
     # the underlying CLI run until it exits naturally.
     max_turns: int = 0
     # Stall watchdog: restart an agent that produces no output for this many
-    # seconds. 0 disables the watchdog. Default 1200s (20 min) catches deadlocks
-    # faster than the prior 3600s while still being well above legitimate quiet
-    # periods (long tool calls, grader queue waits — the latter is exempted).
-    timeout: int = 1200
+    # seconds. 0 disables the watchdog. Allow an hour for long tool calls;
+    # pending grader work is separately exempted up to grader_pending_max_age.
+    timeout: int = 3600
     heartbeat_enabled: bool = True
     heartbeat: list[HeartbeatActionConfig] = field(
         default_factory=lambda: [
@@ -290,7 +289,7 @@ class AgentConfig:
     # Reliability: grader-queue exemption for stall detection.
     # Skip stall checks for an agent whose latest attempt is pending grading,
     # but only if the grader process is alive and the pending attempt is not stale.
-    grader_pending_max_age: int = 1800  # seconds; older pending attempts no longer exempt
+    grader_pending_max_age: int = 3600  # seconds; older pending attempts no longer exempt
 
     # Reliability: minimum runtime in seconds before an exit_code==0 is considered "clean"
     # for runtimes that lack a stable terminal marker (codex/opencode/kiro).

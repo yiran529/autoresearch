@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -229,6 +230,11 @@ class WorkflowStore:
             raise WorkflowError("workflow capacities must be non-negative integers")
         with trusted_writes_lock(self.coral_dir):
             self._verify_root()
+            toolkit = self.notes_root / "toolkit"
+            toolkit.mkdir(parents=True, exist_ok=True)
+            task_root = Path(__file__).resolve().parents[3]
+            shutil.copyfile(task_root / "roles/workflow_rules.md", toolkit / "workflow_rules.md")
+            shutil.copytree(task_root / "references", toolkit / "references", dirs_exist_ok=True)
             state = self._load_unlocked()
             live_research = sum(
                 record["research"]["status"] in {"reserved", "active"}

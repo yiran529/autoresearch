@@ -736,3 +736,12 @@ def test_completed_research_owner_loses_attempt_and_analysis_rights(root_run):
     assert result["status"] == "completed"
     assert store.complete_assignment(reservation.agent_id, "research") == result
     assert not store.is_engineering_eligible(reservation.node_id)
+
+
+def test_reconcile_provides_public_task_toolkit(root_run):
+    _store(root_run).reconcile(1, 0)
+    toolkit = root_run / 'public/notes/toolkit'
+    assert (toolkit / 'workflow_rules.md').is_file()
+    assert (toolkit / 'references/initial_diagnostics.md').is_file()
+    assert (toolkit / 'references/low_rank.md').is_file()
+    assert not (toolkit / 'taskdata').exists()

@@ -453,3 +453,21 @@ def test_evidence_rejects_spec_for_another_node(tmp_path):
 
     with pytest.raises(ValueError, match="spec"):
         resolve_evidence("N001", "research", context=context)
+
+
+def test_fixed_snapshot_includes_only_referenced_parent_analysis(tmp_path):
+    from autoresearch.analysis import _prepare_evidence_snapshot
+
+    context = _context(tmp_path)
+    spec_path = context.notes_root / 'nodes/N001/spec.md'
+    spec = yaml.safe_load(spec_path.read_text())
+    spec['analysis_refs']['parent_research'] = 'nodes/N000/research_analysis_v1.md'
+    spec_path.write_text(yaml.safe_dump(spec))
+    parent = context.notes_root / 'nodes/N000/research_analysis_v1.md'
+    parent.parent.mkdir()
+    parent.write_text('{"summary":"Parent evidence"}')
+    (parent.parent / 'unrelated-secret').write_text('not staged')
+    evidence = resolve_evidence('N001', 'research', context=context)
+    snapshot = _prepare_evidence_snapshot(evidence, context, tmp_path / 'scratch')
+    assert (snapshot / 'notes/nodes/N000/research_analysis_v1.md').read_bytes() == parent.read_bytes()
+    assert not (snapshot / 'notes/nodes/N000/unrelated-secret').exists()

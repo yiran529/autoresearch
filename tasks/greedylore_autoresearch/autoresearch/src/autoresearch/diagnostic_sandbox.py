@@ -14,6 +14,8 @@ from pathlib import Path
 
 import yaml
 
+from coral.grader.timeouts import DIAGNOSTIC_QUEUE_TIMEOUT
+
 
 def reserve_idle_gpus(*args, **kwargs):
     # Only the host diagnostic executor has the grader package installed.
@@ -212,7 +214,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
         execution_limit = config.get('grader', {}).get('parallel', {}).get('max_workers', 1)
         reservation = reserve_idle_gpus(
             payload['gpus'], runtime.get('gpu_lock_dir') or default_lock_dir(),
-            IdleGpuPolicy(0, 512, 5), wait_timeout=300, poll_interval=5,
+            IdleGpuPolicy(0, 512, 5), wait_timeout=DIAGNOSTIC_QUEUE_TIMEOUT, poll_interval=5,
             check_cancelled=cancelled,
             source_role='analyzer', execution_group=str(task.coral_dir.resolve()),
             execution_limit=execution_limit,

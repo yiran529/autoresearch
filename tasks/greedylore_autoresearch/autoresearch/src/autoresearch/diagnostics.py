@@ -10,6 +10,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from coral.grader.timeouts import DIAGNOSTIC_EXECUTION_TIMEOUT
 from coral.grader.trusted_writes import (
     TrustedWriteError,
     _atomic_json,
@@ -53,8 +54,8 @@ def _validate_request(payload: dict) -> None:
         raise ValueError('diagnostic requires 1–4 GPUs')
     timeout = payload['timeout']
     if (type(timeout) not in (int, float) or not math.isfinite(timeout)
-            or not 0 < timeout <= 300):
-        raise ValueError('diagnostic timeout must be within 300 seconds')
+            or not 0 < timeout <= DIAGNOSTIC_EXECUTION_TIMEOUT):
+        raise ValueError(f'diagnostic timeout must be within {DIAGNOSTIC_EXECUTION_TIMEOUT} seconds')
 
 
 class DiagnosticTask:

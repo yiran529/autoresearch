@@ -15,7 +15,7 @@ def main():
     parser.add_argument('command', choices=['diagnostic'])
     parser.add_argument('action', choices=['run'])
     parser.add_argument('--gpus', type=int, default=1)
-    parser.add_argument('--timeout', type=float, default=300)
+    parser.add_argument('--timeout', type=float, default=600)
     parser.add_argument('--request-id', default=None)
     arguments = sys.argv[1:]
     if '--' not in arguments:
@@ -33,7 +33,7 @@ def main():
     deadline = time.monotonic() + 2
     while True:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(660)
+            client.settimeout(4800)
             client.connect(os.path.join(os.environ['CORAL_DIAGNOSTIC_RUN'], 'public/trusted.sock'))
             client.sendall(message)
             response = bytearray()

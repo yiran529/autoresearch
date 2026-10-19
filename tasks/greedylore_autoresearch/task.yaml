@@ -45,6 +45,9 @@ grader:
 agents:
   runtime: codex
   heartbeat_enabled: false
+  timeout: 3600
+  # Two formal GPU queues (24h each), plus the client execution allowance.
+  grader_pending_max_age: 176400
   dynamic:
     enabled: true
     max_researchers: 2

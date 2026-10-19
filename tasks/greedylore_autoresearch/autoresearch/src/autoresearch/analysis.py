@@ -171,6 +171,14 @@ def _manifest_hash(manifest: dict[str, Any]) -> str:
 
 
 def _reference_path(reference: str, context: AnalysisContext) -> Path:
+    if reference.startswith("notes/"):
+        relative = reference.removeprefix("notes/")
+        if not re.fullmatch(r"nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.md", relative):
+            raise ArtifactValidationError("invalid historical Analysis reference")
+        target = context.notes_root / relative
+        if target.is_symlink() or not target.resolve().is_relative_to(context.notes_root.resolve()):
+            raise ArtifactValidationError("historical Analysis escapes public notes")
+        return target
     prefix = "eval_logs/"
     relative = reference[len(prefix) :] if reference.startswith(prefix) else reference
     return context.log_root / relative
@@ -257,6 +265,13 @@ def resolve_evidence(
     engineering_evidence = tuple(_attempt_evidence(item) for item in engineering)
     research_evidence = _attempt_evidence(research_attempt)
     raw_references = set(research_evidence.eval_refs)
+    for reference in spec.get("analysis_refs", {}).values():
+        if reference is not None:
+            if not isinstance(reference, str) or not re.fullmatch(
+                r"nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.md", reference
+            ):
+                raise ArtifactValidationError("invalid historical Analysis reference")
+            raw_references.add(f"notes/{reference}")
     for item in engineering_evidence:
         raw_references.update(item.eval_refs)
     evidence_paths = {
@@ -600,10 +615,10 @@ def analyze(
                 remaining = max(0, 3 - task.read()['executions'])
                 guidance = (
                     "\nControlled diagnostics are enabled: at most 3 executions per analysis task; "
-                    f"{remaining} remaining. Request 1–4 GPUs as needed, at most 300 seconds "
-                    "per execution and 300 seconds per queue wait. Write scripts in experiments/ "
+                    f"{remaining} remaining. Request 1–4 GPUs as needed, at most 600 seconds "
+                    "per execution and 3600 seconds per queue wait. Write scripts in experiments/ "
                     "and outputs in results/. Run only through the authoritative entrypoint:\n"
-                    "autoresearch diagnostic run --gpus 4 --timeout 300 -- "
+                    "autoresearch diagnostic run --gpus 4 --timeout 600 -- "
                     "python experiments/probe.py --output results/probe.json\n"
                     "Use diagnostics only when key evidence is missing and a bounded experiment "
                     "can distinguish leading explanations; do not repeat sufficient existing tests. "

@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from coral.grader.timeouts import DIAGNOSTIC_WORKER_TIMEOUT, TRUSTED_CLIENT_TIMEOUT
 from coral.hub._island import island_root
 from coral.hub.attempts import read_attempt, read_attempts, write_attempt
 from coral.hub.checkpoint import checkpoint
@@ -537,7 +538,7 @@ class TrustedWriteService:
 
             return invoke_task_validator(
                 self.coral_dir, self._validator_entrypoint("trusted_diagnostic_handler"),
-                payload, context, timeout=650,
+                payload, context, timeout=DIAGNOSTIC_WORKER_TIMEOUT,
             )
         if operation == "reconcile_workflow":
             if peer_pid != os.getppid():
@@ -1091,7 +1092,7 @@ def request_trusted(
     operation: str,
     payload: dict[str, Any],
     *,
-    timeout: float = 30.0,
+    timeout: float = TRUSTED_CLIENT_TIMEOUT,
     startup_retry_window: float = 1.0,
 ) -> dict[str, Any]:
     """Send one bounded request to this run's fixed trusted socket.
