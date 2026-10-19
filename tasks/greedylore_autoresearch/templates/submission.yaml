@@ -12,7 +12,7 @@ analysis_refs:
 # Record S0 and A0 separately; Bootstrap must not change the algorithm implementation.
 # One distinct formal Research SHA per Node; infrastructure retries use exactly the same SHA.
 change_summary: "<Code changes; Research identifies this Node's unique algorithm implementation.>"
-selection_rationale: "<1–3 sentences: why this Parent/Node and base commit; especially important for Engineering.>"
+selection_rationale: "<1–3 sentences: why this Parent/base commit for Research, or optimization focus for the host-bound Engineering Node.>"
 
 # Soft semantic evidence, not a strict equivalence proof from the grader.
 semantic_self_check:

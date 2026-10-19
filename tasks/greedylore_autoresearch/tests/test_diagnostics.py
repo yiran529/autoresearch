@@ -120,7 +120,7 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
 
     from autoresearch import diagnostic_session
     config = {'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'medium',
-              'analyzer_allow_unix_sockets': allow_unix}
+              'analyzer_allow_unix_sockets': allow_unix, 'analyzer_timeout_seconds': 17}
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:9999')
     monkeypatch.setenv('no_proxy', 'localhost,127.0.0.1')
     monkeypatch.setenv('UNRELATED_SECRET', 'must not reach the model')
@@ -145,7 +145,8 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             assert kwargs['env']['no_proxy'] == 'localhost,127.0.0.1'
             assert 'UNRELATED_SECRET' not in kwargs['env']
 
-        def communicate(self, prompt):
+        def communicate(self, prompt, timeout=None):
+            assert 0 < timeout <= 17
             # The diagnostic child needs the same selected code/evidence as Codex.
             assert str(code_root) in task.read()['runtime']['readonly_paths']
             command = self.command
@@ -167,10 +168,21 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
         def poll(self):
             return 0
 
+    monkeypatch.setattr('coral.grader.trusted_worker.register_workflow_model', lambda *_, **__: None)
+    monkeypatch.setattr('coral.grader.trusted_worker.stop_workflow_model', lambda *_, **__: None)
     monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', Process)
     output = diagnostic_session.run_diagnostic_codex('analyze', [code_root], schema, task.workspace, task)
     assert output.read_text() == '{}'
     assert task.read()['process'] is None
+
+
+@pytest.mark.parametrize('value', [None, True, 0, -1, float('nan'), float('inf'), '17'])
+def test_analyzer_timeout_rejects_unbounded_or_invalid_configuration(tmp_path, monkeypatch, value):
+    from autoresearch import diagnostic_session
+
+    monkeypatch.setattr(diagnostic_session, 'settings', lambda _: {'analyzer_timeout_seconds': value})
+    with pytest.raises(ValueError, match='finite positive'):
+        diagnostic_session.analyzer_timeout(tmp_path)
 
 
 def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task):

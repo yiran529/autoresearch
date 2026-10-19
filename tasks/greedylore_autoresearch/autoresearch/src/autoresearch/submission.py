@@ -212,11 +212,15 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
         if (
             len(matches) != 1
             or matches[0].get("commit_hash") != anchor
-            or matches[0].get("status") in {"pending", "crashed", "timeout"}
+            or matches[0].get("status") == "pending"
+            or (matches[0].get("status") in {"crashed", "timeout"}
+                and matches[0].get("metadata", {}).get("failure_class") == "infra"
+                and int(matches[0].get("metadata", {}).get("infra_retry_count", 0))
+                < int(matches[0].get("metadata", {}).get("max_infra_retries", 0)))
         ):
             raise SubmissionError("quality_anchor is not the unique terminal Research SHA")
 
-    if node_type == "seed":
+    if node_type == "seed" and mode == "research":
         changed = _git(repo, "diff", "--name-only", base, commit_hash).splitlines()
         if changed != ["submission.yaml"]:
             raise SubmissionError("Root diff may only add submission.yaml")

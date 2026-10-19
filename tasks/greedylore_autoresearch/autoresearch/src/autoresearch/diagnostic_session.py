@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import yaml
@@ -25,6 +27,13 @@ def settings(coral_dir: Path) -> dict:
     return config.get('grader', {}).get('args', {})
 
 
+def analyzer_timeout(coral_dir: Path) -> float:
+    value = settings(coral_dir).get('analyzer_timeout_seconds', 18000)
+    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+        raise ValueError('analyzer_timeout_seconds must be a finite positive number')
+    return float(value)
+
+
 def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     """Only explicit runtime inputs and the trusted socket cross the namespace."""
     if not shutil.which('bwrap'):
@@ -33,11 +42,15 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     if not binary:
         raise RuntimeError('Codex executable is unavailable')
     config = settings(task.coral_dir)
+    deadline = time.monotonic() + analyzer_timeout(task.coral_dir)
+
+    def remaining():
+        return max(0, deadline - time.monotonic())
     runtime_roots = [Path(path).absolute() for path in config.get('diagnostic_runtime_roots', [])]
     # Runtime dependencies are opt-in trusted configuration, never model-supplied.
     # No private grader venv or credentials are included in experiment mounts.
     runtime_path = config.get('diagnostic_path', '/usr/local/bin:/usr/bin:/bin')
-    with task.locked():
+    with task.locked(timeout=min(5, remaining())):
         state = task.read()
         checkpoint_paths = state.get('checkpoint_paths', [])
         state['runtime'] = {'readonly_paths': [str(path) for path in [*runtime_roots, *read_roots]],
@@ -105,10 +118,22 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                     'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
             if key in os.environ:
                 environment[key] = os.environ[key]
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True, env=environment)
+        from coral.grader.trusted_worker import (
+            prepare_workflow_model,
+            register_workflow_model,
+            stop_workflow_model,
+            workflow_model_environment,
+        )
+
+        environment = workflow_model_environment(environment)
+        registry = prepare_workflow_model(environment)
+        process = None
         try:
-            task.bind(process.pid)
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, text=True, env=environment,
+                                       start_new_session=True)
+            register_workflow_model(process, token=environment['CORAL_WORKFLOW_PROCESS_TOKEN'])
+            task.bind(process.pid, timeout=min(5, remaining()))
             location = (
                 f'\nWorkspace root: {task.workspace}\n'
                 f'Your initial working directory is {task.workspace / "results"}. '
@@ -118,7 +143,8 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                 'not this initial working directory. Do not change code/ or evidence/.\n'
                 'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
             )
-            _stdout, stderr = process.communicate(prompt + location)
+            _stdout, stderr = process.communicate(prompt + location,
+                                                  timeout=remaining())
             atomic_write_text(task.private / 'session.stdout.log', _stdout)
             atomic_write_text(task.private / 'session.stderr.log', stderr)
             if process.returncode:
@@ -127,7 +153,8 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                 raise RuntimeError('Analyzer did not produce its output document')
             return output
         finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-            task.close()
+            if process is not None:
+                stop_workflow_model(process, token=environment['CORAL_WORKFLOW_PROCESS_TOKEN'])
+            task.close(timeout=min(5, remaining()))
+            if registry is not None:
+                registry.unlink(missing_ok=True)

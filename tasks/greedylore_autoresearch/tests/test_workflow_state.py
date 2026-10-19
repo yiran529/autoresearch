@@ -36,7 +36,7 @@ def _root_attempt() -> Attempt:
             "node_id": "N000",
             "contract_hash": "fixed-contract",
             "submission_hash": "c" * 64,
-            "scores": {"quality_gate": {"value": 1.0, "name": "quality_gate"}},
+            "scores": {"quality_gate": {"value": 0.0, "name": "quality_gate"}},
             "grader_runs": [],
         },
     )
@@ -148,12 +148,10 @@ def test_lost_reconcile_response_returns_existing_reservation(root_run):
     assert _state(root_run)["revision"] >= 1
 
 
-def test_missing_root_analysis_is_actionable_and_does_not_allocate(root_run):
+def test_missing_root_analysis_waits_without_allocating_children(root_run):
     (root_run / "public/notes/nodes/N000/research_analysis_v1.md").unlink()
-    with pytest.raises(ValueError, match="Root Analysis bootstrap"):
-        _store(root_run).reconcile(2, 1)
-
-    assert not (root_run / "private/autoresearch_state.json").exists()
+    assert _store(root_run).reconcile(2, 1) == ()
+    assert set(_state(root_run)["nodes"]) == {"N000"}
 
 
 def test_host_root_analysis_bootstrap_unblocks_first_child(root_run, tmp_path):
@@ -251,6 +249,13 @@ def engineering_ready(root_run: Path, tmp_path: Path) -> tuple[Path, Path, str]:
             "scores": {"quality_gate": {"value": 1.0, "name": "quality_gate"}},
         },
     ))
+    node = root_run / "public/notes/nodes/N001"
+    node.mkdir(parents=True, exist_ok=True)
+    (node / "spec.md").write_text(yaml.safe_dump({
+        "node_id": "N001", "parent_node": "N000", "parent_commit": ROOT_SHA,
+        "base_commit": ROOT_SHA,
+        "analysis_refs": {"parent_research": "nodes/N000/research_analysis_v1.md", "parent_engineering": None},
+    }))
     return root_run, repo, commit
 
 
@@ -276,21 +281,13 @@ def test_two_engineers_cannot_claim_the_same_node(engineering_ready):
     assert len(state["nodes"]["N001"]["engineering_claims"]) == 1
 
 
-def test_unbound_engineer_cancels_only_when_no_eligible_target(engineering_ready):
+def test_bound_engineer_cannot_cancel_required_work(engineering_ready):
     coral_dir, repo, _ = engineering_ready
     store = _store(coral_dir, repo)
     first = store.reconcile(0, 1)[0]
-    assert first.agent_id == "engineer-E0001"
-    with pytest.raises(ValueError, match="eligible"):
+    with pytest.raises(ValueError, match="cannot be cancelled"):
         store.cancel_assignment(first.agent_id)
-    state = _state(coral_dir)
-    state["nodes"]["N001"]["engineering_claims"].append({
-        "agent_id": "engineer-E0000", "status": "active", "research_sha": "a" * 40,
-    })
-    store.state_path.write_text(json.dumps(state))
-    store.cancel_assignment(first.agent_id)
-    assert store.reconcile(0, 1) == ()
-    assert _state(coral_dir)["next_engineer_seq"] == 2
+    assert store.reconcile(0, 1) == (first,)
 
 
 def test_claimed_engineer_does_not_block_new_eligible_target(engineering_ready):
@@ -319,6 +316,11 @@ def test_claimed_engineer_does_not_block_new_eligible_target(engineering_ready):
         timestamp="2026-01-03T00:00:00+00:00",
         metadata={"mode": "research", "node_id": "N002", "scores": {"quality_gate": {"value": 1.0}}},
     ))
+    node = coral_dir / "public/notes/nodes/N002"
+    node.mkdir(parents=True)
+    spec = yaml.safe_load((coral_dir / "public/notes/nodes/N001/spec.md").read_text())
+    spec["node_id"] = "N002"
+    (node / "spec.md").write_text(yaml.safe_dump(spec))
     assignments = store.reconcile(0, 2)
     assert {item.agent_id for item in assignments} == {"engineer-E0001", "engineer-E0002"}
 
@@ -363,6 +365,18 @@ def _research_request() -> dict[str, str]:
         "risk": "Slower convergence.",
         "falsification_criteria": "Quality gate fails.",
     }
+
+
+def _publish_analysis(coral_dir, node_id):
+    context = AnalysisContext(
+        coral_dir=coral_dir, notes_root=coral_dir / "public/notes", island_id=None,
+        attempts=tuple(read_attempts(coral_dir)), log_root=coral_dir / "public/eval_logs",
+        checkout_root=coral_dir.parent,
+    )
+    document = seal_document({"summary": "Recorded.", "findings": ["Evidence."],
+                              "limitations": ["Simulation."]},
+                             resolve_evidence(node_id, "research", context=context))
+    (coral_dir / f"public/notes/nodes/{node_id}/research_analysis_v1.md").write_text(json.dumps(document))
 
 
 def test_initialize_requires_reserved_owner_and_is_idempotent(root_run):
@@ -445,8 +459,8 @@ def test_scheduler_finishes_research_without_agent_analyze_or_complete(root_run)
     store, item = _active_research(root_run)
     _publish_research_evidence(root_run, item.node_id, quality=0.0)
     # Reusing a valid immutable Analysis must not start Codex again.
-    result = run_worker(str(root_run), runner=lambda *_: pytest.fail("unexpected Codex"))
-    assert result["completed"] == [item.agent_id]
+    run_worker(str(root_run), runner=lambda *_: pytest.fail("unexpected Codex"))
+    assert store.is_node_completed(item.node_id)
     assert _state(root_run)["nodes"][item.node_id]["research"]["status"] == "completed"
     assert store.reconcile(1, 0)[0].node_id == "N002"
 
@@ -491,15 +505,16 @@ def test_scheduler_retries_failed_analyzer_and_blocks_agent_mutations(root_run):
     result = run_worker(str(root_run), runner=fail, code_snapshotter=snapshot)
     assert item.agent_id in result["errors"]
     research = _state(root_run)["nodes"][item.node_id]["research"]
-    assert research["status"] == "active" and research["finish_requested"]
+    assert research["status"] == "completed" and research["finish_requested"]
     context = {"coral_dir": str(root_run), "agent_id": item.agent_id,
                "node_id": item.node_id, "mode": "research"}
-    with pytest.raises(ValueError, match="finaliz"):
+    with pytest.raises(ValueError, match="owner"):
         authorize_attempt({"node_id": item.node_id, "mode": "research"}, context)
-    with pytest.raises(ValueError, match="finaliz"):
+    with pytest.raises(ValueError, match="owner"):
         authorize_artifact("analysis", context)
     path.write_text(valid)
-    assert run_worker(str(root_run))["completed"] == [item.agent_id]
+    run_worker(str(root_run))
+    assert _store(root_run).is_node_completed(item.node_id)
 
 
 def test_finalization_worker_lock_is_nonblocking(root_run):
@@ -525,7 +540,7 @@ def test_engineering_completion_requires_attempt_and_analysis(engineering_ready)
         store.complete_assignment("engineer-E0001", "engineering")
 
     node = coral_dir / "public/notes/nodes/N001"
-    node.mkdir(parents=True)
+    node.mkdir(parents=True, exist_ok=True)
     (node / "spec.md").write_text(yaml.safe_dump({
         "node_id": "N001", "parent_node": "N000",
         "parent_commit": ROOT_SHA, "base_commit": ROOT_SHA,
@@ -577,6 +592,7 @@ def test_engineering_completion_requires_attempt_and_analysis(engineering_ready)
         "limitations": document["limitations"], "attempt_shas": [engineering.commit_hash],
     })
     from autoresearch.lifecycle import run_worker
+    _publish_analysis(coral_dir, "N001")
     assert run_worker(str(coral_dir), runner=lambda *_: pytest.fail("Engineering Analyzer"))["completed"] == ["engineer-E0001"]
     assert store.complete_assignment("engineer-E0001", "engineering")["status"] == "completed"
 
@@ -585,6 +601,7 @@ def test_engineer_finish_cli_versions_stale_analysis_without_analyzer(engineerin
     from autoresearch import cli
     from autoresearch.lifecycle import run_worker
     from autoresearch.state import handle_workflow
+
     from coral.grader.trusted_writes import AgentBinding, TrustedWriteService
 
     store, node, body = _engineer_with_attempts(engineering_ready)
@@ -717,18 +734,13 @@ def test_reconcile_provides_public_task_toolkit(root_run):
     assert not (toolkit / 'taskdata').exists()
 
 
-def _engineer_with_attempts(engineering_ready, count=2):
+def _engineer_with_attempts(engineering_ready, count=2, *, analysis_pending=False):
     coral_dir, repo, research_sha = engineering_ready
     store = _store(coral_dir, repo)
     store.reconcile(0, 1)
     store.claim_engineering('engineer-E0001', 'N001')
     node = coral_dir / 'public/notes/nodes/N001'
     node.mkdir(parents=True, exist_ok=True)
-    (node / 'spec.md').write_text(yaml.safe_dump({
-        'node_id': 'N001', 'parent_node': 'N000', 'base_commit': ROOT_SHA,
-        'analysis_refs': {'parent_research': 'nodes/N000/research_analysis_v1.md',
-                          'parent_engineering': None},
-    }))
     shas = ['e' * 40, 'f' * 40][:count]
     for index, sha in enumerate(shas):
         write_attempt(coral_dir, Attempt(
@@ -741,6 +753,8 @@ def _engineer_with_attempts(engineering_ready, count=2):
     body = {'summary': 'No measured speedup; implementation headroom is unresolved.',
             'findings': ['Both outcomes were recorded; no algorithmic lower bound established.'],
             'limitations': ['No profiling available.'], 'attempt_shas': shas}
+    if not analysis_pending:
+        _publish_analysis(coral_dir, 'N001')
     return store, node, body
 
 
@@ -785,20 +799,21 @@ def test_bare_engineering_finish_cannot_start_independent_analyzer(engineering_r
 
 
 def test_engineer_publication_failure_is_recoverable_without_reauthoring(engineering_ready, monkeypatch):
-    from autoresearch import lifecycle
-
     store, node, body = _engineer_with_attempts(engineering_ready, count=1)
     store.submit_engineering_analysis('engineer-E0001', body)
-    publisher = lifecycle._publisher
-    def unavailable(*_args):
-        raise OSError('publication temporarily unavailable')
-    monkeypatch.setattr(lifecycle, '_publisher', lambda *_: unavailable)
-    result = lifecycle.run_worker(str(store.coral_dir), runner=lambda *_: pytest.fail('Analyzer'))
-    assert result['completed'] == []
-    assert 'engineer-E0001' in result['errors']
+    from autoresearch import state as state_module
+    writer = state_module.atomic_write_text
+    def unavailable(path, content):
+        if path.name == 'engineering_analysis_v1.md':
+            raise OSError('publication temporarily unavailable')
+        return writer(path, content)
+    monkeypatch.setattr(state_module, 'atomic_write_text', unavailable)
+    store.reconcile(0, 1)
+    assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'active'
     assert not (node / 'engineering_analysis_v1.md').exists()
-    monkeypatch.setattr(lifecycle, '_publisher', publisher)
-    assert lifecycle.run_worker(str(store.coral_dir), runner=lambda *_: pytest.fail('Analyzer'))['completed'] == ['engineer-E0001']
+    monkeypatch.setattr(state_module, 'atomic_write_text', writer)
+    store.reconcile(0, 1)
+    assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'completed'
 
 
 def test_engineer_owner_and_pending_attempts_are_verified(engineering_ready):

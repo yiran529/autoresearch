@@ -37,7 +37,7 @@ flowchart TD
 
 该模块把实验组织成有显式 Parent 的研究节点。每个 Node 对应一个算法假设，Spec 记录 Parent、固定代码基点、选点理由、改动、风险和证伪条件。节点内部的实现过程与研究树上的一次扩展是不同概念。
 
-运行从固定 Root `N000` 开始。Root bootstrap 建立来源信息、基线 Attempt 和 Research Analysis；动态调度在创建后续任务前会验证这些证据。普通 Researcher 获得系统分配的 Node ID 后，自主选择已完成且有有效 Research Analysis 的 Parent，再调用 `autoresearch node initialize` 固定 Spec 和基点。
+运行从固定 Root `N000` 开始。Root bootstrap 固定来源信息、S0/A0、Spec 和基线 Attempt。动态调度验证这些身份后即可启动；Root 的 Research Attempt 终态且无剩余基础设施重试后，启动独立 Research Analysis 和质量达标时的 Engineering。N000 两条分支完成后才创建首批 Researcher。独立 baseline-only 工具只生成基线证据，不代表整个 Node 已完成。普通 Researcher 获得系统分配的 Node ID 后，自主选择已完成且有有效 Research Analysis 的 Parent，再调用 `autoresearch node initialize` 固定 Spec 和基点。
 
 Parent 选择考虑预期收益或信息价值、已有证据、探索程度、验证成本和质量风险。当前没有集中式 UCT / MCTS 选点公式，也不强制从最高分节点扩展。质量失败仍可产生 Research Analysis，后续 child 可以研究修复或新假设。
 
@@ -47,11 +47,11 @@ Parent 选择考虑预期收益或信息价值、已有证据、探索程度、�
 
 ## 3. 工作流调度
 
-任务级调度器是 `WorkflowStore`。它管理节点预留、Research assignment、Engineering reservation / claim、完成条件和编号分配。当前配置允许最多两个 Researcher 和一个 Engineer；容量由 `task.yaml` 指定。
+任务级调度器是 `WorkflowStore`。它管理节点预留、Research assignment、按 Node 绑定的 Engineering assignment、完成条件和编号分配。当前配置允许最多两个 Researcher 和一个 Engineer；容量由 `task.yaml` 指定。
 
 CORAL Manager 周期性请求 `reconcile_workflow`。可信服务调用任务的 `handle_workflow()`，由 `WorkflowStore.reconcile()` 返回期望的 assignment roster。Manager 将 roster 与实际 Agent 对照，创建缺失的 Agent，保留存续者，并停止进入 finalizing 或已结束的生产 Agent。
 
-对 Manager 而言，活跃 assignment 的主要阶段是 `reserved → active → finalizing`；完成后不再出现在所需 roster 中。finalizing 表示任务已请求收尾，禁止继续提交候选，宿主负责生成分析并完成状态转换。Research 在唯一正式 Attempt 已终态且没有剩余基础设施重试时自动收尾；Engineering 由 `autoresearch engineering finish` 发起收尾。
+对 Manager 而言，活跃 assignment 的主要阶段是 `reserved → active → finalizing`；完成后不再出现在所需 roster 中。finalizing 表示任务已请求收尾，禁止继续提交候选，宿主负责生成分析并完成状态转换。Research 在唯一正式 Attempt 已终态且没有剩余基础设施重试时冻结结果并退休，同时独立推进 Research Analysis 和条件 Engineering；Engineering 由 `autoresearch engineering finish` 发起收尾。Researcher 与 Engineer 的容量分别保留，Engineering 容量不足时按持久化进入队列的顺序等待，不能跳过。Node 只有在 Research Analysis 发布且 Engineering 完成或明确因质量失败/不可用而跳过后才可作 Parent。工作流状态使用 v2，v1 不自动迁移。
 
 因此，调度分为三层：GreedyLoRE 决定研究 assignment，CORAL Manager 管理执行进程，grader daemon 管理评估队列。普通模式的固定长期 Agent 循环被 dynamic 分支替代，但进程管理和评分队列仍复用 CORAL。
 
@@ -61,7 +61,7 @@ CORAL Manager 周期性请求 `reconcile_workflow`。可信服务调用任务的
 
 该模块将 assignment 转成实际运行环境。CORAL 为 Agent 建立独立 Git worktree，配置虚拟环境、共享目录链接、运行时设置和沙箱，再启动 Codex 等外部 CLI 子进程。动态 assignment 只提供身份、角色、Node 和状态；运行时和角色文件来自宿主配置。
 
-Researcher 负责一个算法假设和一个正式 Research 候选。Engineer 原子认领一个合格节点，从该节点固定 Research SHA 出发进行语义保持优化。Engineer 的角色规则规定每次认领最多两轮正式候选；提示词规则与服务端硬约束需要分别看待。
+Researcher 负责一个算法假设和一个正式 Research 候选。宿主把 Engineer 绑定到一个质量达标节点及其固定 Research SHA；`engineering claim` 仅确认绑定并准备 Worktree，不能自主更换目标。Engineer 不等待该 Node 的 Research Analysis，从固定 Research SHA 出发进行语义保持优化。Engineer 的角色规则规定每次认领最多两轮正式候选；提示词规则与服务端硬约束需要分别看待。
 
 dynamic 模式生成精简的任务专用指令，指向对应角色文件。当前 Codex runtime 将其写为 worktree 根目录的 `AGENTS.md`，不会加载通用长版 `CORAL.md` 模板。角色文件再指引 Agent 阅读共享工作流规则。
 
@@ -101,9 +101,9 @@ Research 模式同时评估质量与效率。质量门槛失败时，汇总分�
 
 该模块将评分证据转成下一轮可使用的知识。`evaluation.py` 从正式 Attempts 和原始日志重建 Node 的 `evaluation.md`；它是确定性的结果索引，包含失败和退化结果，不只展示最佳候选。
 
-`lifecycle.py` 驱动自动收尾，准备固定证据并调用 `analysis.py`。独立 Analyzer 使用新会话，读取指定 SHA 的代码快照、Spec、Evaluation、相关 Analysis 和原始证据，根据 research / engineering 专用 prompt 输出结构化正文。宿主补入固定证据封装，校验后发布版本化 Analysis。
+`lifecycle.py` 在现有后台 worker 中处理 Research Analysis 队列，准备固定证据并调用 `analysis.py`。独立 Analyzer 使用新会话，读取 Research SHA 的代码快照、Spec、Research Evaluation、相关 Analysis 和原始证据，根据 Research prompt 输出结构化正文。宿主校验并发布版本化 Analysis。Engineering Analysis 仍由 Engineer 自己撰写；短的 `reconcile()` 负责发布已封存的总结，不等待长时间分析。任务固定 SHA、证据 hash、版本和执行代次；失败后退避并继续后续任务，已封存输出和已发布 Artifact 可以恢复复用。停止/重启通过 PID start time 和进程组登记清理旧执行。
 
-Research Analysis 关注质量变化、算法机制、竞争解释、局限和可证伪的 child 建议。Engineering Analysis 关注结构开销、可优化实现开销及尚未证实的性能归因，同时审视全部工程候选。有效 Research Analysis 是节点完成和后续扩展的关键条件，Research 不必等待 Engineering。
+Research Analysis 关注质量变化、算法机制、竞争解释、局限和可证伪的 child 建议。Engineering Analysis 关注结构开销、可优化实现开销及尚未证实的性能归因，同时审视全部工程候选。Research Analysis 与 Engineering 独立推进；两者都收尾后才能扩展该 Node。Researcher 可以从其他已完成 Parent 继续研究。
 
 ### Analyzer 诊断实验
 
@@ -174,7 +174,7 @@ CORAL CLI 提供实验、日志、笔记和状态查询；Starlette 后端与 Re
 
 ## 9. 一次完整研究循环
 
-1. 宿主完成 Root bootstrap，固定 seed、基线评估和 Root Analysis。
+1. 宿主完成 Root bootstrap，固定 seed 和基线评估；Root Analysis 与条件 Engineering 收尾后开放首批 Researcher。
 2. Manager 请求任务 roster，启动预留的 Researcher。
 3. Researcher 选择 Parent 并 initialize，任务固定 Spec 和 Research 基点。
 4. Agent 实现候选、记录自检，通过可信提交入口创建正式 Attempt。

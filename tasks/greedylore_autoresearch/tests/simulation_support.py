@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -220,7 +221,7 @@ def run_finalization(coral_dir: str):
 
     event("worker_start", worker="finalization")
     try:
-        result = run_worker(coral_dir, runner=analysis_runner, memory_launcher=launch_memory)
+        result = run_worker(coral_dir, runner=analysis_runner, memory_launcher=launch_memory, now=lambda: time.monotonic() * 10000)
         event("finalization_done", **result)
         return result
     finally:
@@ -232,7 +233,7 @@ def declaration(coral_dir, node, mode, base, round_number):
     body = {
         "mode": mode,
         "node_id": node,
-        "node_type": "research",
+        "node_type": "seed" if node == "N000" else "research",
         "base_commit": base,
         "quality_anchor": base if mode == "engineering" else None,
         "analysis_refs": spec["analysis_refs"],
@@ -355,20 +356,22 @@ def agent(coral_dir: Path, aid: str):
                 head_after=git(Path.cwd(), "rev-parse", "HEAD"),
             )
     else:
-        wait_for(lambda: gate("claims").exists(), "Engineer claim release")
-        result = cli("autoresearch.cli", "engineering", "claim", "N001", check=False)
-        if result.returncode:
-            event("claim_lost", agent=aid, error=result.stderr)
-            wait_for(lambda: gate("stop").exists(), "losing Engineer stop")
-            return
-        event("claim_won", agent=aid, node="N001")
+        node = re.search(r"You own Engineering for Node `(N[0-9]{3})`", Path("AGENTS.md").read_text()).group(1)
+        if node != "N000":
+            wait_for(lambda: gate("claims").exists(), "Engineer release")
+        foreign = cli("autoresearch.cli", "engineering", "claim", "N999", check=False)
+        if foreign.returncode == 0:
+            raise RuntimeError("Engineer was allowed to select a foreign Node")
+        event("foreign_claim_rejected", agent=aid, node=node)
+        cli("autoresearch.cli", "engineering", "claim", node)
+        event("claim_won", agent=aid, node=node)
         base = git(Path.cwd(), "rev-parse", "HEAD")
         for number in (1, 2):
-            declaration(coral_dir, "N001", "engineering", base, number)
+            declaration(coral_dir, node, "engineering", base, number)
             cli("coral.cli", "eval", "-m", f"SIMULATED engineering {number}", "--timeout", "30")
             event(
                 "submitted",
-                node="N001",
+                node=node,
                 mode="engineering",
                 commit=git(Path.cwd(), "rev-parse", "HEAD"),
                 round=number,
@@ -503,10 +506,10 @@ def controller(manager, paths, errors):
         event("claim_barrier_released")
 
         def engineering_done():
-            return any(
-                w["status"] == "completed"
-                for w in read_state(paths.coral_dir)["engineering_workers"].values()
-            )
+            state = read_state(paths.coral_dir)
+            return all(state["nodes"].get(n, {}).get("engineering_status") == "completed"
+                       and state["nodes"][n]["analysis"]["status"] == "completed"
+                       for n in ("N000", "N001", "N003"))
 
         wait_for(engineering_done, "Engineering Analysis and completion")
         wait_for(
@@ -589,8 +592,8 @@ def make_report(paths):
         and starts[1]["worktree"] == starts[0]["worktree"],
         "analyzer_failure_recovered": any(e["event"] == "analyzer_failure" for e in recorded)
         and state["nodes"]["N002"]["research"]["status"] == "completed",
-        "claim_conflict_verified": len(claims) == 1
-        and any(e["event"] == "claim_lost" for e in recorded),
+        "host_binding_verified": {e["node"] for e in claims} == {"N000", "N001", "N003"}
+        and sum(e["event"] == "foreign_claim_rejected" for e in recorded) == 3,
         "infra_retry_same_sha_verified": any(
             e["event"] == "same_sha_retry" and e["commit"] == e["head_after"] for e in recorded
         )

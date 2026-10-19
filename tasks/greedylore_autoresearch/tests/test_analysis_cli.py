@@ -20,7 +20,7 @@ def test_run_fresh_codex_uses_ephemeral_read_only_session(tmp_path, monkeypatch)
         output.write_text("{}")
         return SimpleNamespace(returncode=0, stderr="")
 
-    monkeypatch.setattr("autoresearch.analysis.subprocess.run", fake_run)
+    monkeypatch.setattr("coral.grader.trusted_worker.run_workflow_model", fake_run)
 
     output = run_fresh_codex(
         "analyze fixed evidence",

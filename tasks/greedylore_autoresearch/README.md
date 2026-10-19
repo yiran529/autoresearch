@@ -4,6 +4,16 @@ Task resources are host-published under the run's public `notes/toolkit/`. Each 
 
 Research Analysis remains an independent session. Choose applicable initial diagnostics, investigate a principal unexplained observation, and report evidence, counterevidence and unknowns without proposing algorithms. Each Analysis has at most three diagnostic executions, each up to 600 seconds, with a separate GPU queue budget of one hour. See `GPU_COORDINATION.md` for host/client wait budgets.
 
+## Node workflow
+
+After its unique formal Research Attempt is terminal with no remaining infrastructure retry, the host retires the Researcher and starts two independent branches: Research Analysis, and Engineering when the authoritative quality gate passes. The host binds each Engineer to a fixed Node and Research SHA; `autoresearch engineering claim Nxxx` confirms that assignment and prepares its Worktree, rather than selecting a target. Required Engineering waits in FIFO order when the configured Engineer capacity is occupied. Researcher and Engineer capacities remain separate.
+
+A Node is an eligible Parent only after Research Analysis is published and Engineering is completed, or explicitly skipped because quality failed or was unavailable in a terminal failure. A malformed/missing quality score on an otherwise normal result is an error, not a skip. Researcher retirement alone does not complete the Node. Children still start from the Parent's Research SHA, not its Engineering commit.
+
+Root N000 follows the same two branches after the host pins S0, creates A0 and submits the fixed baseline Attempt. Dynamic scheduling can start before Root Analysis exists, but does not reserve ordinary Researchers until N000 is fully complete. Root Engineering uses A0 as its quality anchor and ordinary Engineer authorization; the host-only bootstrap exception remains restricted to Root Research. The standalone `bootstrap-root-analysis` command produces baseline evidence only and does not certify full Node completion or automatically start Engineering.
+
+The existing Analysis worker handles only Research Analysis. Short host reconciliation publishes sealed Engineering summaries without waiting for that worker. Analysis retries preserve their fixed evidence/version and diagnostic budget, apply bounded backoff, and do not block later eligible jobs. A validated private output or published immutable Analysis is reused after interruption. Workflow/model process identities are recorded for stop and restart cleanup; Analyzer sessions have a default overall limit of 18000 seconds, including diagnostic queue waits.
+
 ## Engineering completion
 
 A claim permits at most two distinct formal Engineering candidates. Same-SHA infrastructure retries are counted separately under the existing retry policy. The second candidate does not retire the Engineer: it must still author and submit the final summary.
@@ -17,11 +27,11 @@ Write JSON in authorized scratch outside the tracked Worktree, containing exactl
 
 Run `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`. The host authenticates ownership, checks terminal Attempts and complete SHA coverage, seals the evidence and persists the submission before returning `finalizing` with the intended Analysis ref. This is not confirmation of completed publication. The host then publishes an immutable version and completes the claim. On interruption, reuse the identical body; conflicting submissions are rejected. No independent Engineering Analyzer is launched. Quality remains inherited (provisional) from the fixed Research SHA.
 
-Historical Analyses remain readable. Existing runs use their saved config and role snapshots: update those deliberately before restarting the run. A legacy active Engineering claim with `finish_requested` but no author submission must resume its same owner and submit a final summary; it is not silently completed by an Analyzer. Already completed historical claims are unaffected.
+Historical Analyses remain readable. Node-bound scheduling uses workflow state version 2; version 1 runs are rejected without modification and must continue with their original runtime. No automatic migration or reopening of historical claims is performed. Saved configuration and role snapshots must match the runtime before resuming a version 2 run. Complete dynamic runs require at least one Engineer slot and exactly one Engineering assignment per quality-passing Node; standalone baseline-only tools retain their original behavior.
 
 ## Validation
 
-Scripted workflow simulations cover normal operation and injected failures, including same-SHA retry, claim races, publication and parallel Research. They use synthetic results, with no model, training or GPU calls. Scientific effectiveness requires a separate real low-rank pilot with matching budgets and legitimate saved training states; passing workflow tests does not establish scientific improvement.
+Scripted workflow simulations cover normal operation and injected failures, including same-SHA retry, automatic Node binding, foreign-claim rejection, publication and parallel Research. They use synthetic results, with no model, training or GPU calls. Scientific effectiveness requires a separate real low-rank pilot with matching budgets and legitimate saved training states; passing workflow tests does not establish scientific improvement.
 
 
 ## Memory

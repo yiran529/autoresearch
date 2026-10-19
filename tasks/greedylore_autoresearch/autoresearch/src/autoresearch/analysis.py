@@ -318,6 +318,8 @@ def run_fresh_codex(
     read_roots: Sequence[Path],
     output_schema: Path,
     scratch: Path,
+    *,
+    timeout: float = 18000,
 ) -> Path:
     """Run one non-persistent Codex session and return its final JSON document."""
     scratch.mkdir(parents=True, exist_ok=True)
@@ -343,11 +345,12 @@ def run_fresh_codex(
         str(output),
         "-",
     ]
-    completed = subprocess.run(
+    from coral.grader.trusted_worker import run_workflow_model
+
+    completed = run_workflow_model(
         command,
         input=fixed_prompt,
-        text=True,
-        capture_output=True,
+        timeout=timeout,
     )
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or "Codex session failed")
@@ -598,10 +601,11 @@ def analyze(
         analysis_document = validate_analysis(analysis_document, evidence)
     else:
         from .diagnostic_sandbox import isolation_available
-        from .diagnostic_session import run_diagnostic_codex, settings
+        from .diagnostic_session import analyzer_timeout, run_diagnostic_codex, settings
         from .diagnostics import create_task
 
         enabled = settings(ctx.coral_dir).get("analyzer_diagnostics", False)
+        timeout = analyzer_timeout(ctx.coral_dir)
         if (enabled and diagnostic_runner is None and runner is run_fresh_codex
                 and isolation_available()):
             diagnostic_runner = run_diagnostic_codex
@@ -624,7 +628,7 @@ def analyze(
             if task is not None:
                 from coral.grader.trusted_writes import _atomic_json
 
-                with task.locked():
+                with task.locked(timeout=5):
                     state = task.read()
                     state['checkpoint_paths'] = [str(path) for path in checkpoint_roots]
                     _atomic_json(task.path, state)
@@ -654,6 +658,7 @@ def analyze(
                     analyzer_roots,
                     _schema("analysis"),
                     analyzer_scratch,
+                    **({"timeout": timeout} if runner is run_fresh_codex else {}),
                 )
             analysis_document = validate_analysis(
                 seal_document(load_document(output), evidence), evidence

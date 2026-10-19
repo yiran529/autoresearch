@@ -35,7 +35,7 @@ def generate_coral_md(
                 f"You own Research Node `{node_id}`. Choose a Parent, then run "
                 "`autoresearch node initialize` before changing the code base. "
                 "Run one formal Research evaluation; handle same-SHA infrastructure retries "
-                "if needed, then wait for automatic Analysis, completion and Agent retirement."
+                "if needed, then wait for Research assignment completion and Agent retirement. The host independently runs this Node's Research Analyzer and quality-gated Engineering; only their completion makes this Node an eligible Parent."
             )
             mode = research_mode if research_mode is not None else "REFINE"
             if mode not in {"REFINE", "EXPLORE"}:
@@ -43,15 +43,17 @@ def generate_coral_md(
             scope += (f" Your host-assigned research mode is `{mode}`, pinned to this "
                       "assignment across resumes and retries. Follow its definition in your role; "
                       "do not resample or supply a mode to node initialize.")
-        elif workflow_role == "engineering":
+        elif workflow_role == "engineering" and node_id:
             scope = (
-                "Inspect the Tree and evidence, choose one eligible Research Node, "
-                "then atomically run `autoresearch engineering claim <node-id>`. "
-                "Optimize from its Research commit. When finished evaluating candidates, "
-                "author a final JSON summary and run `autoresearch engineering finish "
-                "--analysis-file /absolute/scratch/final.json`. Wait for host publication, "
-                "completion and Agent retirement. "
-                "If no target is eligible, run `autoresearch engineering cancel` and exit."
+                f"You own Engineering for Node `{node_id}`, bound by the host. "
+                f"On first setup in a clean Worktree, run `autoresearch engineering claim {node_id}` "
+                "to confirm your binding and start from its fixed Research commit. "
+                "On resume preserve your existing changes. Do not select another Node or cancel "
+                "required Engineering. Its Research Analyzer runs independently; do not wait for it. "
+                "When finished evaluating candidates, author a final JSON summary and run "
+                "`autoresearch engineering finish --analysis-file /absolute/scratch/final.json`. "
+                "Wait for host publication, completion and Agent retirement. The Node becomes "
+                "a completed Parent only after Research Analysis and Engineering both finish."
             )
         else:
             raise ValueError("dynamic instructions require a valid workflow role and Node")

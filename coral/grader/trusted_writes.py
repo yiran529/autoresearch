@@ -430,6 +430,17 @@ class TrustedWriteService:
         self.memory_launcher = memory_launcher
         self.diagnostic_handler = diagnostic_handler
         self._workflow_process = None
+        self._workflow_stopping = False
+        self._workflow_lifecycle_lock = threading.Lock()
+
+    def stop_workflow(self) -> None:
+        from coral.grader.trusted_worker import stop_workflow_worker
+
+        with self._workflow_lifecycle_lock:
+            self._workflow_stopping = True
+            stop_workflow_worker(self.coral_dir)
+            if self._workflow_process is not None:
+                self._workflow_process.wait(timeout=5)
 
     def _validator_entrypoint(self, name: str) -> str:
         args = getattr(getattr(self.config, "grader", None), "args", {}) or {}
@@ -551,14 +562,15 @@ class TrustedWriteService:
             result = self._workflow(operation, payload, None)
             configured = getattr(getattr(self.config, "grader", None), "args", {}) or {}
             entrypoint = configured.get("trusted_workflow_worker")
-            if entrypoint and (
-                self._workflow_process is None or self._workflow_process.poll() is not None
-            ):
-                from coral.grader.trusted_worker import start_task_worker
+            with self._workflow_lifecycle_lock:
+                if entrypoint and not self._workflow_stopping and (
+                    self._workflow_process is None or self._workflow_process.poll() is not None
+                ):
+                    from coral.grader.trusted_worker import start_task_worker
 
-                self._workflow_process = start_task_worker(
-                    self.coral_dir, entrypoint, log_name="workflow_worker.err"
-                )
+                    self._workflow_process = start_task_worker(
+                        self.coral_dir, entrypoint, log_name="workflow_worker.err"
+                    )
             return result
         binding = self.identity_resolver(self.coral_dir, peer_pid)
         return self.handle_authenticated(operation, payload, binding)
@@ -712,7 +724,7 @@ class TrustedWriteService:
         canonical = canonical or self._validate_submission(
             commit_hash, binding, parent_hash
         )
-        if canonical["node_type"] == "seed":
+        if canonical["node_type"] == "seed" and canonical["mode"] == "research":
             if root_source_commit is None:
                 raise TrustedWriteError(
                     "Root bootstrap requires the separate trusted host entry"
@@ -823,7 +835,7 @@ class TrustedWriteService:
         parent_hash = parents[0] if parents else None
         canonical = self._validate_submission(commit_hash, binding, parent_hash)
         def authorize_retry() -> None:
-            if canonical.get("node_id") == "N000":
+            if canonical.get("node_id") == "N000" and canonical.get("mode") == "research":
                 return
             self._authorize(
                 "trusted_workflow_authorizer",
@@ -960,6 +972,13 @@ class TrustedWriteServer:
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
+        from coral.grader.trusted_worker import stop_workflow_worker
+
+        with self.service._workflow_lifecycle_lock:
+            stop_workflow_worker(self.coral_dir)
+            (self.coral_dir / "private/workflow_stopping").unlink(missing_ok=True)
+            self.service._workflow_stopping = False
+            self.service._workflow_process = None
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         self.socket_path.unlink(missing_ok=True)
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -974,6 +993,7 @@ class TrustedWriteServer:
 
     def stop(self) -> None:
         self._stop.set()
+        self.service.stop_workflow()
         listener = self._listener
         self._listener = None
         if listener is not None:

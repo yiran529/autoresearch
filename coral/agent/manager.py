@@ -438,6 +438,10 @@ class AgentManager:
                 proc.kill()
                 proc.join(timeout=5)
         finally:
+            if self.paths is not None:
+                from coral.grader.trusted_worker import stop_workflow_worker
+
+                stop_workflow_worker(self.paths.coral_dir)
             try:
                 proc.close()
             except Exception:

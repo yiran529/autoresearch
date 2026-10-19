@@ -169,7 +169,8 @@ def bootstrap_root_analysis(
     """Complete fixed N000 public evidence on the host after its formal Attempt."""
     from coral.hub.attempts import read_attempts
 
-    from .analysis import AnalysisContext, analyze
+    from .lifecycle import run_worker
+    from .state import WorkflowStore
 
     coral_dir = Path(coral_dir).resolve()
     root_worktree = Path(root_worktree).resolve()
@@ -197,7 +198,6 @@ def bootstrap_root_analysis(
     )
     if (
         len(attempts) != 1
-        or attempts[0].status in {"pending", "crashed", "timeout"}
         or attempts[0].parent_hash != policy["source_commit"]
     ):
         raise BootstrapError("Root Analysis bootstrap requires one terminal N000 Research Attempt")
@@ -222,34 +222,23 @@ def bootstrap_root_analysis(
     else:
         atomic_write_text(spec_path, yaml.safe_dump(expected_spec, sort_keys=False))
 
-    context = AnalysisContext(
-        coral_dir=coral_dir,
-        notes_root=coral_dir / "public" / "notes",
-        island_id=None,
-        attempts=attempts,
-        log_root=coral_dir / "public" / "eval_logs",
-        checkout_root=root_worktree,
-    )
-
-    def publish(kind: str, content: str, metadata: dict[str, Any]) -> dict[str, str]:
-        if metadata.get("node_id") != "N000":
-            raise BootstrapError("Root host publisher received a non-Root target")
-        if kind == "evaluation" and metadata.get("mode") is None:
-            target = node_root / "evaluation.md"
-        elif kind == "analysis" and metadata.get("mode") == "research" and metadata.get("version") == 1:
-            target = node_root / "research_analysis_v1.md"
-            if target.exists():
-                if target.read_text(encoding="utf-8") != content:
-                    raise BootstrapError("Root Analysis v1 is immutable")
-                return {"path": "nodes/N000/research_analysis_v1.md"}
-        else:
-            raise BootstrapError("Root host publisher received an unsupported target")
-        atomic_write_text(target, content)
-        return {"path": f"nodes/N000/{target.name}"}
-
-    options: dict[str, Any] = {"context": context, "publisher": publish}
+    store = WorkflowStore(coral_dir, repo_path=root_worktree)
+    try:
+        store._terminal_research_unlocked("N000")
+    except ValueError as exc:
+        raise BootstrapError(str(exc)) from exc
+    options = {"checkout_root": root_worktree, "only_node": "N000"}
     if runner is not None:
         options["runner"] = runner
     if code_snapshotter is not None:
         options["code_snapshotter"] = code_snapshotter
-    return analyze("N000", "research", **options).analysis_path
+    result = run_worker(str(coral_dir), **options)
+    if result["status"] == "locked":
+        raise BootstrapError("Analysis worker is already running; await the existing Root Analysis job")
+    from coral.grader.trusted_writes import trusted_writes_lock
+    with trusted_writes_lock(coral_dir):
+        state = store._load_unlocked()
+        job = state["nodes"]["N000"]["analysis"]
+        if not job or job["status"] != "completed":
+            raise BootstrapError(f"Root Analysis is not complete: {result['errors'] or (job or {}).get('last_error')}")
+        return store.notes_root / job["analysis_ref"]

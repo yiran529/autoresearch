@@ -63,8 +63,8 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
     assert report["simulated"] is True
     assert report["completed_research"] == ["N001", "N002", "N003"]
     assert report["quality_failed"] == ["N002"]
-    assert report["engineering_attempts"] == 2
-    assert report["engineering_completed"] == 1
+    assert report["engineering_attempts"] == 6
+    assert report["engineering_completed"] == 3
     timeline = [json.loads(line) for line in (root / "timeline.jsonl").read_text().splitlines()]
     assert any(e.get("event") == "analyzer" and e.get("mode") == "research" for e in timeline)
     assert not any(e.get("event") == "analyzer" and e.get("mode") == "engineering" for e in timeline)
@@ -77,7 +77,7 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
     if scenario == "faults":
         assert report["same_session_resumed"] is True
         assert report["analyzer_failure_recovered"] is True
-        assert report["claim_conflict_verified"] is True
+        assert report["host_binding_verified"] is True
         assert report["infra_retry_same_sha_verified"] is True
     _check_delivered_prompts(root, scenario)
     print(f"\nSimulation report: {root / 'report.json'}")

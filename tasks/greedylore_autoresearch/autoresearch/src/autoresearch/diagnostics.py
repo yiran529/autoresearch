@@ -73,10 +73,21 @@ class DiagnosticTask:
         self.records = self.root / 'records'
 
     @contextmanager
-    def locked(self):
+    def locked(self, timeout=None):
         self.private.mkdir(parents=True, mode=0o700, exist_ok=True)
         with (self.private / 'task.lock').open('a+b') as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
+            if timeout is None:
+                fcntl.flock(stream, fcntl.LOCK_EX)
+            else:
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:
+                        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError('diagnostic task is still draining') from None
+                        time.sleep(min(0.02, max(0, deadline - time.monotonic())))
             yield
 
     def read(self):
@@ -90,17 +101,19 @@ class DiagnosticTask:
                 fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise PermissionError('analysis session is already running') from exc
-            with self.locked():
+            with self.locked(timeout=5):
                 root = self.read().get('process')
                 if root and _live_descendant(root['pid'], root):
                     raise PermissionError('analysis session is already active')
             try:
                 yield
             finally:
-                self.close()
+                self.close(timeout=5)
 
-    def bind(self, pid: int) -> None:
-        with self.locked():
+    def bind(self, pid: int, timeout=None) -> None:
+        with self.locked(timeout=timeout):
+            if (self.coral_dir / 'private/workflow_stopping').exists():
+                raise PermissionError('workflow is stopping')
             state = self.read()
             root = state.get('process')
             if root and _live_descendant(root['pid'], root):
@@ -108,8 +121,8 @@ class DiagnosticTask:
             state['process'] = {'pid': pid, 'start_time': process_start_time(pid)}
             _atomic_json(self.path, state)
 
-    def close(self) -> None:
-        with self.locked():
+    def close(self, timeout=None) -> None:
+        with self.locked(timeout=timeout):
             state = self.read()
             state['process'] = None
             _atomic_json(self.path, state)
@@ -148,6 +161,8 @@ class DiagnosticTask:
             _atomic_json(record_dir / 'record.json', {**record, **interrupted}, mode=0o644)
 
             def cancelled():
+                if (self.coral_dir / 'private/workflow_stopping').exists():
+                    raise PermissionError('workflow is stopping')
                 if not _live_descendant(root['pid'], root):
                     raise PermissionError('Analyzer exited or changed identity')
 
@@ -174,7 +189,7 @@ def create_task(coral_dir: Path, node_id: str, mode: str, version: int,
     task = DiagnosticTask(coral_dir, f'{node_id}-{mode}-v{version}')
     identity = {'node_id': node_id, 'mode': mode, 'version': version,
                 'research_sha': research_sha, 'evidence_hash': evidence_hash}
-    with task.locked():
+    with task.locked(timeout=5):
         if task.path.exists():
             state = task.read()
             if any(state.get(key) != value for key, value in identity.items()):

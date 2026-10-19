@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import random
@@ -28,6 +29,10 @@ class WorkflowError(ValueError):
     """An ownership transition or persisted workflow state is invalid."""
 
 
+class ResearchNotReadyError(WorkflowError):
+    """The formal Attempt does not exist yet or still permits infrastructure retry."""
+
+
 @dataclass(frozen=True)
 class WorkflowAssignment:
     agent_id: str
@@ -48,6 +53,8 @@ class WorkflowStore:
     ) -> None:
         self.repo_path = Path(repo_path).resolve() if repo_path is not None else None
         self.max_engineering_runs_per_node = max_engineering_runs_per_node
+        if type(max_engineering_runs_per_node) is not int or max_engineering_runs_per_node != 1:
+            raise WorkflowError("node-bound Engineering requires max_engineering_runs_per_node=1")
         self.coral_dir = Path(coral_dir).resolve()
         self.island_id = island_id
         self.island_root = island_root(self.coral_dir, island_id)
@@ -65,7 +72,6 @@ class WorkflowStore:
     def _verify_root(self) -> None:
         node_root = self.notes_root / "nodes" / "N000"
         spec_path = node_root / "spec.md"
-        analysis_path = node_root / "research_analysis_v1.md"
         try:
             policy = json.loads(
                 (self.coral_dir / "private" / "root_bootstrap.json").read_text(encoding="utf-8")
@@ -93,28 +99,10 @@ class WorkflowStore:
         )
         if (
             len(attempts) != 1
-            or attempts[0].status == "pending"
             or attempts[0].parent_hash != policy["source_commit"]
             or attempts[0].metadata.get("submission_hash") != policy["submission_hash"]
         ):
-            raise WorkflowError("Root Analysis bootstrap requires one terminal N000 Research Attempt")
-        if not analysis_path.is_file():
-            raise WorkflowError("Root Analysis bootstrap is required before dynamic agents start")
-        context = AnalysisContext(
-            coral_dir=self.coral_dir,
-            notes_root=self.notes_root,
-            island_id=self.island_id,
-            attempts=attempts,
-            log_root=self.island_root / "eval_logs",
-            checkout_root=self.coral_dir.parent,
-        )
-        try:
-            evidence = resolve_evidence("N000", "research", context=context)
-            document = load_document(analysis_path)
-            evidence = _artifact_evidence(document, evidence, context)
-            validate_analysis(document, evidence)
-        except ValueError as exc:
-            raise WorkflowError("Root Analysis bootstrap has invalid fixed evidence") from exc
+            raise WorkflowError("Root Analysis bootstrap requires one fixed N000 Research Attempt")
 
     def _load_unlocked(self) -> dict[str, Any]:
         if not self.state_path.is_file():
@@ -126,18 +114,21 @@ class WorkflowStore:
             if has_child:
                 raise WorkflowError("workflow state is missing from an existing run")
             return {
-                "version": 1,
+                "version": 2,
                 "revision": 0,
                 "next_node_seq": 1,
                 "next_engineer_seq": 1,
+                "next_ready_seq": 1,
                 "nodes": {
                     "N000": {
                         "research": {
                             "agent_id": "root-bootstrap",
-                            "status": "completed",
+                            "status": "active",
                             "spec_ref": "nodes/N000/spec.md",
                         },
                         "engineering_claims": [],
+                        "engineering_status": "blocked",
+                        "analysis": None,
                     }
                 },
                 "engineering_workers": {},
@@ -146,15 +137,18 @@ class WorkflowStore:
             state = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise WorkflowError("workflow state is invalid") from exc
+        if isinstance(state, dict) and state.get("version") == 1:
+            raise WorkflowError("workflow state version 1 requires its original runtime; automatic migration is not supported")
         if (
             not isinstance(state, dict)
-            or state.get("version") != 1
+            or state.get("version") != 2
             or not isinstance(state.get("revision"), int)
             or not isinstance(state.get("next_node_seq"), int)
             or not isinstance(state.get("next_engineer_seq"), int)
             or not isinstance(state.get("nodes"), dict)
             or not isinstance(state.get("engineering_workers"), dict)
-            or state["nodes"].get("N000", {}).get("research", {}).get("status") != "completed"
+            or "N000" not in state["nodes"]
+            or not isinstance(state.get("next_ready_seq"), int)
         ):
             raise WorkflowError("workflow state is invalid")
         for record in state["nodes"].values():
@@ -168,12 +162,41 @@ class WorkflowStore:
         self._rebuild_tree_unlocked(state)
 
     def _rebuild_tree_unlocked(self, state: dict[str, Any]) -> None:
-        rows = ["# Research Tree", "", "| Node | Research | Engineering |", "| --- | --- | --- |"]
+        rows = ["# Research Tree", "", "| Node | Research | Analysis | Engineering | Node status |",
+                "| --- | --- | --- | --- | --- |"]
         for node_id, record in sorted(state["nodes"].items()):
+            analysis = (record.get("analysis") or {}).get("status", "—")
             claims = record.get("engineering_claims", [])
-            engineering = claims[-1]["status"] if claims else "—"
-            rows.append(f"| {node_id} | {record['research']['status']} | {engineering} |")
+            engineering = claims[-1]["status"] if claims else record.get("engineering_status", "blocked")
+            status = "completed" if self._node_completed(record) else "in_progress"
+            if record.get("error"):
+                status = "error"
+            rows.append(f"| {node_id} | {record['research']['status']} | {analysis} | {engineering} | {status} |")
         atomic_write_text(self.tree_path, "\n".join(rows) + "\n")
+
+    @staticmethod
+    def _node_completed(record: dict) -> bool:
+        claims = record.get("engineering_claims", [])
+        engineering_done = (bool(claims) and claims[-1]["status"] == "completed") or (
+            record.get("engineering_status") == "skipped" and bool(record.get("engineering_skip_reason")))
+        return (record["research"]["status"] == "completed"
+                and (record.get("analysis") or {}).get("status") == "completed"
+                and engineering_done)
+
+    def _node_completed_unlocked(self, state: dict, node_id: str) -> bool:
+        record = state["nodes"].get(node_id)
+        if not record or not self._node_completed(record):
+            return False
+        reference = self._validated_analysis_ref_unlocked(node_id, "research")
+        if reference != record["analysis"].get("analysis_ref"):
+            return False
+        if record["engineering_claims"]:
+            self._validated_analysis_ref_unlocked(node_id, "engineering")
+        return True
+
+    def is_node_completed(self, node_id: str) -> bool:
+        with trusted_writes_lock(self.coral_dir):
+            return self._node_completed_unlocked(self._load_unlocked(), node_id)
 
     def rebuild_tree(self) -> Path:
         with trusted_writes_lock(self.coral_dir):
@@ -201,33 +224,103 @@ class WorkflowStore:
 
     def _qualified_research_unlocked(self, state: dict[str, Any], node_id: str) -> str | None:
         record = state["nodes"].get(node_id)
-        if node_id == "N000" or not isinstance(record, dict):
+        if not record or record.get("engineering_status") != "pending" or record["engineering_claims"]:
             return None
-        if record["research"]["status"] != "completed":
-            return None
-        if len(record["engineering_claims"]) >= self.max_engineering_runs_per_node:
-            return None
-        attempts = [
-            attempt for attempt in read_attempts(self.coral_dir, island_id=self.island_id)
-            if attempt.metadata.get("node_id") == node_id
-            and attempt.metadata.get("mode") == "research"
-            and attempt.budget_class == "real"
-        ]
-        if len(attempts) != 1:
-            return None
-        attempt = attempts[0]
-        if attempt.status in {"pending", "crashed", "timeout"}:
-            return None
-        quality = attempt.metadata.get("scores", {}).get("quality_gate", {})
-        if not isinstance(quality, dict) or quality.get("value") != 1.0:
-            return None
+        attempt = self._terminal_research_unlocked(node_id)
         if self.repo_path is None or not self.repo_path.is_dir():
-            return None
+            raise WorkflowError(f"Node {node_id} Research code snapshot is unavailable")
         check = subprocess.run(
             ["git", "cat-file", "-e", attempt.commit_hash + "^{commit}"],
             cwd=self.repo_path, capture_output=True, check=False,
         )
-        return attempt.commit_hash if check.returncode == 0 else None
+        if check.returncode:
+            raise WorkflowError(f"Node {node_id} Research code snapshot is unavailable")
+        return attempt.commit_hash
+
+    def _context(self) -> AnalysisContext:
+        return AnalysisContext(self.coral_dir, self.notes_root, self.island_id,
+                               tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
+                               self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent)
+
+    def _prepare_research_unlocked(self, state: dict, node_id: str) -> None:
+        from .evaluation import refresh_node_evaluation
+
+        record = state["nodes"][node_id]
+        if record.get("analysis") is not None:
+            return
+        attempt = self._terminal_research_unlocked(node_id)
+        if attempt.agent_id != record["research"]["agent_id"]:
+            raise WorkflowError("Research Attempt owner does not match Node")
+        quality = attempt.metadata.get("scores", {}).get("quality_gate", {}).get("value")
+        if type(quality) in (int, float) and quality in (0, 1):
+            skip = "quality_failed" if quality == 0 else None
+        elif quality is None and attempt.metadata.get("failure_class") in {"infra", "candidate"}:
+            skip = "quality_unavailable"
+        else:
+            raise WorkflowError(f"Node {node_id} has missing or invalid quality evidence")
+        context = self._context()
+        content = refresh_node_evaluation(node_id, context.attempts, context.log_root)
+        atomic_write_text(self.notes_root / "nodes" / node_id / "evaluation.md", content)
+        evidence = resolve_evidence(node_id, "research", context=context)
+        record["research"].update(status="completed", finish_requested=True)
+        record["ready_seq"] = state["next_ready_seq"]
+        state["next_ready_seq"] += 1
+        record["engineering_status"] = "skipped" if skip else "pending"
+        record["engineering_skip_reason"] = skip
+        record["analysis"] = {"status": "pending", "research_sha": attempt.commit_hash,
+                              "evidence_hash": evidence.manifest_hash, "version": 1,
+                              "generation": 0, "failures": 0, "next_retry_at": 0,
+                              "analysis_ref": None, "last_error": None}
+
+    def _advance_unlocked(self, state: dict) -> list[str]:
+        """Short transitions only; never wait for an Analyzer or acquire another workflow lock."""
+        before = copy.deepcopy(state)
+        for node_id, record in state["nodes"].items():
+            if record["research"]["status"] not in {"active", "completed"}:
+                continue
+            try:
+                self._terminal_research_unlocked(node_id)
+            except ResearchNotReadyError:
+                continue
+            except WorkflowError as exc:
+                record["error"] = str(exc)
+                continue
+            try:
+                self._prepare_research_unlocked(state, node_id)
+                job = record["analysis"]
+                path = self.notes_root / "nodes" / node_id / f"research_analysis_v{job['version']}.md"
+                if job["status"] != "running" and path.exists():
+                    self._adopt_analysis_unlocked(node_id, job)
+                record.pop("error", None)
+            except (ValueError, OSError, TypeError, AttributeError) as exc:
+                record["error"] = str(exc)
+        completed = []
+        for agent_id, worker in state["engineering_workers"].items():
+            if worker["status"] != "active" or not worker.get("analysis_submission"):
+                continue
+            try:
+                self._publish_engineering_unlocked(state, agent_id)
+                worker.pop("last_error", None)
+                completed.append(agent_id)
+            except (ValueError, OSError) as exc:
+                worker["last_error"] = str(exc)
+        if state != before or not self.state_path.exists():
+            self._save_unlocked(state)
+        return completed
+
+    def _adopt_analysis_unlocked(self, node_id, job):
+        context = self._context()
+        evidence = resolve_evidence(node_id, "research", context=context)
+        if evidence.manifest_hash != job["evidence_hash"] or evidence.research_sha != job["research_sha"]:
+            raise WorkflowError("Analysis job evidence changed")
+        path = self.notes_root / "nodes" / node_id / f"research_analysis_v{job['version']}.md"
+        document = load_document(path)
+        validate_analysis(document, _artifact_evidence(document, evidence, context))
+        job.update(status="completed", analysis_ref=f"nodes/{node_id}/{path.name}", last_error=None)
+
+    def advance(self) -> list[str]:
+        with trusted_writes_lock(self.coral_dir):
+            return self._advance_unlocked(self._load_unlocked())
 
     def is_engineering_eligible(self, node_id: str) -> bool:
         with trusted_writes_lock(self.coral_dir):
@@ -251,13 +344,14 @@ class WorkflowStore:
             shutil.copyfile(task_root / "roles/workflow_rules.md", toolkit / "workflow_rules.md")
             shutil.copytree(task_root / "references", toolkit / "references", dirs_exist_ok=True)
             state = self._load_unlocked()
+            self._advance_unlocked(state)
             live_research = sum(
                 record["research"]["status"] in {"reserved", "active"}
                 for node_id, record in state["nodes"].items()
                 if node_id != "N000"
             )
             changed = not self.state_path.is_file()
-            while live_research < max_researchers:
+            while live_research < max_researchers and self._node_completed_unlocked(state, "N000"):
                 sequence = state["next_node_seq"]
                 if sequence > 999:
                     raise WorkflowError("Node ID space is exhausted")
@@ -268,34 +362,37 @@ class WorkflowStore:
                     "research": {"agent_id": f"research-{node_id}", "status": "reserved",
                                  "spec_ref": None,
                                  "research_mode": "EXPLORE" if random.random() < self.p_explore else "REFINE"},
-                    "engineering_claims": [],
+                    "engineering_claims": [], "engineering_status": "blocked", "analysis": None,
                 }
                 state["next_node_seq"] = sequence + 1
                 live_research += 1
                 changed = True
-            eligible = sum(
-                self._qualified_research_unlocked(state, node_id) is not None
-                for node_id in state["nodes"]
-            )
-            live_engineers = sum(
-                worker["status"] in {"reserved", "active"}
-                for worker in state["engineering_workers"].values()
-            )
-            unbound_engineers = sum(
-                worker["status"] == "reserved" and worker.get("node_id") is None
-                for worker in state["engineering_workers"].values()
-            )
-            while live_engineers < max_engineers and unbound_engineers < eligible:
+            live_engineers = sum(worker["status"] == "active"
+                                 for worker in state["engineering_workers"].values())
+            for node_id in sorted(state["nodes"], key=lambda n: state["nodes"][n].get("ready_seq", float("inf"))):
+                if live_engineers >= max_engineers:
+                    break
+                record = state["nodes"][node_id]
+                try:
+                    research_sha = self._qualified_research_unlocked(state, node_id)
+                except WorkflowError as exc:
+                    record["error"] = str(exc)
+                    changed = True
+                    continue
+                if research_sha is None:
+                    continue
                 sequence = state["next_engineer_seq"]
                 agent_id = f"engineer-E{sequence:04d}"
                 if agent_id in state["engineering_workers"]:
                     raise WorkflowError("Engineer ID counter conflicts with existing state")
+                claim = {"agent_id": agent_id, "status": "active", "research_sha": research_sha}
+                record["engineering_claims"].append(claim)
+                record["engineering_status"] = "active"
+                record.pop("error", None)
                 state["engineering_workers"][agent_id] = {
-                    "status": "reserved", "node_id": None,
-                }
+                    "status": "active", "node_id": node_id, "research_sha": research_sha}
                 state["next_engineer_seq"] = sequence + 1
                 live_engineers += 1
-                unbound_engineers += 1
                 changed = True
             if changed:
                 self._save_unlocked(state)
@@ -310,26 +407,12 @@ class WorkflowStore:
             if not isinstance(worker, dict):
                 raise WorkflowError("Engineering assignment owner was not found")
             if worker["status"] == "active" and worker.get("node_id") == node_id:
+                self._reject_changed_anchor_unlocked(state, worker, node_id)
                 return {
                     "agent_id": agent_id, "node_id": node_id,
                     "status": "active", "research_sha": worker["research_sha"],
                 }
-            if worker["status"] != "reserved" or worker.get("node_id") is not None:
-                raise WorkflowError("Engineering assignment is not available")
-            research_sha = self._qualified_research_unlocked(state, node_id)
-            if research_sha is None:
-                raise WorkflowError(f"Node {node_id} is not eligible for Engineering")
-            claim = {
-                "agent_id": agent_id, "status": "active",
-                "research_sha": research_sha,
-            }
-            state["nodes"][node_id]["engineering_claims"].append(claim)
-            worker.update({"status": "active", "node_id": node_id, "research_sha": research_sha})
-            self._save_unlocked(state)
-            return {
-                "agent_id": agent_id, "node_id": node_id,
-                "status": "active", "research_sha": research_sha,
-            }
+            raise WorkflowError("Engineering assignment is not eligible for another Node; use the host-bound target")
 
 
     def cancel_assignment(self, agent_id: str) -> dict[str, Any]:
@@ -337,16 +420,7 @@ class WorkflowStore:
             state = self._load_unlocked()
             worker = state["engineering_workers"].get(agent_id)
             if isinstance(worker, dict):
-                if worker["status"] != "reserved" or worker.get("node_id") is not None:
-                    raise WorkflowError("only an unstarted reservation can be cancelled")
-                if any(
-                    self._qualified_research_unlocked(state, node_id) is not None
-                    for node_id in state["nodes"]
-                ):
-                    raise WorkflowError("an eligible Engineering target still exists")
-                worker["status"] = "cancelled"
-                self._save_unlocked(state)
-                return {"agent_id": agent_id, "node_id": None, "status": "cancelled"}
+                raise WorkflowError("a host-bound Engineering assignment cannot be cancelled")
             for node_id, record in state["nodes"].items():
                 research = record["research"]
                 if node_id == "N000" or research["agent_id"] != agent_id:
@@ -366,6 +440,8 @@ class WorkflowStore:
             and attempt.metadata.get("mode") == "research"
             and attempt.budget_class == "real"
         ]
+        if not attempts:
+            raise ResearchNotReadyError(f"Node {node_id} requires one formal Research Attempt")
         if len(attempts) != 1:
             raise WorkflowError(f"Node {node_id} requires one formal Research Attempt")
         attempt = attempts[0]
@@ -375,7 +451,7 @@ class WorkflowStore:
             and int(attempt.metadata.get("infra_retry_count", 0))
             < int(attempt.metadata.get("max_infra_retries", 0))
         ):
-            raise WorkflowError(f"Node {node_id} Research Attempt is not terminal")
+            raise ResearchNotReadyError(f"Node {node_id} Research Attempt is not terminal")
         return attempt
 
     def _validated_analysis_ref_unlocked(self, node_id: str, mode: str) -> str:
@@ -424,8 +500,8 @@ class WorkflowStore:
                 raise WorkflowError("Research reservation is not active")
             parent_node = request["parent_node"]
             parent = state["nodes"].get(parent_node)
-            if not isinstance(parent, dict) or parent["research"]["status"] != "completed":
-                raise WorkflowError("selected Parent Research is not completed")
+            if not isinstance(parent, dict) or not self._node_completed_unlocked(state, parent_node):
+                raise WorkflowError("selected Parent Node is not completed")
             parent_attempt = self._terminal_research_unlocked(parent_node)
             analysis_ref = self._validated_analysis_ref_unlocked(parent_node, "research")
             target = self.notes_root / "nodes" / node_id / "spec.md"
@@ -475,9 +551,7 @@ class WorkflowStore:
                         return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
                     if research["status"] != "active":
                         raise WorkflowError("Research assignment is not active")
-                    self._terminal_research_unlocked(node_id)
-                    self._validated_analysis_ref_unlocked(node_id, "research")
-                    research["status"] = "completed"
+                    self._prepare_research_unlocked(state, node_id)
                     self._save_unlocked(state)
                     return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
             if mode == "engineering":
@@ -489,28 +563,61 @@ class WorkflowStore:
                     return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
                 if worker["status"] != "active":
                     raise WorkflowError("Engineering assignment is not active")
-                self._terminal_engineering_unlocked(agent_id, node_id)
-                self._validated_analysis_ref_unlocked(node_id, "engineering")
-                submission = worker.get("analysis_submission")
-                if not submission:
-                    raise WorkflowError("Engineering completion requires an Engineer-authored summary")
-                path = self.notes_root / "nodes" / node_id / f"engineering_analysis_v{submission['version']}.md"
-                current = resolve_evidence(node_id, "engineering", context=AnalysisContext(
-                    self.coral_dir, self.notes_root, self.island_id,
-                    tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
-                    self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent))
-                validate_analysis(submission["document"], current)
-                if load_document(path) != submission["document"]:
-                    raise WorkflowError("published Engineering Analysis differs from author submission")
-                claims = state["nodes"][node_id]["engineering_claims"]
-                match = [claim for claim in claims if claim["agent_id"] == agent_id]
-                if len(match) != 1 or match[0]["status"] != "active":
-                    raise WorkflowError("Engineering claim does not match active owner")
-                match[0]["status"] = "completed"
-                worker["status"] = "completed"
+                self._complete_engineering_unlocked(state, agent_id)
                 self._save_unlocked(state)
                 return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
             raise WorkflowError("assignment owner was not found")
+
+    def _reject_changed_anchor_unlocked(self, state, worker, node_id):
+        record = state["nodes"][node_id]
+        attempt = self._terminal_research_unlocked(node_id)
+        quality = attempt.metadata.get("scores", {}).get("quality_gate", {}).get("value")
+        if (record["research"]["status"] != "completed" or type(quality) not in (float, int)
+                or quality != 1 or attempt.commit_hash != worker["research_sha"]):
+            raise WorkflowError("Node is not eligible for Engineering")
+        if self.repo_path is None or not self.repo_path.is_dir() or subprocess.run(
+            ["git", "cat-file", "-e", attempt.commit_hash + "^{commit}"],
+            cwd=self.repo_path, capture_output=True, check=False).returncode:
+            raise WorkflowError("Node is not eligible: Research code snapshot is unavailable")
+
+    def _complete_engineering_unlocked(self, state, agent_id):
+        worker = state["engineering_workers"][agent_id]
+        node_id = worker["node_id"]
+        self._terminal_engineering_unlocked(agent_id, node_id)
+        self._validated_analysis_ref_unlocked(node_id, "engineering")
+        submission = worker.get("analysis_submission")
+        if not submission:
+            raise WorkflowError("Engineering completion requires an Engineer-authored summary")
+        path = self.notes_root / "nodes" / node_id / f"engineering_analysis_v{submission['version']}.md"
+        current = resolve_evidence(node_id, "engineering", context=AnalysisContext(
+            self.coral_dir, self.notes_root, self.island_id,
+            tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
+            self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent))
+        validate_analysis(submission["document"], current)
+        if load_document(path) != submission["document"]:
+            raise WorkflowError("published Engineering Analysis differs from author submission")
+        claims = state["nodes"][node_id]["engineering_claims"]
+        match = [claim for claim in claims if claim["agent_id"] == agent_id]
+        if len(match) != 1 or match[0]["status"] != "active":
+            raise WorkflowError("Engineering claim does not match active owner")
+        match[0]["status"] = "completed"
+        worker["status"] = "completed"
+        state["nodes"][node_id]["engineering_status"] = "completed"
+
+    def _publish_engineering_unlocked(self, state, agent_id):
+        worker = state["engineering_workers"][agent_id]
+        node_id = worker["node_id"]
+        submission = worker["analysis_submission"]
+        self._terminal_engineering_unlocked(agent_id, node_id)
+        current = resolve_evidence(node_id, "engineering", context=self._context())
+        validate_analysis(submission["document"], current)
+        path = self.notes_root / "nodes" / node_id / f"engineering_analysis_v{submission['version']}.md"
+        if path.exists():
+            if load_document(path) != submission["document"]:
+                raise WorkflowError("immutable Engineering Analysis conflicts with frozen submission")
+        else:
+            atomic_write_text(path, json.dumps(submission["document"], sort_keys=True, ensure_ascii=False) + "\n")
+        self._complete_engineering_unlocked(state, agent_id)
 
     def submit_engineering_analysis(self, agent_id: str, body: dict) -> dict[str, Any]:
         from .engineering import submit
@@ -666,6 +773,8 @@ def handle_workflow(
     if operation == "reconcile_workflow":
         if not context.get("is_manager") or payload:
             raise WorkflowError("only the manager may reconcile workflow")
+        if context["max_engineers"] < 1:
+            raise WorkflowError("node-bound workflow requires agents.dynamic.max_engineers >= 1")
         assignments = store.reconcile(
             context["max_researchers"], context["max_engineers"]
         )

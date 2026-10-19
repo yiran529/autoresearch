@@ -110,6 +110,27 @@ def test_published_analysis_preserves_readable_unicode(tmp_path):
     assert json.loads(content)["summary"] == "中文机制分析"
 
 
+def test_fallback_analyzer_uses_the_same_configured_timeout(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from autoresearch import diagnostic_session
+
+    context = _context(tmp_path)
+    monkeypatch.setattr(diagnostic_session, 'settings', lambda _: {
+        'analyzer_diagnostics': False, 'analyzer_timeout_seconds': 17,
+    })
+
+    def process(command, **kwargs):
+        assert kwargs['timeout'] == 17
+        output = Path(command[command.index('--output-last-message') + 1])
+        output.write_text(json.dumps(_analysis_payload(None)))
+        return SimpleNamespace(returncode=0, stderr='')
+
+    monkeypatch.setattr('coral.grader.trusted_worker.run_workflow_model', process)
+    result = _analyze('N001', 'research', context=context, publisher=_publisher(context.notes_root))
+    assert result.analysis_path.is_file()
+
+
 def test_diagnostic_runner_keeps_results_and_revokes_identity(tmp_path):
     import os
 
@@ -475,6 +496,7 @@ def test_fixed_snapshot_includes_only_referenced_parent_analysis(tmp_path):
 
 def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, monkeypatch):
     import os
+
     from autoresearch import diagnostic_session
 
     context = _context(tmp_path)
@@ -499,7 +521,7 @@ def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, m
             self.command = command
             captured['argv'] = command
 
-        def communicate(self, prompt):
+        def communicate(self, prompt, timeout=None):
             captured['stdin'] = prompt
             output = Path(self.command[self.command.index('--output-last-message') + 1])
             output.write_text(json.dumps({
@@ -512,6 +534,8 @@ def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, m
         def poll(self):
             return 0
 
+    monkeypatch.setattr('coral.grader.trusted_worker.register_workflow_model', lambda *_, **__: None)
+    monkeypatch.setattr('coral.grader.trusted_worker.stop_workflow_model', lambda *_, **__: None)
     monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', InputRecorder)
     result = _analyze('N001', 'research', context=context, publisher=_publisher(context.notes_root),
                       diagnostic_runner=diagnostic_session.run_diagnostic_codex)

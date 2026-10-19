@@ -301,7 +301,8 @@ def test_engineering_anchor_is_scoped_to_authenticated_island(tmp_path):
         )
 
 
-def test_engineering_provenance_uses_same_node_research_sha_and_allows_commit_chain(tmp_path):
+@pytest.mark.parametrize("node_id", ["N023", "N000"])
+def test_engineering_provenance_uses_same_node_research_sha_and_allows_commit_chain(tmp_path, node_id):
     repo, base = _repo(tmp_path)
     (repo / "model.py").write_text("research = True\n")
     _git(repo, "add", "model.py")
@@ -309,15 +310,22 @@ def test_engineering_provenance_uses_same_node_research_sha_and_allows_commit_ch
     research_sha = _git(repo, "rev-parse", "HEAD")
     coral_dir = tmp_path / ".coral"
     _write_node_spec(coral_dir, base)
+    if node_id == "N000":
+        node = coral_dir / "public/notes/nodes/N023"
+        spec = yaml.safe_load((node / "spec.md").read_text())
+        spec["node_id"] = node_id
+        (node / "spec.md").write_text(yaml.safe_dump(spec))
+        node.rename(node.with_name(node_id))
     attempts = coral_dir / "public" / "attempts"
     attempts.mkdir(parents=True)
     (attempts / f"{research_sha}.json").write_text(json.dumps({
         "commit_hash": research_sha,
         "status": "improved",
-        "metadata": {"mode": "research", "node_id": "N023"},
+        "metadata": {"mode": "research", "node_id": node_id},
     }))
     declaration = _submission(research_sha)
     declaration.update(mode="engineering", quality_anchor=research_sha)
+    declaration.update(node_id=node_id, node_type="seed" if node_id == "N000" else "research")
     (repo / "submission.yaml").write_text(yaml.safe_dump(declaration, sort_keys=False))
     _git(repo, "add", "submission.yaml")
     _git(repo, "commit", "-m", "first engineering candidate")
