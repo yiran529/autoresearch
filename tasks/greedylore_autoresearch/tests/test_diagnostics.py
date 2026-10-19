@@ -9,7 +9,12 @@ from autoresearch import diagnostics
 
 
 @pytest.fixture
-def task(tmp_path):
+def task(tmp_path, monkeypatch):
+    from autoresearch import diagnostic_sandbox
+    driver = tmp_path / 'nvidia-driver' / '0000:01:00.0'
+    driver.mkdir(parents=True)
+    (driver / 'information').write_text('GPU UUID: GPU-test\nDevice Minor: 3\n')
+    monkeypatch.setattr(diagnostic_sandbox, '_NVIDIA_DRIVER_ROOT', driver.parent, raising=False)
     item = diagnostics.create_task(tmp_path / '.coral', 'N001', 'research', 1, 'a' * 40)
     item.bind(os.getpid())
     return item
@@ -176,6 +181,64 @@ def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task)
     assert ['/dev/nvidia0', '/dev/nvidia0'] not in binds
     writable = [command[index + 1] for index, arg in enumerate(command) if arg == '--bind']
     assert writable == [str(task.workspace / 'experiments'), str(task.workspace / 'results')]
+
+
+def test_diagnostic_maps_reserved_uuids_to_device_minors(task, tmp_path):
+    from autoresearch import diagnostic_sandbox
+    driver = tmp_path / 'driver'
+    for bus, uuid, minor in [('bus-a', 'GPU-first', 3), ('bus-b', 'GPU-second', 0)]:
+        entry = driver / bus
+        entry.mkdir(parents=True)
+        (entry / 'information').write_text(f'GPU UUID: {uuid}\nDevice Minor: {minor}\n')
+    assert diagnostic_sandbox.device_minors_for_uuids(
+        ['GPU-second', 'GPU-first'], driver_root=driver) == [0, 3]
+    with pytest.raises(ValueError, match='GPU-missing'):
+        diagnostic_sandbox.device_minors_for_uuids(['GPU-missing'], driver_root=driver)
+
+
+@pytest.mark.parametrize('minor', ['-1', 'not-a-number', ''])
+def test_diagnostic_rejects_invalid_device_minor(task, tmp_path, minor):
+    from autoresearch import diagnostic_sandbox
+    driver = tmp_path / 'driver' / 'bus'
+    driver.mkdir(parents=True)
+    (driver / 'information').write_text(f'GPU UUID: GPU-test\nDevice Minor: {minor}\n')
+    with pytest.raises(ValueError, match='device mapping'):
+        diagnostic_sandbox.device_minors_for_uuids(['GPU-test'], driver_root=driver.parent)
+
+
+@pytest.mark.parametrize('uuids,minors,requested', [
+    (['GPU-test', 'GPU-test'], [0, 3], ['GPU-test']),
+    (['GPU-test', 'GPU-other'], [3, 3], ['GPU-test', 'GPU-other']),
+])
+def test_diagnostic_rejects_ambiguous_device_mapping(task, tmp_path, uuids, minors, requested):
+    from autoresearch import diagnostic_sandbox
+    driver = tmp_path / 'driver'
+    for number, (gpu_uuid, minor) in enumerate(zip(uuids, minors, strict=True)):
+        entry = driver / str(number)
+        entry.mkdir(parents=True)
+        (entry / 'information').write_text(f'GPU UUID: {gpu_uuid}\nDevice Minor: {minor}\n')
+    with pytest.raises(ValueError, match='device mapping'):
+        diagnostic_sandbox.device_minors_for_uuids(requested, driver_root=driver)
+
+
+def test_missing_device_mapping_releases_reservation_without_charging(task, monkeypatch):
+    from autoresearch import diagnostic_sandbox as sandbox
+    released = task.workspace / 'results/released'
+    class Reservation:
+        indices = (0,)
+        uuids = ('GPU-unmapped',)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            released.touch()
+    monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/unused/bwrap')
+    monkeypatch.setattr(sandbox, 'reserve_idle_gpus', lambda *_args, **_kwargs: Reservation())
+    result = task.run(request(), os.getpid(), sandbox.execute_diagnostic)
+    assert result['status'] == 'unavailable'
+    assert result['started'] is False
+    assert 'GPU-unmapped' in result['reason']
+    assert task.read()['executions'] == 0
+    assert released.exists()
 
 
 @pytest.mark.parametrize('outcome', ['success', 'nonzero', 'missing_output', 'launch_error', 'sandbox_error'])
@@ -367,13 +430,20 @@ def test_task_evidence_cannot_be_replaced_by_retry(tmp_path):
                                 'a' * 40, evidence_hash='new')
 
 
-def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
+@pytest.mark.parametrize('sharing', [None, False, True])
+def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch, sharing):
     import sys
 
     from autoresearch import diagnostic_sandbox as sandbox
+    if sharing is not None:
+        (task.coral_dir / 'config.yaml').write_text(json.dumps({
+            'grader': {'args': {'pretraining_allow_other_users': sharing}},
+        }))
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:9999')
     monkeypatch.setenv('OPENAI_API_KEY', 'test-only-never-forward')
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'GPU-host-unassigned')
     released = task.workspace / 'results/released'
+    checked_exclusive = task.workspace / 'results/checked-exclusive'
     class Reservation:
         indices = (0,)
         uuids = ('GPU-test',)
@@ -382,9 +452,12 @@ def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
         def __exit__(self, *_args):
             released.write_text('released')
         def check_exclusive(self, pid):
-            pass
+            if sharing is True:
+                raise RuntimeError('timing-only exclusivity check rejects shared diagnostics')
+            checked_exclusive.touch()
     monkeypatch.setattr(sandbox.shutil, 'which', lambda _: '/unused/bwrap')
     def reserve(*_args, **kwargs):
+        assert kwargs.get('allow_other_users', False) is (sharing is True)
         assert kwargs['wait_timeout'] >= 3600
         assert kwargs['source_role'] == 'analyzer'
         assert kwargs['execution_group'] == str(task.coral_dir)
@@ -392,17 +465,24 @@ def test_timeout_cleans_process_and_releases_reservation(task, monkeypatch):
         return Reservation()
     monkeypatch.setattr(sandbox, 'reserve_idle_gpus', reserve)
     # Only namespace/GPU dependencies are replaced; run a real process and timeout.
-    monkeypatch.setattr(sandbox, 'build_sandbox', lambda _ws, _roots, _devices, argv, **_kw: argv)
+    def cpu_sandbox(_ws, _roots, devices, argv, **_kwargs):
+        # NVML index 0 is deliberately not /dev/nvidia0 in this fixture.
+        assert list(devices) in ([], [3])
+        return argv
+    monkeypatch.setattr(sandbox, 'build_sandbox', cpu_sandbox)
     script = task.workspace / 'experiments' / 'slow.py'
     script.write_text('import os,time\nprint("started", flush=True)\n'
+                      'print("cuda_visibility", os.environ.get("CUDA_VISIBLE_DEVICES"), flush=True)\n'
                       'print("model_environment_leaked", any(k in os.environ for k in '
                       '("HTTPS_PROXY", "OPENAI_API_KEY")), flush=True)\ntime.sleep(30)\n')
     result = task.run(request(argv=[sys.executable, str(script)], timeout=0.2),
                       os.getpid(), sandbox.execute_diagnostic)
     assert result['status'] == 'timed_out'
     assert released.read_text() == 'released'
+    assert checked_exclusive.exists() is (sharing is not True)
     assert 'started' in (task.records / 'request-1/stdout.log').read_text()
     assert 'model_environment_leaked False' in (task.records / 'request-1/stdout.log').read_text()
+    assert 'cuda_visibility GPU-test' in (task.records / 'request-1/stdout.log').read_text()
     assert (task.records / 'request-1/scripts/slow.py').read_text() == script.read_text()
 
 

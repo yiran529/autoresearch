@@ -120,6 +120,8 @@ autoresearch diagnostic run --gpus 4 --timeout 300 -- \
 
 启用条件是 `grader.args.analyzer_diagnostics: true`、可用的 bubblewrap namespace，以及显式配置的公共运行依赖。`diagnostic_runtime_roots` 只读挂载所需 Python 环境（含其公开的解释器/链接目标）、CUDA 依赖、本地 C4 和 tokenizer；`diagnostic_path` 指向该环境的 bin 目录。不要挂载整个 home、run、其他 workspace、凭据或 grader 私有环境。它们是宿主配置，不由 Analyzer 请求指定；不会自动安装依赖或下载数据。未安装 bubblewrap 或 namespace 探测失败时保留普通分析并提示诊断未启用；已启用但运行环境不完整时诊断明确失败，不直接在宿主执行命令。
 
+诊断执行器按已分配 GPU 的 UUID 从宿主 `/proc/driver/nvidia/gpus/*/information` 解析设备 minor，再挂载对应 `/dev/nvidiaN`；不能把 `nvidia-smi` index 当作设备节点编号。`CUDA_VISIBLE_DEVICES` 仍按已分配 UUID 筛选，记录同时保留 index、UUID 和 device minor。映射缺失或不唯一时释放预留并明确失败，不猜测或暴露额外 GPU。诊断沿用 `pretraining_allow_other_users` 共享开关；开启时不执行 timing 专用的独占检查，正式 timing 仍要求独占。
+
 可通过 `analyzer_model` 和 `analyzer_reasoning_effort` 指定诊断 Analyzer 的模型和推理强度。Codex 从可写的 `results/` 启动，并通过 `--add-dir` 获准写 `experiments/`；外层 workspace 根目录及 `code/`、`evidence/` 仍只读。提示中提供 workspace 和固定输入的绝对路径；权威诊断命令仍以 workspace 根目录为工作目录，与 Codex 的初始目录不同。这样避免 Codex 内层 sandbox 在只读根目录创建 `.git`、`.aws` 等保护路径时失败。真实 Codex smoke 已验证读取固定输入、写脚本/结果及拒绝修改证据；该 smoke 不申请 GPU，不能替代 GPU 诊断端到端验证。仅通过 namespace 探针不代表模型工具可用，工具启动失败不得视为有效研究结论。
 
 本机 Codex 0.160.0 的工具网络过滤器拒绝 Unix socket 创建，单路径 allow 配置在本机探针中未解除限制。可在单次隔离运行中显式设置 `analyzer_allow_unix_sockets: true`（任务模板默认 false）：启动器仅对该 Analyzer 启用 Unix socket 例外，保留工具网络代理和空外部域名允许列表，不关闭内层 sandbox。该例外允许所有可达 Unix socket，而非单路径授权，不能在非隔离进程中复用。真实 Codex CPU smoke 已验证可信请求、证据只读及工具 HTTP 被拒绝；v6 随后通过同一权威入口完成了四卡机制诊断。模型自行写出的请求失败说明不能替代服务端执行记录。公共 Python 运行时挂载还须包含解释器符号链接的中间路径，不能只挂载最终解析到的版本目录。

@@ -16,6 +16,30 @@ import yaml
 
 from coral.grader.timeouts import DIAGNOSTIC_QUEUE_TIMEOUT
 
+_NVIDIA_DRIVER_ROOT = Path('/proc/driver/nvidia/gpus')
+
+
+def device_minors_for_uuids(uuids, *, driver_root=None) -> list[int]:
+    """Resolve allocated identities, never assume NVML index equals device minor."""
+    root = _NVIDIA_DRIVER_ROOT if driver_root is None else Path(driver_root)
+    requested = tuple(uuids)
+    if not requested or len(set(requested)) != len(requested):
+        raise ValueError('invalid NVIDIA device mapping request')
+    found = {}
+    for path in root.glob('*/information'):
+        fields = dict(line.split(':', 1) for line in path.read_text().splitlines() if ':' in line)
+        uuid = fields.get('GPU UUID', '').strip()
+        if uuid not in requested:
+            continue
+        minor = fields.get('Device Minor', '').strip()
+        if not minor.isdecimal() or uuid in found or int(minor) in found.values():
+            raise ValueError(f'invalid NVIDIA device mapping for {uuid}')
+        found[uuid] = int(minor)
+    missing = set(requested) - found.keys()
+    if missing:
+        raise ValueError('NVIDIA device mapping unavailable for ' + ', '.join(sorted(missing)))
+    return [found[uuid] for uuid in requested]
+
 
 def reserve_idle_gpus(*args, **kwargs):
     # Only the host diagnostic executor has the grader package installed.
@@ -48,7 +72,7 @@ def isolation_available() -> bool:
 
 def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=False,
                   write_sources=None) -> list[str]:
-    """Create a minimal namespace: no host root, private /proc, explicit devices."""
+    """Create a minimal namespace; devices are NVIDIA minors, not NVML indices."""
     workspace = Path(workspace).absolute()
     for path in (workspace, workspace / 'experiments', workspace / 'results'):
         _no_symlinks(path)
@@ -212,9 +236,12 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
         config_path = task.coral_dir / 'config.yaml'
         config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
         execution_limit = config.get('grader', {}).get('parallel', {}).get('max_workers', 1)
+        allow_other_users = config.get('grader', {}).get('args', {}).get(
+            'pretraining_allow_other_users', False)
         reservation = reserve_idle_gpus(
             payload['gpus'], runtime.get('gpu_lock_dir') or default_lock_dir(),
             IdleGpuPolicy(0, 512, 5), wait_timeout=DIAGNOSTIC_QUEUE_TIMEOUT, poll_interval=5,
+            allow_other_users=allow_other_users,
             check_cancelled=cancelled,
             source_role='analyzer', execution_group=str(task.coral_dir.resolve()),
             execution_limit=execution_limit,
@@ -223,6 +250,11 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
         return {'status': 'unavailable', 'started': False, 'reason': str(exc),
                 'queue_seconds': time.monotonic() - queued}
     with reservation:
+        try:
+            device_minors = device_minors_for_uuids(reservation.uuids)
+        except (ValueError, OSError) as exc:
+            return {'status': 'unavailable', 'started': False, 'reason': str(exc),
+                    'queue_seconds': time.monotonic() - queued}
         # Freeze both mutable inputs after queueing, then execute isolated copies.
         # The live Analyzer cannot change the bytes loaded by the command.
         frozen = record / 'execution'
@@ -236,15 +268,18 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                     'queue_seconds': time.monotonic() - queued}
         result = {'started': True, 'queue_seconds': time.monotonic() - queued,
                   'gpu_indices': list(reservation.indices), 'gpu_uuids': list(reservation.uuids),
+                  'gpu_device_minors': device_minors,
                   'stdout_path': str(record / 'stdout.log'),
                   'stderr_path': str(record / 'stderr.log'),
                   'results_path': str(record / 'results')}
         command = build_sandbox(task.workspace, runtime.get('readonly_paths', []),
-                                reservation.indices, payload['argv'], write_sources={
+                                device_minors, payload['argv'], write_sources={
                                     'experiments': frozen / 'experiments',
                                     'results': frozen / 'results',
                                 })
         # Do not inherit grader credentials, Python paths or its virtual environment.
+        # UUID order matches the reservation; device nodes were resolved by UUID,
+        # not by the independently ordered nvidia-smi indices.
         environment = {'PATH': runtime.get('path', '/usr/local/bin:/usr/bin:/bin'),
                        'HOME': '/tmp', 'TMPDIR': '/tmp', 'LANG': 'C.UTF-8',
                        'CUDA_VISIBLE_DEVICES': ','.join(reservation.uuids),
@@ -264,7 +299,8 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                     if time.monotonic() - started >= payload['timeout']:
                         raise TimeoutError('diagnostic exceeded execution wall-clock budget')
                     if time.monotonic() >= next_inventory:
-                        reservation.check_exclusive(process.pid)
+                        if not allow_other_users:
+                            reservation.check_exclusive(process.pid)
                         next_inventory = time.monotonic() + 1
                     time.sleep(0.1)
                 result.update(status='completed' if process.returncode == 0 else 'failed',
