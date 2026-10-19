@@ -112,6 +112,9 @@ def _check_delivered_prompts(root, scenario):
         assert f'.codex/roles/{aid}.md' in capture['instructions']
         assert '.codex/notes/toolkit/' in capture['instructions']
         assert capture['startup_prompt']
+        assert 'AGENTS.md' in capture['startup_prompt']
+        assert f'.codex/roles/{aid}.md' in capture['startup_prompt']
+        assert 'inspect the existing Spec, Evaluation/Attempts and Worktree first' in capture['startup_prompt']
         assert capture['argv'][0] == 'exec'
         assert capture['resources']['workflow_rules.md'] == (task / 'roles/workflow_rules.md').read_text()
         for ref in ('common', 'initial_diagnostics', 'low_rank', 'quantization', 'sparsification', 'temporal', 'hybrid', 'engineer_runtime', 'semantic_criteria', 'system_ref'):
@@ -122,7 +125,12 @@ def _check_delivered_prompts(root, scenario):
             assert f'`{mode}`' in capture['instructions']
             assert f'`{node}`' in capture['instructions']
             assert 'one formal Research evaluation' in capture['instructions']
+            assert 'one distinct formal Research candidate' in capture['startup_prompt']
         else:
+            node = state['engineering_workers'][aid]['node_id']
+            assert f'`{node}`' in capture['startup_prompt']
+            assert 'at most two distinct formal Engineering candidates' in capture['startup_prompt']
+            assert 'do not wait for Research Analysis' in capture['startup_prompt']
             assert '--analysis-file /absolute/scratch/final.json' in capture['instructions']
             assert 'author the final Engineering Analysis yourself' in capture['role_text']
     assert {state['nodes'][p['agent_id'].removeprefix('research-')]['research']['research_mode']

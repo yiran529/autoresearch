@@ -60,6 +60,18 @@ def test_dynamic_instruction_is_node_bound_and_omits_private_protocol():
     assert "SO_PEERCRED" not in content
 
 
+def test_dynamic_score_feedback_does_not_request_open_ended_iteration():
+    manager = AgentManager(_config())
+    prompt = manager._build_score_prompt({
+        "agent_id": "research-N001", "commit_hash": "a" * 40, "score": 0.5,
+        "feedback": "Recorded quality result.", "title": "Research candidate",
+    }, 1)
+    assert "Recorded quality result." in prompt
+    assert "does not reset" in prompt
+    assert "Do NOT exit" not in prompt
+    assert "sweep variants" not in prompt
+
+
 @pytest.mark.parametrize("assignment", [
     {"agent_id": "research-N001", "role": "research", "node_id": "N002", "status": "active"},
     {"agent_id": "engineer-E0001", "role": "research", "node_id": "N001", "status": "active"},

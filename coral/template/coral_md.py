@@ -32,7 +32,7 @@ def generate_coral_md(
     if config.agents.dynamic.enabled:
         if workflow_role == "research" and node_id:
             scope = (
-                f"You own Research Node `{node_id}`. Choose a Parent, then run "
+                f"You own Research Node `{node_id}`. Choose a completed Parent, then run "
                 "`autoresearch node initialize` before changing the code base. "
                 "Run one formal Research evaluation; handle same-SHA infrastructure retries "
                 "if needed, then wait for Research assignment completion and Agent retirement. The host independently runs this Node's Research Analyzer and quality-gated Engineering; only their completion makes this Node an eligible Parent."

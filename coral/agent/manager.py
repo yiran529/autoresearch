@@ -25,7 +25,7 @@ from coral.agent.assignments import (
     partition_into_islands,
     resolve_agent_specs,
 )
-from coral.agent.dynamic import DynamicAssignmentClient, spec_for_assignment
+from coral.agent.dynamic import DynamicAssignmentClient, prompt_for_assignment, spec_for_assignment
 from coral.agent.exit_classifier import (
     classify_by_uptime,
 )
@@ -798,6 +798,12 @@ class AgentManager:
         else:
             log_dir = self.paths.coral_dir / "public" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
+        if self.config.agents.dynamic.enabled and spec and spec.workflow_role:
+            prompt = prompt_for_assignment(
+                spec, instruction_file=instruction_file, shared_dir=shared_dir_name,
+                resuming=bool(resume_session_id), feedback=prompt,
+            )
+            prompt_source = prompt_source or "workflow"
         handle = runtime.start(
             worktree_path=worktree_path,
             coral_md_path=worktree_path / instruction_file,
@@ -1817,6 +1823,15 @@ class AgentManager:
         ]
         if feedback:
             lines.append(f"Feedback: {feedback}")
+        if self.config.agents.dynamic.enabled:
+            lines.extend([
+                "",
+                "This result does not reset your assignment or candidate budget. Inspect existing "
+                "Attempts and follow your assigned role's remaining steps. Use only permitted "
+                "same-SHA infrastructure retries; if the formal candidate budget is exhausted, "
+                "proceed to the role's required completion steps and host retirement.",
+            ])
+            return "\n".join(lines)
         lines.extend(
             [
                 "",

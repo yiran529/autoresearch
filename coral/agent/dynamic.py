@@ -26,6 +26,36 @@ class DynamicAssignment:
     research_mode: str | None = None
 
 
+def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir: str,
+                          resuming: bool, feedback: str | None = None) -> str:
+    """Give finite workflow instructions in the actual initial/resumed user message."""
+    if spec.workflow_role not in {"research", "engineering"} or not spec.node_id:
+        raise ValueError("workflow prompt requires a role and a bound Node")
+    action = "Resume" if resuming else "Start"
+    scope = (
+        "Use one distinct formal Research candidate; only permitted same-SHA infrastructure "
+        "retries are allowed. After the final result, wait for host retirement; Research Analysis "
+        "and quality-gated Engineering are handled independently by the host."
+        if spec.workflow_role == "research" else
+        "Use at most two distinct formal Engineering candidates across this assignment, including "
+        "all resumes. Preserve algorithm semantics and author the final Engineering Analysis "
+        "yourself. Use the trusted Engineering finish command, then wait for publication and "
+        "retirement; do not wait for Research Analysis before starting Engineering."
+    )
+    prompt = (
+        f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`. "
+        f"Read `{instruction_file}` and your role at `{shared_dir}/roles/{spec.agent_id}.md` "
+        f"before acting, then follow that role's numbered steps and concrete work guidance. "
+        "On start or resume, inspect the existing Spec, Evaluation/Attempts and Worktree first; "
+        "continue from the recorded stage and preserve existing changes and frozen submissions. "
+        "Do not restart completed steps, choose another Node or reset the candidate count. "
+        f"{scope} Work autonomously within these steps and limits."
+    )
+    if feedback:
+        prompt += f"\n\nHost feedback for this same assignment:\n{feedback}"
+    return prompt
+
+
 class DynamicAssignmentClient:
     def __init__(
         self,
