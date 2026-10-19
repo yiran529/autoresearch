@@ -22,6 +22,13 @@ _TASK = re.compile(r'N[0-9]{3}-(research|engineering)-v[1-9][0-9]*')
 _REQUEST = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 
 
+def remaining_budget(state: dict) -> tuple[int, int]:
+    """Return total and successful runs remaining, including persisted retries."""
+    completed = sum(item['result'].get('status') == 'completed'
+                    for item in state['requests'].values())
+    return max(0, 10 - state['executions']), max(0, 3 - completed)
+
+
 def _live_descendant(peer: int, root: dict | None) -> bool:
     if not root:
         return False
@@ -141,7 +148,7 @@ class DiagnosticTask:
                 if previous['request'] != payload:
                     raise ValueError('diagnostic request identity reused with different arguments')
                 return previous['result']
-            if state['executions'] >= 3:
+            if 0 in remaining_budget(state):
                 raise ValueError('analysis diagnostic execution budget exhausted')
             diagnostic_id = f'{self.task_id}/{request_id}'
             record = {**payload, 'diagnostic_id': diagnostic_id,

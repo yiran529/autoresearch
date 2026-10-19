@@ -602,7 +602,7 @@ def analyze(
     else:
         from .diagnostic_sandbox import isolation_available
         from .diagnostic_session import analyzer_timeout, run_diagnostic_codex, settings
-        from .diagnostics import create_task
+        from .diagnostics import create_task, remaining_budget
 
         enabled = settings(ctx.coral_dir).get("analyzer_diagnostics", False)
         timeout = analyzer_timeout(ctx.coral_dir)
@@ -635,10 +635,12 @@ def analyze(
             if references.is_dir():
                 analyzer_roots.append(references)
             if task is not None:
-                remaining = max(0, 3 - task.read()['executions'])
+                total_remaining, successful_remaining = remaining_budget(task.read())
                 guidance = (
-                    "\nControlled diagnostics are enabled: at most 3 executions per analysis task; "
-                    f"{remaining} remaining. Request 1–4 GPUs as needed, at most 600 seconds "
+                    "\nControlled diagnostics are enabled: at most 3 successful executions and "
+                    "10 total executions per analysis task, including failed, timed-out and "
+                    f"interrupted runs; {total_remaining} total and {successful_remaining} "
+                    "successful executions remaining. Request 1–4 GPUs as needed, at most 600 seconds "
                     "per execution and 3600 seconds per queue wait. Write scripts in experiments/ "
                     "and outputs in results/. Run only through the authoritative entrypoint:\n"
                     "autoresearch diagnostic run --gpus 4 --timeout 600 -- "
@@ -646,7 +648,12 @@ def analyze(
                     "Use diagnostics only when key evidence is missing and a bounded experiment "
                     "can distinguish leading explanations; do not repeat sufficient existing tests. "
                     "Never bypass this entrypoint to launch GPU work. Cite diagnostic IDs and "
-                    "persistent results. Report uncertainty when execution fails or budget is "
+                    "persistent results. When execution fails, inspect its stdout/stderr and "
+                    "record, debug the cause, then retry through the same entrypoint with a new "
+                    "request ID after fixing it; do not blindly repeat unchanged failing commands. "
+                    "Reuse the original request ID only to retrieve its existing result, not to "
+                    "rerun it. All retries consume the total execution budget. "
+                    "Report uncertainty when failures remain unresolved or budget is "
                     "insufficient; do not invent mechanism conclusions."
                 )
                 output = diagnostic_runner(session_prompt + guidance, analyzer_roots,

@@ -120,7 +120,7 @@ autoresearch diagnostic run --gpus 4 --timeout 300 -- \
   python experiments/probe.py --output results/probe.json
 ```
 
-每个分析版本最多实际执行 3 次，每次按需申请 1–4 卡、运行最多 300 秒，排队最多 300 秒。排队失败不消耗执行次数；重复使用 `--request-id <原ID>` 查询同一请求不会再执行。失败、超时和退出码也被记录。重启同一分析版本不重置预算，正式 Analysis 已发布时仍直接复用。
+每个分析版本最多成功执行 3 次、总执行 10 次（含失败、超时和执行中断），每次按需申请 1–4 卡、运行最多 600 秒，单次排队最多 3600 秒。排队失败不消耗执行次数；重复使用 `--request-id <原ID>` 查询同一请求不会再执行。失败后可查看日志、修复诊断脚本或启动命令，再用新 request ID 重试，所有失败、重试和退出码均被记录。重启同一分析版本不重置预算，正式 Analysis 已发布时仍直接复用。
 
 工作区位于 `.coral/public/diagnostics/<Node>-<mode>-v<version>/workspace/`。只有 `experiments/` 和 `results/` 可写，固定 `code/`、`evidence/` 只读；兄弟任务、私有状态和未分配 GPU 不挂载。取得 GPU 后冻结可写输入，实验执行冻结副本，仍使用原来的命令和 workspace 路径，避免排队期间的修改污染证据。结果安全合并拷回 workspace，具体归因以本次持久记录为准。`records/<request-id>/` 保存脚本和输入快照、命令、固定证据身份、GPU、运行时间、stdout/stderr 及结果副本，供 Analysis 引用。每类归档上限 64 MiB / 4096 条目，超出时明确记录归档失败；不承诺完整保留超大输出。普通 Researcher/Engineer 不能改写诊断目录。
 

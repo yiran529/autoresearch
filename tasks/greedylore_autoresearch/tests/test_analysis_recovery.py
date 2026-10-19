@@ -145,7 +145,7 @@ def test_diagnostic_runner_keeps_results_and_revokes_identity(tmp_path):
         observed['task'] = task
         assert scratch == task.workspace
         assert 'diagnostic run' in prompt
-        assert 'at most 3 executions' in prompt
+        assert 'at most 3 successful executions and 10 total executions' in prompt
         script = scratch / 'experiments/probe.py'
         script.write_text('print("evidence")')
         def execute(item, payload, cancelled):
@@ -542,7 +542,7 @@ def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, m
     prompt = captured['stdin']
     role = (Path(__file__).resolve().parents[1] / 'prompts/research_analysis.md').read_text()
     assert prompt.startswith(role)
-    assert 'at most 3 executions per analysis task' in prompt
+    assert 'at most 3 successful executions and 10 total executions per analysis task' in prompt
     assert 'at most 600 seconds per execution and 3600 seconds per queue wait' in prompt
     assert '--timeout 600 --' in prompt
     assert 'resolved relative to the workspace root' in prompt
