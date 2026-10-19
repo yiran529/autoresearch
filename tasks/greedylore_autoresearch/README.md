@@ -22,3 +22,10 @@ Historical Analyses remain readable. Existing runs use their saved config and ro
 ## Validation
 
 Scripted workflow simulations cover normal operation and injected failures, including same-SHA retry, claim races, publication and parallel Research. They use synthetic results, with no model, training or GPU calls. Scientific effectiveness requires a separate real low-rank pilot with matching budgets and legitimate saved training states; passing workflow tests does not establish scientific improvement.
+
+
+## Memory
+
+The existing Research-driven Memory trigger and two Markdown Summary strings are retained. Summaries distinguish new mechanism evidence, replication, refutation/scope restrictions and open questions, with exact Analysis versions. Research Summary covers algorithm/state/update evidence; Engineering Summary covers measured performance and Engineer-authored attribution. Engineering Analysis is an input, not an independent trigger.
+
+For bounded verification, Memory can read public diagnostic records matching a published Node/mode/version/Research SHA, plus text results. Staging excludes symlinks, scripts, code/state snapshots, binary tensors and unrelated identities, with limits of 1 MB per file, 256 files and 8 MB total. Omitted files must be treated as unavailable, not as negative evidence.

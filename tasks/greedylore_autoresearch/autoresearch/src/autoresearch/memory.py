@@ -151,7 +151,7 @@ def _host_publish(context: MemoryContext, kind: str, content: str) -> Path:
         return atomic_write_text(target, content)
 
 
-def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, Path]:
+def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, ...]:
     """Copy only public navigation/evidence files for the Memory session."""
     staged_notes = scratch / "public" / "notes"
     staged_logs = scratch / "public" / "eval_logs"
@@ -183,7 +183,81 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, P
                     and source.stat().st_size <= 1_000_000
                     and not any(parent.is_symlink() for parent in source.parents if parent != log_root)):
                 copy_file(source, staged_logs / source.relative_to(log_root))
-    return staged_notes, staged_logs
+    staged_diagnostics = _stage_diagnostics(context, staged_notes, scratch)
+    return staged_notes, staged_logs, staged_diagnostics
+
+
+
+def _stage_diagnostics(context: MemoryContext, staged_notes: Path, scratch: Path) -> Path:
+    """Stage bounded text evidence only for published Analysis identities."""
+    destination = scratch / "public" / "diagnostics"
+    destination.mkdir(parents=True, exist_ok=True)
+    source_root = context.island_root / "diagnostics"
+    if not source_root.is_dir() or source_root.is_symlink():
+        return destination
+    remaining_bytes, remaining_files = 8_000_000, 256
+
+    def safe_file(path: Path) -> bool:
+        return (path.is_file() and not path.is_symlink()
+                and path.resolve().is_relative_to(source_root.resolve())
+                and not any(p.is_symlink() for p in path.parents if p.is_relative_to(source_root))
+                and path.stat().st_size <= 1_000_000)
+
+    def copy_file(path: Path) -> None:
+        nonlocal remaining_bytes, remaining_files
+        if not safe_file(path):
+            return
+        size = path.stat().st_size
+        if remaining_files <= 0 or size > remaining_bytes:
+            return
+        target = destination / path.relative_to(source_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+        remaining_bytes -= size
+        remaining_files -= 1
+
+    for ref in list_analysis_refs(staged_notes):
+        match = _REF.fullmatch(ref)
+        node_id, mode = match.groups()
+        version = int(Path(ref).stem.rsplit("_v", 1)[1])
+        try:
+            analysis = json.loads((staged_notes / ref).read_text())
+            sha = analysis["research_sha"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        identity = f"{node_id}-{mode}-v{version}"
+        records = source_root / identity / "records"
+        if not records.is_dir() or any(p.is_symlink() for p in (records, records.parent)):
+            continue
+        for record in sorted(records.iterdir()):
+            if remaining_files <= 0 or remaining_bytes <= 0:
+                return destination
+            if not record.is_dir() or record.is_symlink() or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", record.name):
+                continue
+            metadata = record / "record.json"
+            if not safe_file(metadata):
+                continue
+            try:
+                data = json.loads(metadata.read_text())
+            except (OSError, ValueError):
+                continue
+            if (not isinstance(data, dict) or data.get("node_id") != node_id or data.get("mode") != mode
+                    or data.get("analysis_version") != version or data.get("research_sha") != sha
+                    or data.get("diagnostic_id") != f"{identity}/{record.name}"):
+                continue
+            copy_file(metadata)
+            if not (destination / metadata.relative_to(source_root)).is_file():
+                continue
+            for name in ("stdout.log", "stderr.log"):
+                copy_file(record / name)
+            results = record / "results"
+            if results.is_dir() and not results.is_symlink():
+                for path in sorted(results.rglob("*")):
+                    if remaining_files <= 0 or remaining_bytes <= 0:
+                        return destination
+                    if path.suffix in {".json", ".jsonl", ".csv", ".tsv", ".txt", ".md", ".log"}:
+                        copy_file(path)
+    return destination
 
 
 def consolidate_memory(

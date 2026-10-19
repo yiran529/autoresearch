@@ -245,3 +245,39 @@ def test_agent_artifact_router_cannot_publish_host_summary(kind):
         validate_artifact(kind, _summary([]), {
             "node_id": None, "mode": None, "version": None,
         })
+
+
+def test_memory_stages_only_matching_public_diagnostic_records_and_bounded_results(tmp_path):
+    from autoresearch.memory import _stage_public_inputs
+
+    context = MemoryContext(tmp_path / '.coral')
+    ref = _analysis(context.notes_root, 'N001', 'research', 1)
+    (context.notes_root / ref).write_text(json.dumps({'research_sha': 'a' * 40}))
+    record = context.island_root / 'diagnostics/N001-research-v1/records/probe'
+    record.mkdir(parents=True)
+    metadata = {'node_id': 'N001', 'mode': 'research', 'analysis_version': 1,
+                'research_sha': 'a' * 40, 'diagnostic_id': 'N001-research-v1/probe', 'status': 'completed'}
+    (record / 'record.json').write_text(json.dumps(metadata))
+    (record / 'results').mkdir()
+    (record / 'results/metric.json').write_text('{"error":0.25}')
+    (record / 'results/large.txt').write_bytes(b'x' * 1_000_001)
+    (record / 'results/model.pt').write_bytes(b'not a text result')
+    private = context.coral_dir / 'private'
+    private.mkdir()
+    (private / 'secret.txt').write_text('not staged')
+    (record / 'results/link.txt').symlink_to(private / 'secret.txt')
+    (record / 'scripts').mkdir()
+    (record / 'scripts/probe.py').write_text('not staged')
+    foreign = record.parent / 'foreign'
+    foreign.mkdir()
+    (foreign / 'record.json').write_text(json.dumps({**metadata, 'research_sha': 'b' * 40}))
+    scratch = tmp_path / 'scratch'
+    roots = _stage_public_inputs(context, scratch)
+    staged = scratch / 'public/diagnostics/N001-research-v1/records/probe'
+    assert (staged / 'record.json').is_file()
+    assert (staged / 'results/metric.json').read_text() == '{"error":0.25}'
+    for excluded in ('results/large.txt', 'results/model.pt', 'results/link.txt', 'scripts/probe.py'):
+        assert not (staged / excluded).exists()
+    assert not (staged.parent / 'foreign').exists()
+    assert all(root.is_relative_to(scratch) for root in roots)
+    assert not list(scratch.rglob('secret.txt'))

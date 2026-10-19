@@ -36,9 +36,9 @@
 
 ## Part 3 — Memory
 
-- [ ] Update evidence classification and role-specific Summary rules. Preserve the current trigger and JSON/frontmatter contracts.
-- [ ] Where required, stage only bounded public diagnostic records/results, excluding code snapshots, secrets and unrelated runtime files; test staging boundaries.
-- [ ] Run Memory and workflow regressions; commit.
+- [x] Update evidence classification and role-specific Summary rules. Preserve the current trigger and JSON/frontmatter contracts.
+- [x] Where required, stage only bounded public diagnostic records/results, excluding code snapshots, secrets and unrelated runtime files; test staging boundaries.
+- [x] Run Memory and workflow regressions; commit.
 
 ## Part 4 — Persistent research modes
 
@@ -54,3 +54,5 @@ Workflow simulation uses scripted agents and synthetic results. No scientific im
 Part 1 validation: 242 passed, 1 namespace-availability skip; core/task changed Python lint clean. Scientific pilot remains unrun: no real training states or model/GPU runs were used.
 
 Part 2 validation: 300 passed, 1 namespace-availability skip, including normal/fault scripted-agent simulations. No Engineering Analyzer is launched by the finalizer. Historical analyses remain unchanged.
+
+Part 3 validation: Memory plus workflow-state regression tests passed (50 total). Diagnostic staging tests cover matching identities, oversized files, binary files, symlinks and foreign SHA exclusion.
