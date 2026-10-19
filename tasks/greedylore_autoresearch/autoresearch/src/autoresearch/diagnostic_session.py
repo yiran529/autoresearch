@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -49,81 +50,82 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     schema = task.workspace / 'analysis.schema.json'
     shutil.copyfile(output_schema, schema)
     output = scratch / 'results/output.json'
-    home = task.private / 'codex-home'
-    home.mkdir(parents=True, exist_ok=True)
-    (home / '.codex').mkdir(exist_ok=True)
-    # Codex needs its own API credentials. These are never mounted in experiments.
-    auth = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'auth.json'
-    binary = Path(binary).resolve()
-    isolation_binary = Path(shutil.which('bwrap')).resolve()
-    socket = task.coral_dir / 'public/trusted.sock'
-    mounts = [*runtime_roots, binary.parent, isolation_binary.parent, *read_roots, schema, tools, socket,
-              task.records]
-    task.records.mkdir(exist_ok=True)
-    for name in ('/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ssl/certs'):
-        if Path(name).exists():
-            mounts.append(Path(name).resolve())
-    # build_sandbox forbids private mounts; home is a new, otherwise empty directory
-    # explicitly added for Codex bookkeeping, not the grader's actual home.
-    command = build_sandbox(task.workspace, mounts, [], ['true'], network=True)
-    command = command[:-2]  # replace the placeholder command following '--'
-    command.extend(['--bind', str(home), str(home)])
-    if auth.is_file():
-        command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
-    command.extend(['--', str(binary), 'exec', '--ephemeral', '--ignore-user-config'])
-    if config.get('analyzer_model'):
-        command.extend(['--model', config['analyzer_model']])
-    if config.get('analyzer_reasoning_effort'):
-        command.extend(['-c', 'model_reasoning_effort=' + json.dumps(config['analyzer_reasoning_effort'])])
-    if config.get('analyzer_allow_unix_sockets') is True:
-        # Opt-in only for this externally isolated Analyzer. Keep outbound
-        # destinations denied by the tool proxy while permitting local IPC.
-        for option in (
-            'sandbox_workspace_write.network_access=true',
-            'features.network_proxy.enabled=true',
-            'features.network_proxy.domains={}',
-            'features.network_proxy.dangerously_allow_all_unix_sockets=true',
-        ):
-            command.extend(['-c', option])
-    # Codex creates protected metadata paths inside each writable root. Keep its
-    # cwd in results rather than the outer namespace's read-only workspace root.
-    command.extend(['--sandbox', 'workspace-write', '--skip-git-repo-check',
-                    '--cd', str(task.workspace / 'results'),
-                    '--add-dir', str(task.workspace / 'experiments'),
-                    '--output-schema', str(schema), '--output-last-message', str(output), '-'])
-    environment = {'PATH': f'{tools}:{isolation_binary.parent}:{runtime_path}', 'HOME': str(home),
-                   'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
-                   'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
-    # API-key based installations may not have auth.json.
-    # Preserve model API proxy configuration. Diagnostic experiments receive a
-    # separate sanitized environment in diagnostic_sandbox, not these variables.
-    for key in ('OPENAI_API_KEY', 'SSL_CERT_FILE', 'HTTP_PROXY', 'HTTPS_PROXY',
-                'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
-        if key in os.environ:
-            environment[key] = os.environ[key]
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, env=environment)
-    try:
-        task.bind(process.pid)
-        location = (
-            f'\nWorkspace root: {task.workspace}\n'
-            f'Your initial working directory is {task.workspace / "results"}. '
-            'Only experiments/ and results/ beneath the workspace root are writable. '
-            'Use absolute workspace paths for reading fixed code/evidence and writing scripts. '
-            'The authoritative diagnostic command argv is resolved relative to the workspace root, '
-            'not this initial working directory. Do not change code/ or evidence/.\n'
-            'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
-        )
-        _stdout, stderr = process.communicate(prompt + location)
-        atomic_write_text(task.private / 'session.stdout.log', _stdout)
-        atomic_write_text(task.private / 'session.stderr.log', stderr)
-        if process.returncode:
-            raise RuntimeError(stderr.strip()[-2000:] or 'diagnostic Analyzer session failed')
-        if not output.is_file():
-            raise RuntimeError('Analyzer did not produce its output document')
-        return output
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
-        task.close()
+    # Keep runtime caches out of durable evidence, including on setup/launch failure.
+    with tempfile.TemporaryDirectory(prefix='codex-home-', dir=task.private) as home_dir:
+        home = Path(home_dir)
+        (home / '.codex').mkdir(exist_ok=True)
+        # Codex needs its own API credentials. These are never mounted in experiments.
+        auth = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'auth.json'
+        binary = Path(binary).resolve()
+        isolation_binary = Path(shutil.which('bwrap')).resolve()
+        socket = task.coral_dir / 'public/trusted.sock'
+        mounts = [*runtime_roots, binary.parent, isolation_binary.parent, *read_roots, schema, tools, socket,
+                  task.records]
+        task.records.mkdir(exist_ok=True)
+        for name in ('/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ssl/certs'):
+            if Path(name).exists():
+                mounts.append(Path(name).resolve())
+        # build_sandbox forbids private mounts; home is a new, otherwise empty directory
+        # explicitly added for Codex bookkeeping, not the grader's actual home.
+        command = build_sandbox(task.workspace, mounts, [], ['true'], network=True)
+        command = command[:-2]  # replace the placeholder command following '--'
+        command.extend(['--bind', str(home), str(home)])
+        if auth.is_file():
+            command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
+        command.extend(['--', str(binary), 'exec', '--ephemeral', '--ignore-user-config'])
+        if config.get('analyzer_model'):
+            command.extend(['--model', config['analyzer_model']])
+        if config.get('analyzer_reasoning_effort'):
+            command.extend(['-c', 'model_reasoning_effort=' + json.dumps(config['analyzer_reasoning_effort'])])
+        if config.get('analyzer_allow_unix_sockets') is True:
+            # Opt-in only for this externally isolated Analyzer. Keep outbound
+            # destinations denied by the tool proxy while permitting local IPC.
+            for option in (
+                'sandbox_workspace_write.network_access=true',
+                'features.network_proxy.enabled=true',
+                'features.network_proxy.domains={}',
+                'features.network_proxy.dangerously_allow_all_unix_sockets=true',
+            ):
+                command.extend(['-c', option])
+        # Codex creates protected metadata paths inside each writable root. Keep its
+        # cwd in results rather than the outer namespace's read-only workspace root.
+        command.extend(['--sandbox', 'workspace-write', '--skip-git-repo-check',
+                        '--cd', str(task.workspace / 'results'),
+                        '--add-dir', str(task.workspace / 'experiments'),
+                        '--output-schema', str(schema), '--output-last-message', str(output), '-'])
+        environment = {'PATH': f'{tools}:{isolation_binary.parent}:{runtime_path}', 'HOME': str(home),
+                       'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
+                       'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
+        # API-key based installations may not have auth.json.
+        # Preserve model API proxy configuration. Diagnostic experiments receive a
+        # separate sanitized environment in diagnostic_sandbox, not these variables.
+        for key in ('OPENAI_API_KEY', 'SSL_CERT_FILE', 'HTTP_PROXY', 'HTTPS_PROXY',
+                    'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
+            if key in os.environ:
+                environment[key] = os.environ[key]
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, env=environment)
+        try:
+            task.bind(process.pid)
+            location = (
+                f'\nWorkspace root: {task.workspace}\n'
+                f'Your initial working directory is {task.workspace / "results"}. '
+                'Only experiments/ and results/ beneath the workspace root are writable. '
+                'Use absolute workspace paths for reading fixed code/evidence and writing scripts. '
+                'The authoritative diagnostic command argv is resolved relative to the workspace root, '
+                'not this initial working directory. Do not change code/ or evidence/.\n'
+                'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
+            )
+            _stdout, stderr = process.communicate(prompt + location)
+            atomic_write_text(task.private / 'session.stdout.log', _stdout)
+            atomic_write_text(task.private / 'session.stderr.log', stderr)
+            if process.returncode:
+                raise RuntimeError(stderr.strip()[-2000:] or 'diagnostic Analyzer session failed')
+            if not output.is_file():
+                raise RuntimeError('Analyzer did not produce its output document')
+            return output
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            task.close()

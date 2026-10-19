@@ -178,6 +178,78 @@ def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task)
     assert writable == [str(task.workspace / 'experiments'), str(task.workspace / 'results')]
 
 
+@pytest.mark.parametrize('outcome', ['success', 'nonzero', 'missing_output', 'launch_error', 'sandbox_error'])
+def test_analyzer_cleans_home_but_preserves_evidence(task, tmp_path, monkeypatch, outcome):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from autoresearch import diagnostic_session
+
+    task.close()
+    auth_dir = tmp_path / 'host-codex'
+    auth_dir.mkdir()
+    auth = auth_dir / 'auth.json'
+    auth.write_text('host credentials must survive')
+    monkeypatch.setenv('CODEX_HOME', str(auth_dir))
+    monkeypatch.setattr(diagnostic_session, 'settings', lambda _: {})
+    monkeypatch.setattr(diagnostic_session.shutil, 'which', lambda _: '/usr/bin/true')
+
+    def sandbox(*args, **kwargs):
+        if outcome == 'sandbox_error':
+            raise RuntimeError('sandbox setup failed')
+        return ['true', '--', 'true']
+
+    monkeypatch.setattr(diagnostic_session, 'build_sandbox', sandbox)
+    schema = task.workspace / 'input.schema.json'
+    schema.write_text('{}')
+    task.records.mkdir(exist_ok=True)
+    evidence = task.records / 'evidence.txt'
+    evidence.write_text('diagnostic evidence')
+    real_popen = subprocess.Popen
+    processes = []
+
+    def launch(command, **kwargs):
+        home = Path(kwargs['env']['CODEX_HOME'])
+        cache = home / 'plugins/cache'
+        cache.mkdir(parents=True)
+        (cache / 'asset').write_bytes(b'x' * 1024)
+        (cache / 'host-link').symlink_to(auth_dir, target_is_directory=True)
+        if outcome == 'launch_error':
+            raise OSError('launch failed')
+        script = '''
+import pathlib, sys
+sys.stdin.read()
+print('session output')
+print('session error', file=sys.stderr)
+if sys.argv[1] == 'success':
+    pathlib.Path(sys.argv[2]).write_text('{}')
+sys.exit(1 if sys.argv[1] == 'nonzero' else 0)
+'''
+        output = command[command.index('--output-last-message') + 1]
+        process = real_popen([sys.executable, '-c', script, outcome, output], **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', launch)
+    if outcome == 'success':
+        output = diagnostic_session.run_diagnostic_codex('analyze', [], schema, task.workspace, task)
+        assert output.read_text() == '{}'
+    else:
+        message = {'nonzero': 'session error', 'missing_output': 'output document',
+                   'launch_error': 'launch failed', 'sandbox_error': 'sandbox setup failed'}[outcome]
+        with pytest.raises((RuntimeError, OSError), match=message):
+            diagnostic_session.run_diagnostic_codex('analyze', [], schema, task.workspace, task)
+    assert not list(task.private.glob('codex-home*'))
+    assert auth.read_text() == 'host credentials must survive'
+    assert evidence.read_text() == 'diagnostic evidence'
+    assert task.read()['process'] is None
+    assert all(process.poll() is not None for process in processes)
+    if outcome in {'success', 'nonzero', 'missing_output'}:
+        assert (task.private / 'session.stdout.log').read_text() == 'session output\n'
+        assert (task.private / 'session.stderr.log').read_text() == 'session error\n'
+
+
 def test_sandbox_resolves_host_binary_before_sanitizing_child_path(task, monkeypatch):
     from autoresearch import diagnostic_sandbox
     monkeypatch.setattr(diagnostic_sandbox.shutil, 'which', lambda _: '/opt/tools/bwrap')
