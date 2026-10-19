@@ -78,6 +78,11 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
             "parent_engineering": evidence.get("engineering_analysis_ref"),
         },
     }
+    if "research_mode" in evidence:
+        mode = evidence["research_mode"]
+        if mode not in {"REFINE", "EXPLORE"}:
+            raise NodeError("invalid host research mode")
+        spec["research_mode"] = mode
     content = yaml.safe_dump(spec, sort_keys=False)
     publisher = evidence.get("publish")
     if publisher is not None:

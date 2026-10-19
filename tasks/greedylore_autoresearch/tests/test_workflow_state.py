@@ -811,3 +811,57 @@ def test_engineer_owner_and_pending_attempts_are_verified(engineering_ready):
     with pytest.raises(ValueError, match='terminal'):
         store.submit_engineering_analysis('engineer-E0001', body)
     assert not _state(store.coral_dir)['engineering_workers']['engineer-E0001'].get('finish_requested')
+
+
+def test_host_samples_research_modes_once_and_persists_through_resume(root_run, monkeypatch):
+    from autoresearch.state import WorkflowStore
+
+    store = WorkflowStore(root_run, p_explore=0.2)
+    draws = iter((0.1, 0.8))
+    monkeypatch.setattr('autoresearch.state.random.random', lambda: next(draws))
+    first = store.reconcile(2, 0)
+    assert [item.research_mode for item in first] == ['EXPLORE', 'REFINE']
+    monkeypatch.setattr('autoresearch.state.random.random', lambda: pytest.fail('mode resampled'))
+    restored = WorkflowStore(root_run, p_explore=1.0).reconcile(2, 0)
+    assert restored == first
+    store = WorkflowStore(root_run)
+    store.initialize_research(first[0].agent_id, first[0].node_id, _research_request())
+    spec = yaml.safe_load((root_run / 'public/notes/nodes/N001/spec.md').read_text())
+    assert spec['research_mode'] == 'EXPLORE'
+    assert spec['parent_node'] == 'N000'
+    with pytest.raises(ValueError, match='invalid fields'):
+        store.initialize_research(first[0].agent_id, first[0].node_id,
+                                  {**_research_request(), 'research_mode': 'REFINE'})
+
+
+def test_legacy_research_assignment_defaults_to_refine_without_drawing_again(root_run, monkeypatch):
+    store = _store(root_run)
+    first = store.reconcile(1, 0)[0]
+    store.initialize_research(first.agent_id, first.node_id, _research_request())
+    spec_path = root_run / 'public/notes/nodes/N001/spec.md'
+    spec = yaml.safe_load(spec_path.read_text())
+    spec.pop('research_mode', None)
+    spec_path.write_text(yaml.safe_dump(spec, sort_keys=False))
+    state = _state(root_run)
+    state['nodes']['N001']['research'].pop('research_mode', None)
+    store.state_path.write_text(json.dumps(state))
+    monkeypatch.setattr('autoresearch.state.random.random', lambda: pytest.fail('legacy mode resampled'))
+    assert _store(root_run).reconcile(1, 0)[0].research_mode == 'REFINE'
+    # Reinitialization must not rewrite an immutable legacy Spec.
+    before = spec_path.read_bytes()
+    _store(root_run).initialize_research(first.agent_id, first.node_id, _research_request())
+    assert spec_path.read_bytes() == before
+
+
+@pytest.mark.parametrize('probability', [True, -0.1, 1.1, float('nan'), float('inf'), '0.2'])
+def test_invalid_explore_probability_is_rejected(root_run, probability):
+    from autoresearch.state import WorkflowStore
+    with pytest.raises(ValueError, match='probability'):
+        WorkflowStore(root_run, p_explore=probability)
+
+
+def test_mode_probability_comes_from_trusted_task_config(root_run, monkeypatch):
+    from autoresearch.state import WorkflowStore
+    (root_run / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {'p_explore': 0.9}}}))
+    monkeypatch.setattr('autoresearch.state.random.random', lambda: 0.5)
+    assert WorkflowStore(root_run).reconcile(1, 0)[0].research_mode == 'EXPLORE'

@@ -76,3 +76,16 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
         assert report["claim_conflict_verified"] is True
         assert report["infra_retry_same_sha_verified"] is True
     print(f"\nSimulation report: {root / 'report.json'}")
+
+
+def test_cleanup_tracks_spawned_worker_before_its_first_event(tmp_path):
+    import simulation_support
+    from coral.grader.trusted_writes import process_start_time
+
+    # The parent has launched a child, but the child has not imported its task yet.
+    # A recorded, matching PID must remain visible even without worker_start.
+    (tmp_path / 'timeline.jsonl').write_text(json.dumps({
+        'event': 'worker_spawn', 'child_pid': os.getpid(),
+        'child_start': process_start_time(os.getpid()),
+    }) + '\n')
+    assert simulation_support.live_processes(tmp_path) == [os.getpid()]

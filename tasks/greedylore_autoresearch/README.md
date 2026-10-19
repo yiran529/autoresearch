@@ -29,3 +29,10 @@ Scripted workflow simulations cover normal operation and injected failures, incl
 The existing Research-driven Memory trigger and two Markdown Summary strings are retained. Summaries distinguish new mechanism evidence, replication, refutation/scope restrictions and open questions, with exact Analysis versions. Research Summary covers algorithm/state/update evidence; Engineering Summary covers measured performance and Engineer-authored attribution. Engineering Analysis is an input, not an independent trigger.
 
 For bounded verification, Memory can read public diagnostic records matching a published Node/mode/version/Research SHA, plus text results. Staging excludes symlinks, scripts, code/state snapshots, binary tensors and unrelated identities, with limits of 1 MB per file, 256 files and 8 MB total. Omitted files must be treated as unavailable, not as negative evidence.
+
+
+## Host-assigned research modes
+
+The host draws a mode once when reserving a Research assignment, using trusted `grader.args.p_explore` (initially `0.20`). It persists the result in private workflow state, sends it through the authenticated roster and generated Agent instructions, and records it in new Node Specs. Resumes, same-SHA retries and duplicate reconcile/initialize requests retain the original mode even if the configured probability changes. Pre-upgrade assignments missing a mode use `REFINE`; existing immutable Specs are not rewritten.
+
+`REFINE` starts from supported gaps or important unresolved mechanisms in published analyses. `EXPLORE` prioritizes another communication mechanism or a falsifiable cross-mechanism interaction that the current evaluation contract can fairly evaluate. It does not relax the contract or quality gate. Researcher cannot set the mode in `node initialize`, draw it locally, or use multiple code Parents. The host-assigned mode is part of assignment context, not an additional Research initialization field.

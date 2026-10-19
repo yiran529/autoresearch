@@ -41,6 +41,7 @@ class AgentSpec:
     island_id: str | None = None
     workflow_role: str | None = None
     node_id: str | None = None
+    research_mode: str | None = None
 
 
 def resolve_agent_specs(config: CoralConfig) -> list[AgentSpec]:

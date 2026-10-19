@@ -18,6 +18,7 @@ def generate_coral_md(
     island_id: str | int | None = None,
     workflow_role: str | None = None,
     node_id: str | None = None,
+    research_mode: str | None = None,
 ) -> str:
     """Produce the CORAL.md file that agents read at startup.
 
@@ -36,6 +37,12 @@ def generate_coral_md(
                 "Run one formal Research evaluation; handle same-SHA infrastructure retries "
                 "if needed, then wait for automatic Analysis, completion and Agent retirement."
             )
+            mode = research_mode if research_mode is not None else "REFINE"
+            if mode not in {"REFINE", "EXPLORE"}:
+                raise ValueError("invalid trusted research mode")
+            scope += (f" Your host-assigned research mode is `{mode}`, pinned to this "
+                      "assignment across resumes and retries. Follow its definition in your role; "
+                      "do not resample or supply a mode to node initialize.")
         elif workflow_role == "engineering":
             scope = (
                 "Inspect the Tree and evidence, choose one eligible Research Node, "

@@ -23,6 +23,7 @@ class DynamicAssignment:
     role: str
     node_id: str | None
     status: str
+    research_mode: str | None = None
 
 
 class DynamicAssignmentClient:
@@ -43,10 +44,12 @@ class DynamicAssignmentClient:
         assignments = []
         seen = set()
         for item in raw:
-            if not isinstance(item, dict) or set(item) != {"agent_id", "role", "node_id", "status"}:
+            fields = {"agent_id", "role", "node_id", "status"}
+            if not isinstance(item, dict) or set(item) not in (fields, fields | {"research_mode"}):
                 raise ValueError("invalid dynamic assignment entry")
             agent_id, role = item["agent_id"], item["role"]
             node_id, status = item["node_id"], item["status"]
+            research_mode = item.get("research_mode", "REFINE") if role == "research" else item.get("research_mode")
             if role == "research":
                 matched = _RESEARCH.fullmatch(agent_id) if isinstance(agent_id, str) else None
                 valid = matched is not None and node_id == matched.group(1)
@@ -66,10 +69,12 @@ class DynamicAssignmentClient:
                 not valid
                 or status not in {"reserved", "active", "finalizing"}
                 or agent_id in seen
+                or role == "research" and (not isinstance(research_mode, str) or research_mode not in {"REFINE", "EXPLORE"})
+                or role == "engineering" and research_mode is not None
                 or role == "engineering" and (status in {"active", "finalizing"}) != (node_id is not None)
             ):
                 raise ValueError("invalid dynamic assignment entry")
-            assignments.append(DynamicAssignment(agent_id, role, node_id, status))
+            assignments.append(DynamicAssignment(agent_id, role, node_id, status, research_mode))
             seen.add(agent_id)
         return tuple(assignments)
 
@@ -96,5 +101,6 @@ def spec_for_assignment(config: CoralConfig, assignment: DynamicAssignment) -> A
             assignment_index=index,
             workflow_role=assignment.role,
             node_id=assignment.node_id,
+            research_mode=assignment.research_mode,
         )
     raise ValueError("dynamic assignment has no configured role template")

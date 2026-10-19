@@ -1,5 +1,6 @@
 node_id: NXXX
 node_type: research         # research | seed; only the predefined Root uses seed
+research_mode: REFINE       # host-assigned REFINE | EXPLORE; never an Agent request field
 parent_node: NYYY           # seed Root: null
 base_commit: "<full_git_sha>"
 parent_research_analysis: "NYYY/research_analysis_v1.md"   # seed Root: null

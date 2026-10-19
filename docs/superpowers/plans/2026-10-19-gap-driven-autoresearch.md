@@ -42,10 +42,10 @@
 
 ## Part 4 — Persistent research modes
 
-- [ ] Test deterministic mode allocation, restoration, legacy REFINE defaults and rejection of model-supplied mode fields; observe failures.
-- [ ] Persist the sampled mode when reserving a Node, transmit it through trusted assignment decoding and generated instructions, and record it in the host-created Spec.
-- [ ] Read `p_explore` from trusted task config (initial 0.20), never from Agent initialization fields. Preserve a single code Parent and evaluation contract.
-- [ ] Run task workflow, dynamic/template and full framework regressions; update delivery notes; commit.
+- [x] Test deterministic mode allocation, restoration, legacy REFINE defaults and rejection of model-supplied mode fields; observe failures.
+- [x] Persist the sampled mode when reserving a Node, transmit it through trusted assignment decoding and generated instructions, and record it in the host-created Spec.
+- [x] Read `p_explore` from trusted task config (initial 0.20), never from Agent initialization fields. Preserve a single code Parent and evaluation contract.
+- [x] Run task workflow, dynamic/template and full framework regressions; update delivery notes; commit.
 
 ## Validation limits
 
@@ -56,3 +56,9 @@ Part 1 validation: 242 passed, 1 namespace-availability skip; core/task changed 
 Part 2 validation: 300 passed, 1 namespace-availability skip, including normal/fault scripted-agent simulations. No Engineering Analyzer is launched by the finalizer. Historical analyses remain unchanged.
 
 Part 3 validation: Memory plus workflow-state regression tests passed (50 total). Diagnostic staging tests cover matching identities, oversized files, binary files, symlinks and foreign SHA exclusion.
+
+Part 4/final validation: full framework and task suite: 1077 passed, 2 skipped. Ruff passed for `coral`, root `tests`, and task autoresearch source; `git diff --check` passed. Independent read-only review found no substantiated correctness/security/recovery issue.
+
+Full-suite stress exposed a simulation-only cleanup race: child-written worker_end precedes interpreter exit, and a newly spawned worker can register after an earlier snapshot. The scripted driver now records worker PID/start identity in the launching parent and waits for actual recorded process exit before generating its report. The deterministic spawned-before-first-event regression and both normal/fault simulations pass. Production process behavior was not changed for this test correction.
+
+Delivery commits before Part 4: cb985ff (diagnostics/waits), 9bdd56f (Engineer completion), 6249128 (Memory). Final mode commit contains the trusted mode transport, task config/docs, and integration regression correction. Existing run config/role snapshots require deliberate synchronization and restart; no running experiments were modified. No real scientific/GPU pilot was executed.

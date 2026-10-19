@@ -249,3 +249,26 @@ def test_dynamic_resume_uses_saved_sessions_not_old_worktree_roster(tmp_path, mo
     monkeypatch.setattr(manager, "_persist_agent_state", lambda: None)
     assert manager.resume_all(paths) == []
     assert events == ["grader", ("reconcile", {"research-N001": "session-1"})]
+
+
+def test_trusted_research_mode_reaches_spec_and_generated_instructions(tmp_path):
+    roster = DynamicAssignmentClient(tmp_path / '.coral', request=lambda *_: {'assignments': [{
+        'agent_id': 'research-N001', 'role': 'research', 'node_id': 'N001', 'status': 'reserved',
+        'research_mode': 'EXPLORE',
+    }]}).reconcile()
+    spec = spec_for_assignment(_config(), roster[0])
+    assert spec.research_mode == 'EXPLORE'
+    content = generate_coral_md(_config(), spec.agent_id, workflow_role=spec.workflow_role,
+                                node_id=spec.node_id, research_mode=spec.research_mode)
+    assert 'EXPLORE' in content
+    assert 'pinned' in content
+
+
+@pytest.mark.parametrize('mode', ['explore', 'UNBOUNDED', None, {'runtime_options': {}}])
+def test_dynamic_roster_rejects_invalid_research_mode(tmp_path, mode):
+    client = DynamicAssignmentClient(tmp_path / '.coral', request=lambda *_: {'assignments': [{
+        'agent_id': 'research-N001', 'role': 'research', 'node_id': 'N001', 'status': 'reserved',
+        'research_mode': mode,
+    }]})
+    with pytest.raises(ValueError, match='assignment'):
+        client.reconcile()

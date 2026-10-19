@@ -21,6 +21,7 @@ import yaml
 
 from coral.agent.runtime import AgentHandle
 from coral.grader.task_grader import TaskGrader
+from coral.grader.trusted_worker import start_task_worker as _real_start_task_worker
 from coral.grader.trusted_writes import process_start_time
 from coral.types import Score, ScoreBundle
 
@@ -244,6 +245,13 @@ def memory_runner(prompt, read_roots, schema, scratch):
     return output
 
 
+
+def launch_logged_worker(coral_dir, entrypoint, **kwargs):
+    process = _real_start_task_worker(coral_dir, entrypoint, **kwargs)
+    event("worker_spawn", child_pid=process.pid, child_start=process_start_time(process.pid))
+    return process
+
+
 def run_memory(coral_dir: str):
     from autoresearch.memory import MemoryContext, consolidate_memory
 
@@ -261,12 +269,10 @@ def run_memory(coral_dir: str):
 def run_finalization(coral_dir: str):
     from autoresearch.lifecycle import run_worker
 
-    from coral.grader.trusted_worker import start_task_worker
-
     def launch_memory(coral, entrypoint):
         if entrypoint != "autoresearch.memory:run_worker":
             raise RuntimeError(f"unexpected worker {entrypoint}")
-        return start_task_worker(coral, "simulation_support:run_memory")
+        return launch_logged_worker(coral, "simulation_support:run_memory")
 
     event("worker_start", worker="finalization")
     try:
@@ -761,6 +767,8 @@ def driver(output: Path, scenario: str):
     config, paths = prepare()
     manager = AgentManager(config, config_dir=TASK)
     errors = []
+    launcher_patch = patch("coral.grader.trusted_worker.start_task_worker", launch_logged_worker)
+    launcher_patch.start()
     try:
         manager.resume_all(paths)
         event(
@@ -776,6 +784,7 @@ def driver(output: Path, scenario: str):
         gate("stop").touch()
         manager.stop_all()
         cleanup_processes(output)
+        launcher_patch.stop()
     if errors:
         raise RuntimeError(errors[0])
     wait_for(
@@ -786,13 +795,16 @@ def driver(output: Path, scenario: str):
         "worker exit",
         timeout=10,
     )
+    # worker_end is emitted in a finally block before the interpreter exits.
+    # A late-starting finalizer can finish after cleanup's first PID snapshot.
+    wait_for(lambda: not live_processes(output), "recorded process exit", timeout=10)
     make_report(paths)
 
 
 def live_processes(output: Path) -> list[int]:
     identities = set()
     for entry in read_events(output):
-        if entry["event"] in {"runtime_start", "daemon_started"}:
+        if entry["event"] in {"runtime_start", "daemon_started", "worker_spawn"}:
             identities.add((entry["child_pid"], entry["child_start"]))
         elif entry["event"] in {"worker_start", "graded"}:
             identities.add((entry["pid"], entry["pid_start"]))

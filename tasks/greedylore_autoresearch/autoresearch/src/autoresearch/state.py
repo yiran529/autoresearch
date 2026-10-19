@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -32,6 +34,7 @@ class WorkflowAssignment:
     role: str
     node_id: str | None
     status: str
+    research_mode: str | None = None
 
 
 class WorkflowStore:
@@ -41,6 +44,7 @@ class WorkflowStore:
         self, coral_dir: str | Path, island_id: str | None = None,
         *, repo_path: str | Path | None = None,
         max_engineering_runs_per_node: int = 1,
+        p_explore: float | None = None,
     ) -> None:
         self.repo_path = Path(repo_path).resolve() if repo_path is not None else None
         self.max_engineering_runs_per_node = max_engineering_runs_per_node
@@ -50,6 +54,13 @@ class WorkflowStore:
         self.notes_root = self.island_root / "notes"
         self.state_path = self.coral_dir / "private" / "autoresearch_state.json"
         self.tree_path = self.notes_root / "tree.md"
+        if p_explore is None:
+            config_path = self.coral_dir / "config.yaml"
+            config = (yaml.safe_load(config_path.read_text()) or {}) if config_path.exists() else {}
+            p_explore = config.get("grader", {}).get("args", {}).get("p_explore", 0.20)
+        if type(p_explore) not in (int, float) or not math.isfinite(p_explore) or not 0 <= p_explore <= 1:
+            raise WorkflowError("p_explore must be a finite probability between 0 and 1")
+        self.p_explore = p_explore
 
     def _verify_root(self) -> None:
         node_root = self.notes_root / "nodes" / "N000"
@@ -146,6 +157,9 @@ class WorkflowStore:
             or state["nodes"].get("N000", {}).get("research", {}).get("status") != "completed"
         ):
             raise WorkflowError("workflow state is invalid")
+        for record in state["nodes"].values():
+            if record["research"].get("research_mode", "REFINE") not in {"REFINE", "EXPLORE"}:
+                raise WorkflowError("workflow state has an invalid research mode")
         return state
 
     def _save_unlocked(self, state: dict[str, Any]) -> None:
@@ -172,7 +186,8 @@ class WorkflowStore:
         assignments = [
             WorkflowAssignment(record["research"]["agent_id"], "research", node_id,
                                "finalizing" if record["research"].get("finish_requested")
-                               else record["research"]["status"])
+                               else record["research"]["status"],
+                               research_mode=record["research"].get("research_mode", "REFINE"))
             for node_id, record in sorted(state["nodes"].items())
             if node_id != "N000" and record["research"]["status"] in {"reserved", "active"}
         ]
@@ -251,7 +266,8 @@ class WorkflowStore:
                     raise WorkflowError("Node ID counter conflicts with existing state")
                 state["nodes"][node_id] = {
                     "research": {"agent_id": f"research-{node_id}", "status": "reserved",
-                                 "spec_ref": None},
+                                 "spec_ref": None,
+                                 "research_mode": "EXPLORE" if random.random() < self.p_explore else "REFINE"},
                     "engineering_claims": [],
                 }
                 state["next_node_seq"] = sequence + 1
@@ -433,13 +449,17 @@ class WorkflowStore:
                 "engineering_analysis_ref": None,
                 "publish": publish,
             }
+            # Do not rewrite an immutable pre-upgrade Spec just to add mode metadata.
+            if not target.exists() or "research_mode" in yaml.safe_load(target.read_text()):
+                evidence["research_mode"] = research.get("research_mode", "REFINE")
             create_node({**request, "node_id": node_id}, evidence)
             if research["status"] == "reserved":
                 research.update({"status": "active", "spec_ref": f"nodes/{node_id}/spec.md"})
                 self._save_unlocked(state)
             return {"agent_id": agent_id, "node_id": node_id,
                     "status": "active", "spec_ref": f"nodes/{node_id}/spec.md",
-                    "base_commit": parent_attempt.commit_hash}
+                    "base_commit": parent_attempt.commit_hash,
+                    "research_mode": research.get("research_mode", "REFINE")}
 
     def complete_assignment(self, agent_id: str, mode: str) -> dict[str, Any]:
         if mode not in {"research", "engineering"}:
