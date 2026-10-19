@@ -50,6 +50,7 @@ def test_manifest_hashes_match_source_and_seed() -> None:
     assert set(manifest["adaptations"]) == {
         "c4/run_llama_pretraining.py",
         "c4/table_v_timing.py",
+        "comm_hooks/utils.py",
         "tests/test_c4_model_setup.py",
         "tests/test_table_v_timing.py",
     }

@@ -114,3 +114,15 @@ def test_checked_in_source_manifest_matches_seed():
     manifest = json.loads((task_root / "seed" / "source_manifest.json").read_text())
 
     _validate_manifest(task_root / "seed", manifest)
+
+
+def test_manifest_checks_task_added_checkpoint_helper(tmp_path):
+    from autoresearch.bootstrap import _validate_manifest
+
+    repo, manifest_path, _ = _fixture(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    manifest['task_files'] = {'diagnostic_checkpoint.py': {
+        'sha256': hashlib.sha256(b'original helper').hexdigest()}}
+    (repo / 'diagnostic_checkpoint.py').write_bytes(b'tampered helper')
+    with pytest.raises(BootstrapError, match='diagnostic_checkpoint.py'):
+        _validate_manifest(repo, manifest)

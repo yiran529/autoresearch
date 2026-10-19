@@ -71,7 +71,7 @@ def isolation_available() -> bool:
 
 
 def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=False,
-                  write_sources=None) -> list[str]:
+                  write_sources=None, checkpoint_paths=()) -> list[str]:
     """Create a minimal namespace; devices are NVIDIA minors, not NVML indices."""
     workspace = Path(workspace).absolute()
     for path in (workspace, workspace / 'experiments', workspace / 'results'):
@@ -90,18 +90,24 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
                 command.extend(['--ro-bind', name, name])
     command.extend(['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
                     '--tmpfs', '/dev/shm', '--dir', '/run'])
+    coral_root = next((parent for parent in workspace.parents if parent.name == '.coral'), None)
+    checkpoints = {Path(value).absolute() for value in checkpoint_paths}
+    for path in checkpoints:
+        _no_symlinks(path)
+        if (coral_root is None or not path.is_relative_to(coral_root / 'public/eval_logs')
+                or path.parent.name != 'checkpoints' or not path.is_dir()):
+            raise ValueError('invalid host-selected checkpoint mount')
     for value in readonly_paths:
         path = Path(value).absolute()
         _no_symlinks(path)
         if 'private' in path.parts or not path.exists() or path == Path('/'):
             raise ValueError('diagnostic runtime mount is private, absent or too broad')
-        coral_root = next((parent for parent in workspace.parents if parent.name == '.coral'), None)
         if coral_root is not None:
             own_task = workspace.parent
             if coral_root.is_relative_to(path):
                 raise ValueError('diagnostic runtime mount is too broad')
             if ('.coral' in path.parts and not path.is_relative_to(own_task)
-                    and path != coral_root / 'public/trusted.sock'):
+                    and path != coral_root / 'public/trusted.sock' and path not in checkpoints):
                 raise ValueError('diagnostic runtime mount exposes another task or private run data')
         command.extend(['--ro-bind', str(path), str(path)])
     command.extend(['--ro-bind', str(workspace), str(workspace)])
@@ -228,7 +234,8 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
     # Validate all mount paths before acquiring GPUs.
     record = task.records / payload['request_id']
     try:
-        build_sandbox(task.workspace, runtime.get('readonly_paths', []), [], payload['argv'])
+        build_sandbox(task.workspace, runtime.get('readonly_paths', []), [], payload['argv'],
+                      checkpoint_paths=state.get('checkpoint_paths', []))
     except (ValueError, OSError) as exc:
         return {'status': 'unavailable', 'started': False, 'reason': str(exc)}
     queued = time.monotonic()
@@ -276,7 +283,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                                 device_minors, payload['argv'], write_sources={
                                     'experiments': frozen / 'experiments',
                                     'results': frozen / 'results',
-                                })
+                                }, checkpoint_paths=state.get('checkpoint_paths', []))
         # Do not inherit grader credentials, Python paths or its virtual environment.
         # UUID order matches the reservation; device nodes were resolved by UUID,
         # not by the independently ordered nvidia-smi indices.

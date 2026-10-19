@@ -187,14 +187,19 @@ def _reference_path(reference: str, context: AnalysisContext) -> Path:
 def _evidence_records(
     references: Sequence[str], context: AnalysisContext
 ) -> tuple[EvidenceRecord, ...]:
+    from .checkpoints import is_checkpoint_payload
+
     records: list[EvidenceRecord] = []
     for reference in sorted(set(references)):
         path = _reference_path(reference, context)
+        if is_checkpoint_payload(path):
+            continue
         if path.is_file():
             records.append(EvidenceRecord(reference, "present", _hash_bytes(path.read_bytes())))
             continue
         if path.is_dir():
-            files = sorted(item for item in path.rglob("*") if item.is_file())
+            files = sorted(item for item in path.rglob("*")
+                           if item.is_file() and not is_checkpoint_payload(item))
             if files:
                 for item in files:
                     child = f"{reference.rstrip('/')}/{item.relative_to(path).as_posix()}"
@@ -609,6 +614,20 @@ def analyze(
             analyzer_snapshot = _prepare_evidence_snapshot(evidence, ctx, analyzer_scratch)
             analyzer_code = code_snapshotter(evidence, ctx, analyzer_scratch)
             analyzer_roots = [analyzer_code, analyzer_snapshot]
+            from .checkpoints import discover_checkpoints
+            from .evaluation_context import render_context
+
+            checkpoint_roots, checkpoint_text = discover_checkpoints(evidence, ctx)
+            analyzer_roots.extend(checkpoint_roots)
+            session_prompt = (_prompt(evidence) + render_context(evidence, analyzer_snapshot)
+                              + checkpoint_text)
+            if task is not None:
+                from coral.grader.trusted_writes import _atomic_json
+
+                with task.locked():
+                    state = task.read()
+                    state['checkpoint_paths'] = [str(path) for path in checkpoint_roots]
+                    _atomic_json(task.path, state)
             if references.is_dir():
                 analyzer_roots.append(references)
             if task is not None:
@@ -626,11 +645,11 @@ def analyze(
                     "persistent results. Report uncertainty when execution fails or budget is "
                     "insufficient; do not invent mechanism conclusions."
                 )
-                output = diagnostic_runner(_prompt(evidence) + guidance, analyzer_roots,
+                output = diagnostic_runner(session_prompt + guidance, analyzer_roots,
                                            _schema("analysis"), analyzer_scratch, task)
             else:
                 output = runner(
-                    _prompt(evidence) + "\nControlled diagnostics are unavailable for this session. "
+                    session_prompt + "\nControlled diagnostics are unavailable for this session. "
                     "Do not launch GPU experiments yourself; report missing evidence as a limitation.",
                     analyzer_roots,
                     _schema("analysis"),

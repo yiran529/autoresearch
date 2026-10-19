@@ -39,7 +39,8 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     runtime_path = config.get('diagnostic_path', '/usr/local/bin:/usr/bin:/bin')
     with task.locked():
         state = task.read()
-        state['runtime'] = {'readonly_paths': [str(path) for path in runtime_roots],
+        checkpoint_paths = state.get('checkpoint_paths', [])
+        state['runtime'] = {'readonly_paths': [str(path) for path in [*runtime_roots, *read_roots]],
                             'path': runtime_path, 'gpu_lock_dir': config.get('gpu_lock_dir')}
         _atomic_json(task.path, state)
     tools = task.workspace / 'tools'
@@ -67,7 +68,8 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                 mounts.append(Path(name).resolve())
         # build_sandbox forbids private mounts; home is a new, otherwise empty directory
         # explicitly added for Codex bookkeeping, not the grader's actual home.
-        command = build_sandbox(task.workspace, mounts, [], ['true'], network=True)
+        command = build_sandbox(task.workspace, mounts, [], ['true'], network=True,
+                                checkpoint_paths=checkpoint_paths)
         command = command[:-2]  # replace the placeholder command following '--'
         command.extend(['--bind', str(home), str(home)])
         if auth.is_file():

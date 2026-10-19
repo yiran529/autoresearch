@@ -1,12 +1,21 @@
 {
+  "task_files": {
+    "diagnostic_checkpoint.py": {
+      "sha256": "a6e0ce781264c1688642a77e1e89b53268c9a8727d09e5c1628c1d17f32200d2"
+    }
+  },
   "adaptations": {
     "c4/run_llama_pretraining.py": {
-      "reason": "offline tokenizer and formal quality evidence schema",
-      "seed_sha256": "e18f6ff19ab5f165a4d9a08e08dc09673636ad502be21945816cc42b61f67e1a"
+      "reason": "offline tokenizer, formal quality evidence schema, and final diagnostic checkpoint",
+      "seed_sha256": "a49d3c72feb0a16a459ff51474436f527a179382dc9b6683d798aaf530be0d25"
     },
     "c4/table_v_timing.py": {
       "reason": "formal timing identity and hardware evidence schema",
       "seed_sha256": "dca2c721748ad1d08542e431943e3ef47d1f7b8033c9cadead6cb1f69f4813db"
+    },
+    "comm_hooks/utils.py": {
+      "reason": "return hook state and enable quality-only checkpoint bucket recording; timing hooks unchanged",
+      "seed_sha256": "06a0376f0dc5fd4652d82af9a92f7aa6681f227a348f3cd8738ec9602fe47e78"
     },
     "tests/test_c4_model_setup.py": {
       "reason": "quality entrypoint regression coverage",

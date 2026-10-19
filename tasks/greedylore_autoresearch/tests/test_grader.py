@@ -338,7 +338,10 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
     assert sum("c4/run_llama_pretraining.py" in command for command in grader.commands) == (2 if mode == "research" else 0)
     assert sum("c4/table_v_timing.py" in command for command in grader.commands) == 4
     assert bundle.metadata["failure_class"] is None
-    assert len(bundle.metadata["evidence_paths"]) == (14 if mode == "research" else 10)
+    assert len(bundle.metadata["evidence_paths"]) == (15 if mode == "research" else 11)
+    context = json.loads((grader.eval_logs_dir / 'evaluation_context.json').read_text())
+    assert context['contract_hash'] == contract.contract_hash
+    assert context['dense_quality']['llama60m_adamw']['final_eval_loss'] == 1.0
     assert any(path.endswith("gpu_resources.jsonl") for path in bundle.metadata["evidence_paths"])
 
 

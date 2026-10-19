@@ -107,6 +107,12 @@ Research Analysis 关注质量变化、算法机制、竞争解释、局限和�
 
 ### Analyzer 诊断实验
 
+正常 Analyzer 启动时把本次 Attempt 记录的 `evaluation_context.json` 渲染为英文 prompt 段落，介绍真实 quality/timing 配置、quality 门槛和匹配的 Dense 比较值；不读取当前配置来填补历史缺失字段，也不开放 grader 私有目录。旧 Run 无此文件时明确报告 unavailable。
+
+支持 checkpoint 的新 seed 在每个 quality workload 的最后一次更新后、最终验证前保存一个分布式 checkpoint，位于该 grader run 的 `checkpoints/<workload>/`。模型保存一份，各 rank 分别保存 optimizer/scheduler、可序列化的 compressor 状态、RNG 和最后一批训练输入。全部 rank 保存成功后才发布完整 manifest；磁盘不足、未知状态或单 rank 写入失败会使 checkpoint unavailable，不改变 quality 指标。Timing 不保存，也不启用 checkpoint hook 包装。旧候选缺少保存接口时保留原 quality 命令。
+
+Analyzer 及其诊断进程只读挂载当前 Attempt 的完整 checkpoint。小型 manifest 进入固定证据，大型 tensor 文件不复制进 evidence/workspace 或 64 MiB 诊断归档。加载辅助函数 `diagnostic_checkpoint.load_checkpoint` 位于匹配 SHA 的代码快照；恢复须匹配模型、优化器、world size 和 DDP bucket 布局，不隐式清零 EF，也不承诺恢复原数据流位置。可读取现成 checkpoint，也可通过现有权威诊断命令进行预算内的小规模训练；实验设计仍以 Reference 为准。当前不实现 checkpoint 自动删除，已完成 Analysis 仍保留其 checkpoint。
+
 关键证据不足时，Analyzer 可在同一 Session 中编写小型诊断脚本，通过权威入口申请 GPU；它不是正式 Attempt，不改变质量、评分或 Engineer 两轮规则：
 
 ```bash

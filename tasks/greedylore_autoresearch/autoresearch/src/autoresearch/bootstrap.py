@@ -47,6 +47,10 @@ def _validate_manifest(repo: Path, manifest: dict[str, Any]) -> None:
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
         raise BootstrapError("source manifest has no files")
+    additions = manifest.get('task_files', {})
+    if not isinstance(additions, dict) or set(files) & set(additions):
+        raise BootstrapError('source manifest task files are invalid')
+    files = {**files, **additions}
     adaptations = manifest.get("adaptations", {})
     if not isinstance(adaptations, dict):
         raise BootstrapError("source manifest adaptations are invalid")
@@ -54,6 +58,9 @@ def _validate_manifest(repo: Path, manifest: dict[str, Any]) -> None:
         if not isinstance(record, dict):
             raise BootstrapError(f"source manifest record is invalid: {source_relative}")
         relative = record.get("seed_path", source_relative)
+        if (not isinstance(relative, str) or Path(relative).is_absolute()
+                or '..' in Path(relative).parts):
+            raise BootstrapError(f'source manifest file path is invalid: {source_relative}')
         adaptation = adaptations.get(source_relative)
         expected = (
             adaptation.get("seed_sha256") if isinstance(adaptation, dict) else record.get("sha256")

@@ -95,6 +95,10 @@ Research 运行质量和效率评估；Engineering 只跑效率，质量指标�
 eval_logs/<SHA_A>/<RUN_1>/
 ├── gpu_resources.jsonl
 ├── gpu_resources.json
+├── evaluation_context.json
+├── checkpoints/
+│   ├── llama60m_adamw/{manifest.json,model.pt,rank-0.pt,...,rank-3.pt}
+│   └── llama130m_muon/{manifest.json,model.pt,rank-0.pt,...,rank-3.pt}
 ├── quality/
 │   ├── llama60m_adamw/all_results.json
 │   ├── llama60m_adamw.process/
@@ -142,6 +146,8 @@ Engineering 没有这里的 `quality/` 阶段。当前 timing 顺序为第一轮
 完整结果还有 final/best perplexity 和 `wandb_link`。评分使用 `final_eval_loss`，不使用最佳历史 loss、训练 loss 或 PPL 替代。当前探索协议中 60M 跑 4,000 步、130M 跑 2,500 步，但保留各自原学习率调度；具体以该 Run 固定的 contract 为准。
 
 Quality 默认没有像 timing 一样单独写出的 `config.json`；完整命令可从兄弟目录 `llama60m_adamw.process/process.json` 查看。训练日志保存在 stdout/stderr 中，结果 JSON 不是逐步训练曲线。
+
+新评测在 run 根目录记录 `evaluation_context.json`，保存当时的配置、门槛和匹配 Dense 数值，供 Analyzer 的英文模板使用。支持新接口的候选在每个 quality workload 结束时保存一个最终 checkpoint：`model.pt` 为模型，`rank-N.pt` 为该 rank 的 optimizer/scheduler、compressor、RNG 和最后一批训练数据；`manifest.json` 记录配置、步数、world size、文件大小及 SHA256。只有 `status: complete` 才可用于诊断；`unavailable` 或没有 manifest 表示不能恢复，不影响已计算的质量指标。Checkpoint 不在 timing 中生成，也不保存周期性序列，目前不会自动删除。Analysis 记录小型 manifest，tensor 文件只读挂载，不重复拷贝进分析快照。
 
 ### 4.2 Efficiency：端到端测速
 
@@ -336,7 +342,7 @@ coral resume --task <task> --run <run> agents.dynamic.max_engineers=0
 
 沿用原 `.coral`、repo 和固定评估协议，节点编号和 artifacts 的身份关联就能继续。适合停止的边界是正式评估和 Analysis 发布完成、Research assignment 已 completed。`max_engineers=0` 控制新增 Engineer 容量；已有活跃 assignment 不会因为降低容量自动消失。
 
-`max_researchers=2` 只是并发容量，调度器会为完成者补充新节点；当前没有“本阶段只新增两个节点并自动停止”的持久配额。暂停 Run 与中断单次训练不同：正式协议不保存可恢复训练的模型/优化器 checkpoint，训练中断后不能从原更新步续跑。Quality 的 W&B 被禁用；默认也不生成独立结构化完整训练曲线、profiler trace 或模型权重。`activation_checkpointing` 是节省显存的重计算机制，不是权重保存功能。
+`max_researchers=2` 只是并发容量，调度器会为完成者补充新节点；当前没有“本阶段只新增两个节点并自动停止”的持久配额。暂停 Run 与中断单次训练不同：checkpoint 仅在 quality 训练完成后保存，不是训练中断后的自动恢复机制，也不保存原数据流位置。Quality 的 W&B 被禁用；默认不生成独立结构化完整训练曲线或 profiler trace。`activation_checkpointing` 是节省显存的重计算机制，与这里的最终权重/状态保存不同。
 
 改变训练预算、质量门槛等会改变 contract hash，旧基线和旧结果不能直接重标或混用。Dense 参考 JSON 是评分输入，包含质量基线或耗时与环境身份；其生成阶段也应保留原始日志。宿主准备基线时使用的外部 staging 目录名称不属于统一的公开 artifact 路径约定。
 

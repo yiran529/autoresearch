@@ -130,6 +130,8 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
     monkeypatch.setattr(diagnostic_session, 'build_sandbox', lambda *a, **k: ['true', '--', 'true'])
     schema = task.workspace / 'input.schema.json'
     schema.write_text('{}')
+    code_root = task.workspace / 'code/fixed-sha'
+    code_root.mkdir(parents=True)
 
     class Process:
         pid = os.getpid()
@@ -144,6 +146,8 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             assert 'UNRELATED_SECRET' not in kwargs['env']
 
         def communicate(self, prompt):
+            # The diagnostic child needs the same selected code/evidence as Codex.
+            assert str(code_root) in task.read()['runtime']['readonly_paths']
             command = self.command
             assert command[command.index('--cd') + 1] == str(task.workspace / 'results')
             assert command[command.index('--add-dir') + 1] == str(task.workspace / 'experiments')
@@ -164,7 +168,7 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             return 0
 
     monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', Process)
-    output = diagnostic_session.run_diagnostic_codex('analyze', [], schema, task.workspace, task)
+    output = diagnostic_session.run_diagnostic_codex('analyze', [code_root], schema, task.workspace, task)
     assert output.read_text() == '{}'
     assert task.read()['process'] is None
 
@@ -181,6 +185,67 @@ def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task)
     assert ['/dev/nvidia0', '/dev/nvidia0'] not in binds
     writable = [command[index + 1] for index, arg in enumerate(command) if arg == '--bind']
     assert writable == [str(task.workspace / 'experiments'), str(task.workspace / 'results')]
+
+
+def test_only_host_selected_checkpoint_can_cross_task_boundary(task):
+    from autoresearch.diagnostic_sandbox import build_sandbox
+
+    selected = task.coral_dir / 'public/eval_logs/sha/run/checkpoints/llama60m_adamw'
+    other = selected.parent / 'llama130m_muon'
+    selected.mkdir(parents=True)
+    other.mkdir()
+    command = build_sandbox(task.workspace, [selected], [], ['true'],
+                            checkpoint_paths=[selected])
+    mounts = [command[i + 1:i + 3] for i, arg in enumerate(command) if arg == '--ro-bind']
+    assert [str(selected), str(selected)] in mounts
+    assert str(other) not in command
+    for path in (other, selected.parents[2], task.coral_dir / 'private'):
+        path.mkdir(parents=True, exist_ok=True)
+        with pytest.raises(ValueError):
+            build_sandbox(task.workspace, [path], [], ['true'], checkpoint_paths=[selected])
+
+
+def test_checkpoint_symlink_mount_is_rejected(task, tmp_path):
+    from autoresearch.diagnostic_sandbox import build_sandbox
+
+    root = task.coral_dir / 'public/eval_logs/sha/run/checkpoints'
+    root.mkdir(parents=True)
+    selected = root / 'llama60m_adamw'
+    selected.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match='symlink'):
+        build_sandbox(task.workspace, [selected], [], ['true'], checkpoint_paths=[selected])
+
+
+def test_real_checkpoint_mount_is_readonly_and_other_runs_hidden(task):
+    import subprocess
+
+    from autoresearch.diagnostic_sandbox import build_sandbox, isolation_available
+
+    if not isolation_available():
+        pytest.skip('bubblewrap namespaces unavailable')
+    root = task.coral_dir / 'public/eval_logs/sha/run/checkpoints/llama60m_adamw'
+    root.mkdir(parents=True)
+    tensor = root / 'model.pt'
+    tensor.write_text('fixed state')
+    sibling = task.coral_dir / 'public/eval_logs/other-run/model.pt'
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text('must remain hidden')
+    program = (
+        'from pathlib import Path\nimport errno\n'
+        f'p=Path({str(tensor)!r})\n'
+        'assert p.read_text() == "fixed state"\n'
+        'try:\n p.write_text("changed")\n'
+        'except OSError as exc:\n assert exc.errno in (errno.EROFS, errno.EACCES)\n'
+        'else:\n raise AssertionError("checkpoint writable")\n'
+        f'assert not Path({str(sibling)!r}).exists()\n'
+        f'Path({str(task.workspace / "results/passed")!r}).write_text("readonly")\n'
+    )
+    command = build_sandbox(task.workspace, [root], [], ['/usr/bin/python3', '-c', program],
+                            checkpoint_paths=[root])
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert tensor.read_text() == 'fixed state'
+    assert (task.workspace / 'results/passed').read_text() == 'readonly'
 
 
 def test_diagnostic_maps_reserved_uuids_to_device_minors(task, tmp_path):
@@ -572,8 +637,8 @@ def test_execution_reads_frozen_scripts_even_if_analyzer_changes_original(task, 
         def check_exclusive(self, pid):
             pass
     original_build = sandbox.build_sandbox
-    def cpu_command(workspace, roots, devices, argv, *, write_sources=None):
-        original_build(workspace, roots, devices, argv, write_sources=write_sources)
+    def cpu_command(workspace, roots, devices, argv, *, write_sources=None, **kwargs):
+        original_build(workspace, roots, devices, argv, write_sources=write_sources, **kwargs)
         if write_sources:
             script.write_text('print("changed live source")\n')
             return [sys.executable, '-c',

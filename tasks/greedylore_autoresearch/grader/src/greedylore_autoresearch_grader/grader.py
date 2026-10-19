@@ -105,7 +105,7 @@ class Grader(TaskGrader):
         if journal is None:
             return []
         return [str(self.eval_logs_worktree_path(journal.root / name))
-                for name in ("gpu_resources.jsonl", "gpu_resources.json")
+                for name in ("gpu_resources.jsonl", "gpu_resources.json", "evaluation_context.json")
                 if (journal.root / name).exists()]
 
     @staticmethod
@@ -245,6 +245,9 @@ class Grader(TaskGrader):
                                       Path(self.private_dir) / "dense_references")
         quality_results = {}
         timing_repetitions = {name: [] for name in contract.efficiency.cells}
+        from .evaluation_context import publish_context
+
+        publish_context(contract, reference, evidence_root, mode)
         evidence_paths = []
         def acquire(stage):
             self._stage = stage

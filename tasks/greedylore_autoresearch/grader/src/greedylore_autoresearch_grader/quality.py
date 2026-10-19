@@ -67,6 +67,10 @@ def build_quality_command(
         "--contract_hash", str(profile["contract_hash"]),
         "--output_dir", str(output),
     ]
+    # Old fixed-SHA candidates predate the diagnostic save API. Do not make an
+    # otherwise valid historical evaluation fail on an unknown CLI argument.
+    if (candidate / "diagnostic_checkpoint.py").is_file():
+        command += ["--diagnostic_checkpoint", str(output.parent.parent / "checkpoints" / output.name)]
     if profile["activation_checkpointing"]:
         command.append("--activation_checkpointing")
     env = {

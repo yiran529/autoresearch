@@ -121,6 +121,8 @@ def parse_args(args):
                              "You can use M and B suffixes, e.g. 100M or 1B.")
     parser.add_argument("--save_every", type=int, default=10_000)
     parser.add_argument("--save_dir", type=str, default=None)
+    parser.add_argument("--diagnostic_checkpoint", type=str, default=None,
+                        help="Save one final distributed state for diagnostics; no periodic saves.")
     parser.add_argument("--tags", type=str, default=None)
     parser.add_argument("--dtype", type=str, default="bfloat16" if torch.cuda.is_bf16_supported() else "float32")
     parser.add_argument("--workers", type=int, default=4)
@@ -419,6 +421,7 @@ def main(args):
         scheduler.load_state_dict(checkpoint['scheduler'])
         logger.info(f"Scheduler state loaded from {checkpoint_path}")
 
+    hook_state = None
     if not args.single_gpu:
         model: LlamaForCausalLM = torch.nn.parallel.DistributedDataParallel(
             model,
@@ -427,7 +430,7 @@ def main(args):
             broadcast_buffers=False,
         )
         process_group = dist.distributed_c10d._get_default_group()
-        register_comm_hook_for_ddp_model(model, process_group, args)
+        hook_state = register_comm_hook_for_ddp_model(model, process_group, args)
 
     # global steps and others are defined above
     pad_idx = tokenizer.pad_token_id
@@ -609,6 +612,16 @@ def main(args):
     #         json.dump(training_state_checkpoint, f, indent=4)
 
     # Final evaluation
+    checkpoint_status = None
+    if args.diagnostic_checkpoint is not None:
+        from diagnostic_checkpoint import save_final_checkpoint
+
+        checkpoint_status = save_final_checkpoint(
+            args.diagnostic_checkpoint, model, optimizer, scheduler, hook_state,
+            config=run_config, update_step=update_step, batch={**batch, 'labels': labels},
+        )
+        if checkpoint_status['status'] != 'complete':
+            logger.warning(f"Final diagnostic checkpoint unavailable: {checkpoint_status}")
     logger.info("Running final evaluation")
     model.eval()
     del loss, optimizer, scheduler
@@ -644,6 +657,7 @@ def main(args):
                 world_size=world_size,
                 wandb_link=wandb_run_url(wandb.run),
             )
+            all_results['diagnostic_checkpoint'] = checkpoint_status
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump(all_results, f)
 

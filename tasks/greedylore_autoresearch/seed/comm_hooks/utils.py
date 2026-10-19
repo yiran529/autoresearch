@@ -135,6 +135,13 @@ def get_uncompress_names(ddp_model):
         return ["classifier", "embedding"]
 
 def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None):
+    def register(state, hook):
+        if getattr(args, 'diagnostic_checkpoint', None):
+            from diagnostic_checkpoint import register_checkpoint_hook
+            register_checkpoint_hook(model, state, hook)
+        else:
+            model.register_comm_hook(state, hook)
+
     hook_state = None
     if args.compressor == 'powersgd' :
         from comm_hooks.powerSGD_hook import PowerSGDState, powerSGD_hook
@@ -145,7 +152,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             start_compress_iter=args.start_compress_iter,
             random_seed=args.seed,
         )
-        model.register_comm_hook(hook_state, powerSGD_hook)
+        register(hook_state, powerSGD_hook)
     elif args.compressor == 'original_powersgd':
         from comm_hooks.original_powerSGD_hook import OriginalPowerSGDState, original_powerSGD_hook
         use_ef_bool = args.use_error_feedback == "ef14"
@@ -156,7 +163,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             start_powerSGD_iter=args.start_compress_iter,
             random_seed=args.seed,
         )
-        model.register_comm_hook(hook_state, original_powerSGD_hook)
+        register(hook_state, original_powerSGD_hook)
     elif args.compressor == "lore":
         from comm_hooks.lore_hook import LoreState, lore_hook
         hook_state = LoreState(
@@ -169,7 +176,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             scale=args.scale,
             random_seed=args.seed,
         )
-        model.register_comm_hook(hook_state, lore_hook)
+        register(hook_state, lore_hook)
     elif args.compressor in ["top_subspace", "top_rc", "rand_subspace", "rand_rc"]:
         from comm_hooks.subspace_hook import SubspaceState, subspace_hook
         random = 'rand' in args.compressor
@@ -190,7 +197,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             beta_ef=args.beta_ef,
             error_inherit=args.error_inherit,
         )
-        model.register_comm_hook(hook_state, subspace_hook)
+        register(hook_state, subspace_hook)
     
     elif args.compressor in ["fake_top_subspace", "fake_top_rc", "fake_rand_subspace", "fake_rand_rc"]:
         from comm_hooks.fake_subspace_hook import FakeSubspaceState, fake_subspace_hook
@@ -211,7 +218,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             beta_ef=args.beta_ef,
             error_inherit=args.error_inherit,
         )
-        model.register_comm_hook(hook_state, fake_subspace_hook)
+        register(hook_state, fake_subspace_hook)
     elif args.compressor == "fake_powersgd":
         from comm_hooks.fake_powersgd_hook import FakePowerSGDState, fake_PowerSGD_hook
         hook_state = FakePowerSGDState(
@@ -226,7 +233,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             beta_ef=args.beta_ef,
             error_inherit=args.error_inherit,
         )
-        model.register_comm_hook(hook_state, fake_PowerSGD_hook)
+        register(hook_state, fake_PowerSGD_hook)
     elif args.compressor == "flex_quant_sync":
         from comm_hooks.flex_quant_hooks import flex_quant_hook_sync, FlexQuantState
         hook_state = FlexQuantState(
@@ -237,7 +244,7 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             use_error_feedback=args.use_error_feedback,
             start_compress_iter=args.start_compress_iter
         )
-        model.register_comm_hook(hook_state, flex_quant_hook_sync)
+        register(hook_state, flex_quant_hook_sync)
     elif args.compressor == 'topk_sync' or args.compressor == 'randk_sync':
         from comm_hooks.sparse_hook import SparseState, sparse_hook_sync
         random = 'randk' in args.compressor
@@ -250,13 +257,13 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             start_compress_iter=args.start_compress_iter,
             random_seed=args.seed,
         )
-        model.register_comm_hook(hook_state, sparse_hook_sync)
+        register(hook_state, sparse_hook_sync)
     elif args.compressor == 'noop':
         from comm_hooks.debugging_hooks import noop_hook
-        model.register_comm_hook(None, noop_hook)
+        register(None, noop_hook)
     elif args.compressor == 'none' :
         from comm_hooks.default_hooks import allreduce_hook
-        model.register_comm_hook(process_group, allreduce_hook)
+        register(process_group, allreduce_hook)
     else:
         raise ValueError(f"Compressor {args.compressor} not supported.")
     
@@ -275,6 +282,8 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
         assert isinstance(optimizer, PrecondAdam), f"Get Optimizer type {type(optimizer)}, Optimizer should be PrecondAdam when using precond_adam."
         hook_state.init_momentum_field(optimizer.state, args.beta1)
         optimizer.hook_state = hook_state
+
+    return hook_state
 
 def add_comm_hook_args(parser):
     ### Commpressor arguments
