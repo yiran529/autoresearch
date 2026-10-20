@@ -11,6 +11,79 @@ from coral.hub._island import island_root
 
 logger = logging.getLogger(__name__)
 
+# Keep manifests and text evidence versioned; tensor payloads and runtime homes
+# live on disk without becoming part of shared-state Git history.
+_ARTIFACT_EXCLUDES = (
+    "coral.lock",
+    "*.pt",
+    "*.pth",
+    "*.ckpt",
+    "*.safetensors",
+    "*.bin",
+    "*.onnx",
+    "*.npy",
+    "*.npz",
+    ".venv/",
+    "grader_venv/",
+    "codex-home*/",
+    "__pycache__/",
+    "*.pyc",
+)
+_IGNORE_BLOCK = (
+    "# BEGIN CORAL runtime artifacts\n"
+    + "\n".join(_ARTIFACT_EXCLUDES)
+    + "\n# END CORAL runtime artifacts\n"
+)
+
+
+def _stage_checkpoint(root: Path) -> None:
+    """Maintain ignore rules and migrate tracked artifacts without deleting files."""
+    gitignore = root / ".gitignore"
+    if gitignore.is_symlink():
+        raise ValueError("shared-state .gitignore must not be a symlink")
+    original = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    custom = original.replace(_IGNORE_BLOCK, "")
+    if custom and not custom.endswith("\n"):
+        custom += "\n"
+    updated = custom + _IGNORE_BLOCK
+    if updated != original:
+        gitignore.write_text(updated, encoding="utf-8")
+    # Match only CORAL's exclusions, not custom rules for unrelated tracked files.
+    # NUL delimiters handle spaces, newlines and pathspec characters in filenames.
+    excluded = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--ignored",
+            *(f"--exclude={pattern}" for pattern in _ARTIFACT_EXCLUDES),
+        ],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    ).stdout
+    if excluded:
+        subprocess.run(
+            ["git", "update-index", "--force-remove", "-z", "--stdin"],
+            cwd=root,
+            input=excluded,
+            capture_output=True,
+            check=True,
+        )
+    # Exclude before Git hashes files into its object store, even if a nested
+    # .gitignore negates our rules. Untracking after add would leave large blobs.
+    pathspecs = [
+        f":(exclude,glob)**/{pattern}{'**' if pattern.endswith('/') else ''}"
+        for pattern in _ARTIFACT_EXCLUDES
+    ]
+    subprocess.run(
+        ["git", "add", "-A", "--", ".", *pathspecs],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
+
 
 def _checkpoint_dir(coral_dir: str, island_id: str | int | None = None) -> Path:
     """The directory the checkpoint repo lives in (public/ or islands/<id>/)."""
@@ -46,14 +119,7 @@ def init_checkpoint_repo(coral_dir: str, island_id: str | int | None = None) -> 
             capture_output=True,
             check=True,
         )
-        gitignore = root / ".gitignore"
-        gitignore.write_text("coral.lock\n", encoding="utf-8")
-        subprocess.run(
-            ["git", "add", "-A"],
-            cwd=str(root),
-            capture_output=True,
-            check=True,
-        )
+        _stage_checkpoint(root)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init: shared state tracking"],
             cwd=str(root),
@@ -87,12 +153,7 @@ def checkpoint(
         with open(lock_path, encoding="utf-8") as lock_fd:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=str(root),
-                capture_output=True,
-                check=True,
-            )
+            _stage_checkpoint(root)
 
             # Check if there are staged changes
             result = subprocess.run(

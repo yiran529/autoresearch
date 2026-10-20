@@ -121,6 +121,11 @@ These tend to bite AI-generated PRs in this repo specifically:
   up in the agent's worktree, visible to the running agent.
 - **CORAL.md is generated** by `coral/template/coral_md.py` — don't hand-
   edit the rendered file in a worktree, edit the template instead.
+- **Shared-state Git snapshots exclude runtime artifacts.** `coral/hub/checkpoint.py`
+  maintains ignore rules at initialization and each snapshot, untracking existing
+  tensor/model binaries and runtime caches without deleting disk files. Keep
+  manifests, metrics, logs and analyses versioned. Historical commits remain
+  intact; their disk usage is not reclaimed automatically.
 
 If you're adding a new task, the [`coral-new-task` skill](.claude/skills/coral-new-task/SKILL.md)
 walks through these in detail. For framework-level changes, see

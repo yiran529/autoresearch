@@ -27,7 +27,7 @@ def test_init_checkpoint_repo():
 
         public = coral_dir / "public"
         assert (public / ".git").is_dir()
-        assert (public / ".gitignore").read_text() == "coral.lock\n"
+        assert "coral.lock" in (public / ".gitignore").read_text().splitlines()
 
         # Verify initial commit exists
         result = subprocess.run(
@@ -149,3 +149,113 @@ def test_checkpoint_diff_bad_hash():
 
         result = checkpoint_diff(str(coral_dir), "0000000000000000000000000000000000000000")
         assert "Failed" in result
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_init_excludes_binary_artifacts_but_keeps_evidence(tmp_path):
+    coral_dir = _make_coral_dir(tmp_path)
+    public = coral_dir / "public"
+    artifacts = [
+        "eval_logs/sha/run/checkpoints/model/rank-0.pt",
+        "eval_logs/sha/run/checkpoints/model/model.safetensors",
+        "diagnostics/task/results/optimizer.ckpt",
+        "diagnostics/task/results/weights.pth",
+        "diagnostics/task/results/tensors.npz",
+        "diagnostics/task/results/tensors.npy",
+        "diagnostics/task/codex-home-123/.codex/cache/catalog.json",
+        "diagnostics/task/.venv/lib/package.py",
+        "diagnostics/task/__pycache__/module.pyc",
+    ]
+    evidence = [
+        "eval_logs/sha/run/checkpoints/model/manifest.json",
+        "eval_logs/sha/run/quality/all_results.json",
+        "eval_logs/sha/run/quality/stdout.log",
+        "notes/nodes/N000/research_analysis_v1.md",
+        "diagnostics/task/records/record.json",
+        "diagnostics/task/results/summary.json",
+    ]
+    for name in artifacts + evidence:
+        path = public / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test evidence")
+    init_checkpoint_repo(str(coral_dir))
+    tracked = set(_git(public, "ls-files", "-z").split("\0"))
+    assert set(artifacts).isdisjoint(tracked)
+    assert set(evidence) <= tracked
+    assert all((public / name).read_text() == "test evidence" for name in artifacts)
+    later_artifact = public / "diagnostics/task/results/later.pt"
+    later_artifact.write_bytes(b"later weights")
+    (public / "notes/later.md").write_text("later analysis")
+    assert checkpoint(str(coral_dir), "agent", "later results") is not None
+    tracked = set(_git(public, "ls-files", "-z").split("\0"))
+    assert "diagnostics/task/results/later.pt" not in tracked
+    assert "notes/later.md" in tracked
+    assert later_artifact.read_bytes() == b"later weights"
+
+
+def test_existing_repo_untracks_artifacts_preserves_custom_rules_and_history(tmp_path):
+    coral_dir = _make_coral_dir(tmp_path)
+    public = coral_dir / "public"
+    _git(public, "init")
+    _git(public, "config", "user.name", "test")
+    _git(public, "config", "user.email", "test@local")
+    # A legacy repo already tracks a tensor and an unrelated ignored file.
+    artifact = public / "old tensor\nname.pt"
+    artifact.write_bytes(b"weights")
+    (public / "custom.txt").write_text("keep tracked")
+    _git(public, "add", "-A")
+    _git(public, "commit", "-m", "legacy")
+    old_sha = _git(public, "rev-parse", "HEAD").strip()
+    artifact.write_bytes(b"updated weights must not enter Git")
+    updated_blob = _git(public, "hash-object", str(artifact)).strip()
+    (public / ".gitignore").write_text("custom.txt\n!*.pt")
+    (public / "notes/new.md").write_text("new analysis")
+
+    sha = checkpoint(str(coral_dir), "agent", "migrate")
+    assert sha is not None
+    tracked = _git(public, "ls-files", "-z").split("\0")
+    assert artifact.name not in tracked
+    assert "custom.txt" in tracked
+    assert "notes/new.md" in tracked
+    assert artifact.read_bytes() == b"updated weights must not enter Git"
+    result = subprocess.run(
+        ["git", "cat-file", "-e", updated_blob], cwd=public, capture_output=True
+    )
+    assert result.returncode != 0
+    assert _git(public, "show", f"{old_sha}:{artifact.name}") == "weights"
+    assert (public / ".gitignore").read_text().startswith("custom.txt\n!*.pt\n")
+    rules = (public / ".gitignore").read_text()
+    assert checkpoint(str(coral_dir), "agent", "unchanged") is None
+    assert (public / ".gitignore").read_text() == rules
+
+
+def test_nested_ignore_override_cannot_write_tensor_blobs(tmp_path):
+    coral_dir = _make_coral_dir(tmp_path)
+    public = coral_dir / "public"
+    results = public / "diagnostics/results"
+    results.mkdir(parents=True)
+    (results / ".gitignore").write_text("!*.pt\n")
+    model = results / "model.pt"
+    model.write_bytes(b"unique model payload for object-store regression")
+    init_checkpoint_repo(str(coral_dir))
+    blob = _git(public, "hash-object", str(model)).strip()
+    result = subprocess.run(["git", "cat-file", "-e", blob], cwd=public, capture_output=True)
+    assert result.returncode != 0
+    assert "diagnostics/results/model.pt" not in _git(public, "ls-files")
+
+    model.write_bytes(b"changed model payload must never enter object storage")
+    (public / "notes/update.md").write_text("updated evidence")
+    assert checkpoint(str(coral_dir), "agent", "update") is not None
+    blob = _git(public, "hash-object", str(model)).strip()
+    result = subprocess.run(["git", "cat-file", "-e", blob], cwd=public, capture_output=True)
+    assert result.returncode != 0
+    assert model.read_bytes() == b"changed model payload must never enter object storage"

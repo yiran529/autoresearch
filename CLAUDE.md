@@ -167,7 +167,7 @@ uv run ruff format .
    - `attempts.py` — JSON CRUD, leaderboard, search, eval counters
    - `notes.py` — markdown + YAML frontmatter
    - `skills.py` — `SKILL.md` discovery
-   - `checkpoint.py` — `git init` + lock-protected commits inside `.coral/public/` so agents can browse the history of shared state
+   - `checkpoint.py` — `git init` + lock-protected commits inside `.coral/public/` so agents can browse the history of shared state. CORAL maintains artifact ignore rules on initialization and each snapshot: tensor/model binaries and runtime caches stay on disk but out of the index; manifests, metrics, logs and analyses remain versioned. Existing tracked artifacts are untracked on the next snapshot; historical commits are preserved and their disk usage is not reclaimed automatically.
    - `heartbeat.py` — per-agent action storage
    - `steering.py` — stopped-run dashboard steering queue drained by `coral resume`
 
