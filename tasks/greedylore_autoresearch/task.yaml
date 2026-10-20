@@ -64,6 +64,10 @@ agents:
     enabled: true
     provider: srt
     network: allowlist
+    extra_settings:
+      network:
+        # Linux SRT IPC opt-in permits Unix and VM sockets for trusted commands.
+        allowAllUnixSockets: true
     allowed_domains:
     - api.openai.com
     - chatgpt.com

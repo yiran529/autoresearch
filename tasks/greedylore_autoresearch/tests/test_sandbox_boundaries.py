@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coral.config import SandboxConfig
+from coral.config import CoralConfig, SandboxConfig
 from coral.sandbox.srt import build_srt_settings
 
 
@@ -65,3 +65,12 @@ def test_multi_island_protects_existing_formal_trees(tmp_path):
     assert str((tmp_path / ".coral/islands/alpha/eval_logs").resolve()) in protected
     assert str((tmp_path / ".coral/islands/alpha/notes/nodes").resolve()) in protected
     assert str((tmp_path / ".coral/islands/beta/attempts").resolve()) in protected
+
+
+def test_formal_task_enables_trusted_ipc_without_changing_network_allowlist(tmp_path):
+    task = Path(__file__).resolve().parents[1] / "task.yaml"
+    config = CoralConfig.from_yaml(task)
+    settings = build_srt_settings(config.agents.sandbox, proxy_port=None, **_paths(tmp_path))
+    assert settings["network"]["allowAllUnixSockets"] is True
+    assert settings["network"]["strictAllowlist"] is True
+    assert settings["network"]["allowedDomains"] == config.agents.sandbox.allowed_domains

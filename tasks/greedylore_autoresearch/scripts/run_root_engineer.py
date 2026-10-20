@@ -75,25 +75,9 @@ def snapshot(output):
 
 
 def prepare_srt_worktree(worktree):
-    """Keep SRT's read-only protection targets present before bubblewrap binds."""
-    files = [".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc",
-             ".zprofile", ".profile", ".ripgreprc", ".mcp.json"]
-    for name in files:
-        path = worktree / name
-        if not path.exists():
-            path.write_text("{}\n" if name.endswith(".json") else "")
-    for name in (".vscode", ".idea", ".claude/commands", ".claude/agents"):
-        (worktree / name).mkdir(parents=True, exist_ok=True)
-    exclude = Path(subprocess.check_output(
-        ["git", "-C", str(worktree), "rev-parse", "--git-path", "info/exclude"], text=True).strip())
-    if not exclude.is_absolute():
-        exclude = worktree / exclude
-    previous = exclude.read_text() if exclude.exists() else ""
-    entries = ["/" + name for name in files if "/" + name not in previous.splitlines()]
-    if entries:
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        with exclude.open("a") as stream:
-            stream.write("\n# Empty sandbox protection anchors\n" + "\n".join(entries) + "\n")
+    from coral.sandbox.srt import prepare_srt_worktree as prepare
+
+    prepare(worktree)
 
 
 def build_config(source_coral, output, model, effort):
@@ -102,6 +86,10 @@ def build_config(source_coral, output, model, effort):
     from coral.config import CoralConfig
 
     raw = yaml.safe_load((source_coral / "config.yaml").read_text())
+    # Older Root runs predate the formal task's trusted-IPC configuration.
+    task_sandbox = yaml.safe_load((TASK / "task.yaml").read_text())["agents"]["sandbox"]
+    raw["agents"]["sandbox"].setdefault("extra_settings", {}).setdefault("network", {}).update(
+        task_sandbox.get("extra_settings", {}).get("network", {}))
     raw["task"]["name"] = "GreedyLoRE Root Engineer workflow"
     raw["workspace"].update(repo_path=str(source_coral.parent / "repo"),
                             results_dir=str(output), run_dir=str(output / "run"),
@@ -159,25 +147,6 @@ def prepare_codex_home(output, config):
     os.environ["CODEX_HOME"] = str(home)
 
 
-def configure_engineer_read_mounts(paths, config):
-    """Avoid read-only ancestor binds shadowing writes in SRT 0.0.81."""
-    if not config.agents.sandbox.enabled or config.agents.sandbox.provider != "srt":
-        return
-    from coral.sandbox.srt import build_srt_settings
-
-    worktree = paths.agents_dir / "engineer-E0001"
-    settings = build_srt_settings(config.agents.sandbox, worktree_path=worktree,
-        coral_dir=paths.coral_dir, repo_dir=paths.repo_dir, shared_dir_name=".codex", proxy_port=None)
-    shim = paths.run_dir / ".sandbox"
-    ancestors = {str(paths.agents_dir), str(paths.repo_dir), str(shim)}
-    reads = [path for path in settings["filesystem"]["allowRead"] if path not in ancestors]
-    # This run has only one Engineer. Keep code read-only and only its Git
-    # metadata writable, with no grant on any ancestor of private evidence.
-    reads.extend([str(worktree), str(shim / "pythonpath"), str(shim / "codex-cli-home")])
-    reads.extend(str(path) for path in paths.repo_dir.iterdir())
-    config.agents.sandbox.extra_settings.setdefault("filesystem", {})["allowRead"] = sorted(set(reads))
-
-
 def execute(args):
     from autoresearch.state import _engineering_budget
 
@@ -218,10 +187,6 @@ def execute(args):
         config = CoralConfig.from_yaml(paths.coral_dir / "config.yaml")
         config.task_dir = TASK
     prepare_codex_home(output, config)
-    configure_engineer_read_mounts(paths, config)
-    # Linux SRT's AF_UNIX filter otherwise blocks the task's authenticated
-    # trusted.sock, just as the isolated Analyzer requires its IPC opt-in.
-    config.agents.sandbox.extra_settings.setdefault("network", {})["allowAllUnixSockets"] = True
     config.to_yaml(paths.coral_dir / "config.yaml")
     manager = AgentManager(config, config_dir=TASK)
     finished = threading.Event()

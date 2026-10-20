@@ -48,7 +48,8 @@ def test_sandbox_anchors_preserve_existing_files_and_keep_worktree_clean(tmp_pat
     runner.prepare_srt_worktree(tmp_path)
     assert existing.read_text() == "[user]\nname = Existing\n"
     assert (tmp_path / ".git/info/exclude").read_text() == first_exclude
-    assert subprocess.check_output(["git", "-C", str(tmp_path), "status", "--porcelain"]) == b""
+    status = subprocess.check_output(["git", "-C", str(tmp_path), "status", "--porcelain"])
+    assert status == b"?? .gitconfig\n"  # Existing user files remain visible.
 
 
 def test_clean_codex_home_preserves_refreshed_auth_on_resume(tmp_path, monkeypatch):

@@ -28,6 +28,7 @@ from coral.sandbox.srt import (
     _tls_cert_env,
     build_srt_settings,
     ensure_sandbox_supported,
+    prepare_srt_worktree,
     srt_command_prefix,
 )
 
@@ -167,10 +168,12 @@ def test_build_settings_reads_confined_to_run(tmp_path):
     assert str(Path.home()) in fs["denyRead"]
     assert private in fs["denyRead"]
     allow_read = fs["allowRead"]
-    # The agents/ parent grants every worktree — reading siblings' trees is
-    # part of the shared-knowledge design; writes stay own-worktree-only.
-    assert str((tmp_path / "agents").resolve()) in allow_read
-    assert str((tmp_path / "repo").resolve()) in allow_read
+    # Enumerate worktrees and repo children: a read-only ancestor mount
+    # would shadow writable worktrees and the repo's Git metadata on Linux.
+    assert str(paths["worktree_path"].resolve()) in allow_read
+    assert str((tmp_path / "agents").resolve()) not in allow_read
+    assert str((tmp_path / "repo").resolve()) not in allow_read
+    assert str((tmp_path / "repo/.git").resolve()) in allow_read
     assert str((tmp_path / ".coral" / "public").resolve()) in allow_read
     assert str(Path.home() / ".claude") in allow_read
     assert str(Path.home() / ".claude.json") in allow_read
@@ -196,6 +199,42 @@ def test_build_settings_writes(tmp_path):
     # Home is NOT writable wholesale — only the toolchain dotdirs.
     assert str(Path.home()) not in fs["allowWrite"]
     assert str(Path.home() / ".claude") in fs["allowWrite"]
+
+
+def test_read_mounts_preserve_writable_descendants_and_shared_reads(tmp_path):
+    paths = _paths(tmp_path)
+    sibling = tmp_path / "agents/agent-2"
+    sibling.mkdir()
+    future = tmp_path / "agents/agent-3"
+    (tmp_path / "repo/seed.py").write_text("seed")
+    shim = tmp_path / ".sandbox"
+    (shim / "pythonpath").mkdir(parents=True)
+    cli_home = shim / "codex-cli-home"
+    cli_home.mkdir()
+    settings = build_srt_settings(
+        SandboxConfig(enabled=True, allow_read=[str(cli_home)], allow_write=[str(cli_home)]),
+        proxy_port=1, sibling_worktrees=[future], **paths,
+    )
+    fs = settings["filesystem"]
+    reads = set(fs["allowRead"])
+    assert {str(sibling), str(future), str(tmp_path / "repo/seed.py"),
+            str(shim / "pythonpath"), str(cli_home)} <= reads
+    assert str(shim) not in reads
+    assert str(sibling) not in fs["allowWrite"]
+    for writable in [paths["worktree_path"], paths["repo_dir"] / ".git", cli_home]:
+        assert all(Path(read) not in writable.parents for read in reads)
+
+
+def test_srt_anchor_preparation_preserves_existing_files_and_symlinks(tmp_path):
+    worktree = tmp_path / "repo"
+    subprocess.run(["git", "init", "--quiet", str(worktree)], check=True)
+    (worktree / ".idea").write_text("existing SRT placeholder")
+    external = tmp_path / "external"
+    external.mkdir()
+    (worktree / ".claude").symlink_to(external, target_is_directory=True)
+    prepare_srt_worktree(worktree)
+    assert (worktree / ".idea").read_text() == "existing SRT placeholder"
+    assert list(external.iterdir()) == []
 
 
 def test_build_settings_grader_source_readable(tmp_path):

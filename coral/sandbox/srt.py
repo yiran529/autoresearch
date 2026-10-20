@@ -101,6 +101,7 @@ class SrtSandbox:
         (see :func:`_cli_pythonpath_shim`), when one is needed, plus the
         TLS bundle override for rustls clients (:func:`_tls_cert_env`).
         """
+        prepare_srt_worktree(ctx.worktree_path)
         settings = build_srt_settings(
             self.cfg,
             worktree_path=ctx.worktree_path,
@@ -132,6 +133,45 @@ class SrtSandbox:
             command_prefix=srt_command_prefix(self.cfg.srt_command, settings_path),
             env=env,
         )
+
+
+def prepare_srt_worktree(worktree: Path) -> None:
+    """Keep SRT's generated protection anchors from dirtying a Git worktree.
+
+    Linux SRT creates absent mandatory-deny targets on the host. Prepare
+    their intended types and locally exclude only files created here;
+    existing user files and tracked content retain normal Git visibility.
+    """
+    if not (worktree / ".git").exists():
+        return
+    result = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--git-path", "info/exclude"],
+        capture_output=True, text=True, check=True,
+    )
+    exclude = Path(result.stdout.strip())
+    if not exclude.is_absolute():
+        exclude = worktree / exclude
+    created = []
+    for name in (".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc",
+                 ".zprofile", ".profile", ".ripgreprc", ".mcp.json"):
+        path = worktree / name
+        try:
+            with path.open("x") as stream:
+                stream.write("{}\n" if name.endswith(".json") else "")
+        except FileExistsError:
+            continue
+        created.append("/" + name)
+    for name in (".vscode", ".idea", ".claude/commands", ".claude/agents"):
+        path = worktree / name
+        # Older SRT starts may have created file placeholders. Never
+        # replace them or follow a user symlink while preparing directories.
+        if path.exists() or path.is_symlink() or path.parent.is_symlink():
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+    if created:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a") as stream:
+            stream.write("\n# Empty SRT protection anchors\n" + "\n".join(created) + "\n")
 
 
 def ensure_sandbox_supported(agents: AgentConfig) -> None:
@@ -236,8 +276,10 @@ def _worktree_reads(
     """Agent worktrees this agent may read.
 
     Reading (not writing) siblings' trees is part of the shared-knowledge
-    design, so single-island runs grant the whole ``agents/`` dir — which
-    also covers agents spawned later. Multi-island runs stop at the island
+    design, so single-island runs enumerate the current worktrees and the
+    manager's roster. Reads refresh at each start; a read-only agents/
+    mount would shadow the own-worktree write bind in Linux SRT.
+    Multi-island runs stop at the island
     boundary: islands evolve independently and exchange work only through
     migration, so a cross-island read would defeat the diversity the
     partition exists to create. The island-mate roster comes from the
@@ -250,7 +292,10 @@ def _worktree_reads(
     """
     agents_dir = worktree_path.parent
     if not (coral_dir / "islands").exists():
-        return [str(agents_dir.resolve())]
+        reads = {str(worktree_path.resolve()), *(str(p.resolve()) for p in sibling_worktrees)}
+        reads.update(str(p.resolve()) for p in agents_dir.iterdir()
+                     if p.is_dir() and not p.is_symlink())
+        return sorted(reads)
     reads = {str(worktree_path.resolve())}
     if sibling_worktrees:
         reads.update(str(p.resolve()) for p in sibling_worktrees)
@@ -274,7 +319,9 @@ def _run_dir_reads(
     """
     reads = [
         *_worktree_reads(worktree_path, coral_dir, sibling_worktrees),
-        str(repo_dir.resolve()),  # run repo (worktree git ops read its .git)
+        # A read-only repo/ bind would shadow its writable .git bind.
+        # Do not turn repository symlinks into grants on external targets.
+        *(str(p.absolute()) for p in sorted(repo_dir.iterdir()) if not p.is_symlink()),
         str((coral_dir / "public").resolve()),
         str((coral_dir / "islands").resolve()),  # multi-island shared state
         str((coral_dir / ".git").resolve()),  # checkpoint history (coral notes --history)
@@ -282,7 +329,7 @@ def _run_dir_reads(
         str((coral_dir / "config_dir").resolve()),  # breadcrumb read by hooks
         # PYTHONPATH shim for editable installs (_cli_pythonpath_shim). Not
         # under allowWrite, so agents cannot repoint the symlink.
-        str((coral_dir.parent / ".sandbox").resolve()),
+        str((coral_dir.parent / ".sandbox" / "pythonpath").resolve()),
     ]
     # The grader source is surfaced to agents as <shared_dir>/grader — a
     # symlink whose target (the task's grader/ package) lives outside the
