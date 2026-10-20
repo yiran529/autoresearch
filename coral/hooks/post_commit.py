@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from coral.config import CoralConfig
-from coral.grader.timeouts import default_eval_wait
 from coral.hub.attempts import (
     agent_in_grader_queue,
     count_agent_pending,
@@ -104,15 +103,16 @@ def _find_coral_dir(workdir: Path) -> Path | None:
 def _poll_until_graded(
     coral_dir: Path,
     commit_hash: str,
-    timeout: float,
+    timeout: float | None,
     island_id: str | None = None,
 ) -> Attempt:
     """Poll the attempt file until status != 'pending' or timeout elapses.
 
-    Raises TimeoutError if no grader finalizes the attempt within `timeout` seconds.
+    With no timeout, wait until the grader finalizes the attempt.
+    An explicit timeout raises TimeoutError if the attempt is still pending.
     """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while deadline is None or time.monotonic() < deadline:
         attempt = read_attempt(coral_dir, commit_hash, island_id=island_id)
         if attempt is not None and attempt.status != "pending":
             return attempt
@@ -246,11 +246,7 @@ def submit_eval(
     if not wait:
         return attempt
 
-    # Block until grader daemon finalizes. We give it plenty of slack above the
-    # grader's own per-eval timeout so the daemon has room to finish + write back.
-    if poll_timeout is None:
-        poll_timeout = default_eval_wait(config)
-
+    # Wait for the terminal result unless the caller supplied a client deadline.
     final = _poll_until_graded(coral_dir, commit_hash, poll_timeout, island_id=island_id)
 
     # Attach eval_count for display by cmd_eval (best-effort; daemon bumps this).

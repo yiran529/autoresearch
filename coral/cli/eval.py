@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 from coral.cli._helpers import find_coral_dir_and_island, read_agent_id
-from coral.grader.timeouts import default_eval_wait
 
 # Poll cadence used by `coral wait` while blocking on the attempt file.
 _WAIT_POLL_INTERVAL_SEC = 0.2
@@ -115,7 +114,6 @@ def cmd_eval(args: argparse.Namespace) -> None:
 def cmd_wait(args: argparse.Namespace) -> None:
     """Block until a previously submitted attempt is finalized by the grader."""
 
-    from coral.config import CoralConfig
     from coral.hub.attempts import read_eval_count
 
     # Resolve coral_dir + island scope from breadcrumbs/--task. When invoked
@@ -144,18 +142,10 @@ def cmd_wait(args: argparse.Namespace) -> None:
         sys.exit(1)
     target = attempts_file.stem  # normalized 40-char hash
 
-    # Derive timeout.
     timeout = args.timeout
-    if timeout is None:
-        try:
-            config = CoralConfig.from_yaml(coral_dir / "config.yaml")
-            timeout = default_eval_wait(config)
-        except Exception:
-            timeout = 3600
-
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     attempt = None
-    while time.monotonic() < deadline:
+    while deadline is None or time.monotonic() < deadline:
         attempt = _read_attempt_file(attempts_file)
         if attempt is not None and attempt.status != "pending":
             try:

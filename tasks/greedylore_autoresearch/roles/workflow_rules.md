@@ -14,6 +14,7 @@
 - After the first terminal result, Researcher remains active: within budget continue justified refinement, rather than stopping merely because one result exists. Stop evaluating at either cap; finish earlier with `autoresearch node complete --mode research` when no justified refinement remains and all runs have ended.
 - Engineering optimizes the original Node without replacing its Research result.
 - Complete `submission.yaml` using the task template before `coral eval`.
+- Wait for evaluation and diagnostic results; for background sessions, use the longest supported wait (up to 1 hour) without short-timeout loops or periodic progress checks.
 - Run and record the applicable checks in `semantic_criteria.md`; fix failed self-checks before submission.
 - Engineering must preserve algorithm semantics.
 - Do not alter the formal benchmark or include profiling/gradient instrumentation in formal timing.

@@ -439,7 +439,7 @@ Run 'coral <command> --help' for details on any command."""
         "--timeout",
         type=float,
         default=None,
-        help="Seconds to wait for grader (default: derived from grader.timeout).",
+        help="Seconds to wait for grader (default: wait until completed or failed).",
     )
     p_eval.add_argument(
         "--tune",
@@ -469,7 +469,7 @@ Run 'coral <command> --help' for details on any command."""
         "--timeout",
         type=float,
         default=None,
-        help="Seconds to wait (default: derived from grader.timeout).",
+        help="Seconds to wait (default: wait until completed or failed).",
     )
 
     p_diff = sub.add_parser(

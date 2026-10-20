@@ -368,11 +368,15 @@ def run_fresh_codex(
         f"{prompt}\n\nRead only the following fixed evidence roots:\n{roots}\n"
         "Do not modify source code or run formal training."
     )
+    from coral.agent.builtin.codex import DEFAULT_BACKGROUND_TERMINAL_MAX_TIMEOUT_MS
+
     command = [
         "codex",
         "exec",
         "--ephemeral",
         "--ignore-user-config",
+        "-c",
+        f"background_terminal_max_timeout={DEFAULT_BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}",
         "--sandbox",
         "read-only",
         "--skip-git-repo-check",

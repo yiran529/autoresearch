@@ -33,6 +33,7 @@ def test_run_fresh_codex_uses_ephemeral_read_only_session(tmp_path, monkeypatch)
     assert command[:2] == ["codex", "exec"]
     assert "--ephemeral" in command
     assert "--ignore-user-config" in command
+    assert "background_terminal_max_timeout=3600000" in command
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "resume" not in command
     assert kwargs["input"].startswith("analyze fixed evidence")

@@ -706,7 +706,7 @@ def test_submit_eval_trusted_mode_delegates_formal_write(tmp_path, monkeypatch):
     assert captured["payload"]["budget_class"] == "real"
 
 
-@pytest.mark.parametrize('gpu_wait,ready_after', [(0, 2400), (86400, 90000)])
+@pytest.mark.parametrize('gpu_wait,ready_after', [(0, 2400), (86400, 90000), (0, 250000)])
 def test_submit_wait_survives_long_gpu_queue(tmp_path, monkeypatch, gpu_wait, ready_after):
     from dataclasses import replace
     from types import SimpleNamespace

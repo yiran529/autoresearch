@@ -187,6 +187,7 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             assert 'resolved relative to the workspace root' in prompt
             assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
             assert 'model_reasoning_effort="medium"' in command
+            assert "background_terminal_max_timeout=3600000" in command
             assert ('features.network_proxy.dangerously_allow_all_unix_sockets=true' in command) == allow_unix
             if allow_unix:
                 assert 'sandbox_workspace_write.network_access=true' in command

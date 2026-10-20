@@ -26,7 +26,10 @@ from coral.workspace.repo import _clean_env
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BACKGROUND_TERMINAL_MAX_TIMEOUT_MS = 3_600_000
+
 _CODEX_RUNTIME_OPTION_KEYS = {
+    "background_terminal_max_timeout",
     "model_reasoning_effort",
     "fast_mode",
     "personality",
@@ -309,9 +312,10 @@ def _toml_literal(value: Any) -> str:
 
 def _build_codex_runtime_option_args(runtime_options: dict[str, Any] | None) -> list[str]:
     """Translate runtime options into `codex exec -c key=value` arguments."""
-    if not runtime_options:
-        return []
-
+    runtime_options = {
+        "background_terminal_max_timeout": DEFAULT_BACKGROUND_TERMINAL_MAX_TIMEOUT_MS,
+        **(runtime_options or {}),
+    }
     args: list[str] = []
     for key in sorted(runtime_options):
         if key not in _CODEX_RUNTIME_OPTION_KEYS:

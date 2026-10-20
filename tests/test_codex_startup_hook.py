@@ -43,3 +43,13 @@ def test_hook_oserror_still_executes_runtime(monkeypatch):
     )
     run_startup_hook(["missing-hook"], ["codex", "exec"])
     assert calls == [("codex", ("codex", "exec"))]
+
+
+def test_codex_background_wait_defaults_to_one_hour_and_can_be_overridden():
+    from coral.agent.builtin.codex import _build_codex_runtime_option_args
+
+    assert _build_codex_runtime_option_args(None) == [
+        '-c', 'background_terminal_max_timeout=3600000',
+    ]
+    args = _build_codex_runtime_option_args({'background_terminal_max_timeout': 600000})
+    assert args == ['-c', 'background_terminal_max_timeout=600000']

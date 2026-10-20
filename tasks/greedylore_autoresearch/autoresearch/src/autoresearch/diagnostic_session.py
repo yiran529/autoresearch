@@ -106,7 +106,10 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         command.extend(['--bind', str(home), str(home)])
         if auth.is_file():
             command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
-        command.extend(['--', str(binary), 'exec', '--ephemeral', '--ignore-user-config'])
+        from coral.agent.builtin.codex import DEFAULT_BACKGROUND_TERMINAL_MAX_TIMEOUT_MS
+
+        command.extend(['--', str(binary), 'exec', '--ephemeral', '--ignore-user-config',
+                        '-c', f'background_terminal_max_timeout={DEFAULT_BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}'])
         if config.get('analyzer_model'):
             command.extend(['--model', config['analyzer_model']])
         if config.get('analyzer_reasoning_effort'):
