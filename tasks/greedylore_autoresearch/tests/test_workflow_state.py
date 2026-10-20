@@ -628,7 +628,7 @@ def test_engineer_finish_cli_versions_stale_analysis_without_analyzer(engineerin
     cli.main(["engineering", "finish", "--analysis-file", str(summary)])
     assert run_worker(str(store.coral_dir), runner=lambda *_: pytest.fail("Engineering Analyzer"))["completed"] == [binding.agent_id]
     assert old_path.read_bytes() == old_bytes
-    document = json.loads((node / "engineering_analysis_v2.md").read_text())
+    document = json.loads((node / "engineering_analysis_v2.json").read_text())
     assert len(document["engineering_attempts"]) == 2
 
 
@@ -773,7 +773,7 @@ def test_engineer_authored_finish_covers_all_attempts_and_never_launches_analyze
     completed = run_worker(str(store.coral_dir), runner=lambda *_: pytest.fail('Engineering Analyzer launched'))
     assert completed['errors'] == {}
     assert completed['completed'] == ['engineer-E0001']
-    document = json.loads((node / 'engineering_analysis_v1.md').read_text())
+    document = json.loads((node / 'engineering_analysis_v1.json').read_text())
     assert document['summary'] == body['summary']
     assert {a['commit_sha'] for a in document['engineering_attempts']} == set(body['attempt_shas'])
     assert any('inherited (provisional)' in line for line in document['limitations'])
@@ -917,17 +917,17 @@ def test_bare_engineering_finish_cannot_start_independent_analyzer(engineering_r
 def test_engineer_publication_failure_is_recoverable_without_reauthoring(engineering_ready, monkeypatch):
     store, node, body = _engineer_with_attempts(engineering_ready, count=1)
     store.submit_engineering_analysis('engineer-E0001', body)
-    from autoresearch import state as state_module
-    writer = state_module.atomic_write_text
+    from coral.grader import analysis_artifacts
+    writer = analysis_artifacts._atomic_text
     def unavailable(path, content):
         if path.name == 'engineering_analysis_v1.md':
             raise OSError('publication temporarily unavailable')
         return writer(path, content)
-    monkeypatch.setattr(state_module, 'atomic_write_text', unavailable)
+    monkeypatch.setattr(analysis_artifacts, '_atomic_text', unavailable)
     store.reconcile(0, 1)
     assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'active'
     assert not (node / 'engineering_analysis_v1.md').exists()
-    monkeypatch.setattr(state_module, 'atomic_write_text', writer)
+    monkeypatch.setattr(analysis_artifacts, '_atomic_text', writer)
     store.reconcile(0, 1)
     assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'completed'
 

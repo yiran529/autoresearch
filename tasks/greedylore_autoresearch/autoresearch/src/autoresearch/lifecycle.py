@@ -8,6 +8,7 @@ import logging
 import time
 from pathlib import Path
 
+from coral.grader.analysis_artifacts import publish_analysis
 from coral.grader.trusted_worker import start_task_worker
 from coral.grader.trusted_writes import trusted_writes_lock
 from coral.hub.attempts import read_attempts
@@ -58,12 +59,16 @@ def _publisher(store, node_id, generation):
             elif path.exists():
                 if load_document(path) != json.loads(content):
                     raise WorkflowError("immutable Analysis already exists")
+                publish_analysis(path, json.loads(content))
                 return {"path": target}
             if kind == "analysis":
                 # A crash after this write can publish without another model session.
                 sealed = store.coral_dir / "private/analysis_outputs" / f"{node_id}.json"
                 atomic_write_text(sealed, content)
-            atomic_write_text(path, content)
+            if kind == "analysis":
+                publish_analysis(path, document)
+            else:
+                atomic_write_text(path, content)
         return {"path": target}
 
     return publish

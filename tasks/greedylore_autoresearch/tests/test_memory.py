@@ -34,6 +34,21 @@ def _summary(refs: list[str]) -> str:
     return f"---\nprocessed_analyses:\n{entries or '  []'}\n---\n# Summary\n\nA finding.\n"
 
 
+def test_memory_stage_retains_json_for_analysis_lookup(tmp_path):
+    from autoresearch.memory import _stage_public_inputs
+
+    from coral.grader.analysis_artifacts import load_analysis, publish_analysis
+
+    context = MemoryContext(tmp_path / '.coral')
+    path = context.notes_root / 'nodes/N001/research_analysis_v1.md'
+    document = {'summary': 'Measured result.', 'findings': ['A finding.'],
+                'limitations': ['One batch.'], 'node_id': 'N001', 'mode': 'research',
+                'research_sha': 'a' * 40, 'evaluation_snapshot': 'frozen evaluation'}
+    publish_analysis(path, document)
+    staged, *_ = _stage_public_inputs(context, tmp_path / 'staged')
+    assert load_analysis(staged / 'nodes/N001/research_analysis_v1.md') == document
+
+
 def test_gate_counts_unprocessed_research_nodes_not_versions(tmp_path):
     notes = tmp_path / "notes"
     first = _analysis(notes, "N001", "research", 1)

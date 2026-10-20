@@ -174,6 +174,7 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, .
                 copy_file(node / name, staged_notes / "nodes" / node.name / name)
     for ref in list_analysis_refs(context.notes_root):
         copy_file(context.notes_root / ref, staged_notes / ref)
+        copy_file((context.notes_root / ref).with_suffix('.json'), (staged_notes / ref).with_suffix('.json'))
 
     log_root = context.island_root / "eval_logs"
     if log_root.is_dir() and not log_root.is_symlink():
@@ -221,7 +222,9 @@ def _stage_diagnostics(context: MemoryContext, staged_notes: Path, scratch: Path
         node_id, mode = match.groups()
         version = int(Path(ref).stem.rsplit("_v", 1)[1])
         try:
-            analysis = json.loads((staged_notes / ref).read_text())
+            from .validation import load_document
+
+            analysis = load_document(staged_notes / ref)
             sha = analysis["research_sha"]
         except (OSError, ValueError, KeyError, TypeError):
             continue

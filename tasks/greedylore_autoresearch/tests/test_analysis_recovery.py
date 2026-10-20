@@ -110,6 +110,56 @@ def test_published_analysis_preserves_readable_unicode(tmp_path):
     assert json.loads(content)["summary"] == "中文机制分析"
 
 
+def test_missing_markdown_is_rebuilt_from_json_without_another_model_call(tmp_path):
+    from coral.grader.analysis_artifacts import load_analysis, publish_analysis
+
+    context = _context(tmp_path)
+    original = _publisher(context.notes_root)
+
+    def publisher(kind, content, metadata):
+        if kind == 'analysis':
+            path = context.notes_root / 'nodes/N001/research_analysis_v1.md'
+            publish_analysis(path, json.loads(content))
+            return {'path': 'nodes/N001/research_analysis_v1.md'}
+        return original(kind, content, metadata)
+
+    first = _analyze('N001', 'research', context=context, publisher=publisher,
+                     runner=lambda *_, **__: _write_analysis_output(context))
+    doc = load_analysis(first.analysis_path)
+    assert first.analysis_path.read_text().startswith('# N001 Research Analysis')
+    first.analysis_path.unlink()
+    recovered = _analyze('N001', 'research', context=context, publisher=publisher,
+                         runner=lambda *_, **__: pytest.fail('must reuse authoritative JSON'))
+    assert recovered.analysis_version == 1
+    assert load_analysis(recovered.analysis_path) == doc
+
+
+def _write_analysis_output(context):
+    output = context.notes_root / 'output.json'
+    output.write_text(json.dumps(_analysis_payload(None)))
+    return output
+
+
+def test_parent_snapshot_retains_json_needed_by_markdown_link(tmp_path):
+    from autoresearch.analysis import _prepare_evidence_snapshot
+
+    from coral.grader.analysis_artifacts import load_analysis, publish_analysis
+
+    context = _context(tmp_path)
+    parent = context.notes_root / 'nodes/N000/research_analysis_v1.md'
+    publish_analysis(parent, {**_analysis_payload(None), 'node_id': 'N000',
+                              'mode': 'research', 'research_sha': 'a' * 40})
+    spec = context.notes_root / 'nodes/N001/spec.md'
+    values = yaml.safe_load(spec.read_text())
+    values['analysis_refs']['parent_research'] = 'nodes/N000/research_analysis_v1.md'
+    spec.write_text(yaml.safe_dump(values))
+    evidence = resolve_evidence('N001', 'research', context=context)
+    snapshot = _prepare_evidence_snapshot(evidence, context, tmp_path / 'snapshot')
+    copy = snapshot / 'notes/nodes/N000/research_analysis_v1.md'
+    assert copy.read_bytes() == parent.read_bytes()
+    assert load_analysis(copy) == load_analysis(parent)
+
+
 def test_fallback_analyzer_uses_the_same_configured_timeout(tmp_path, monkeypatch):
     from types import SimpleNamespace
 

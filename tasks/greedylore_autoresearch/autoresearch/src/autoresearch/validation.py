@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +24,11 @@ _COMMON_FIELDS = {
 _ANALYSIS_FIELDS = _COMMON_FIELDS | {"summary", "findings", "limitations"}
 
 def load_document(path: str | Path) -> dict[str, Any]:
+    from coral.grader.analysis_artifacts import load_analysis
+
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = load_analysis(Path(path))
+    except (OSError, ValueError) as exc:
         raise ArtifactValidationError(f"invalid Artifact: {path}") from exc
     if not isinstance(value, dict):
         raise ArtifactValidationError("Artifact must be a JSON object")

@@ -918,6 +918,17 @@ class TrustedWriteService:
             target.parent.mkdir(parents=True, exist_ok=True)
             if not target.resolve().is_relative_to(resolved_root):
                 raise TrustedWriteError("artifact target escapes the notes tree")
+            if result.get("format") == "analysis-json-markdown":
+                from coral.grader.analysis_artifacts import publish_analysis
+
+                if (payload["kind"] != "analysis" or not re.fullmatch(
+                        r"(?:research|engineering)_analysis_v[1-9][0-9]*\.md", target.name)):
+                    raise TrustedWriteError("invalid Analysis format target")
+                try:
+                    publish_analysis(target, json.loads(content))
+                except (OSError, ValueError) as exc:
+                    raise TrustedWriteError(str(exc)) from exc
+                return {"path": relative}
             if target.exists() and ("_v" in target.stem or target.name == "spec.md"):
                 try:
                     existing = target.read_text(encoding="utf-8")

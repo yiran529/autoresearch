@@ -173,7 +173,7 @@ def _manifest_hash(manifest: dict[str, Any]) -> str:
 def _reference_path(reference: str, context: AnalysisContext) -> Path:
     if reference.startswith("notes/"):
         relative = reference.removeprefix("notes/")
-        if not re.fullmatch(r"nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.md", relative):
+        if not re.fullmatch(r"nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.(?:md|json)", relative):
             raise ArtifactValidationError("invalid historical Analysis reference")
         target = context.notes_root / relative
         if target.is_symlink() or not target.resolve().is_relative_to(context.notes_root.resolve()):
@@ -280,6 +280,9 @@ def resolve_evidence(
             ):
                 raise ArtifactValidationError("invalid historical Analysis reference")
             raw_references.add(f"notes/{reference}")
+            sidecar = (ctx.notes_root / reference).with_suffix('.json')
+            if sidecar.exists():
+                raw_references.add(f"notes/{sidecar.relative_to(ctx.notes_root).as_posix()}")
     for item in engineering_evidence:
         raw_references.update(item.eval_refs)
     evidence_paths = {
@@ -378,8 +381,9 @@ def _versions(node_root: Path, mode: str, kind: str) -> set[int]:
     pattern = re.compile(rf"^{mode}_{kind}_v([1-9][0-9]*)\.md$")
     return {
         int(match.group(1))
-        for path in node_root.glob(f"{mode}_{kind}_v*.md")
-        if (match := pattern.fullmatch(path.name))
+        for path in node_root.glob(f"{mode}_{kind}_v*.*")
+        if path.suffix == '.md' or (kind == 'analysis' and path.suffix == '.json')
+        if (match := pattern.fullmatch(path.with_suffix('.md').name))
     }
 
 
@@ -603,10 +607,14 @@ def analyze(
     analysis_versions = _versions(node_root, mode, "analysis")
     version = max(analysis_versions, default=0) + 1 if revise else max(analysis_versions, default=1)
     analysis_path = node_root / f"{mode}_analysis_v{version}.md"
-    if analysis_path.exists() and not revise:
-        analysis_document = load_document(analysis_path)
+    if (analysis_path.exists() or analysis_path.with_suffix('.json').exists()) and not revise:
+        analysis_document = load_document(
+            analysis_path if analysis_path.exists() else analysis_path.with_suffix('.json'))
         evidence = _artifact_evidence(analysis_document, evidence, ctx)
         analysis_document = validate_analysis(analysis_document, evidence)
+        if not analysis_path.exists():
+            analysis_path = _publish(publish, ctx, 'analysis', mode, version,
+                                     json.dumps(analysis_document, sort_keys=True, ensure_ascii=False) + '\n')
     else:
         from .diagnostic_sandbox import isolation_available
         from .diagnostic_session import analyzer_timeout, run_diagnostic_codex, settings

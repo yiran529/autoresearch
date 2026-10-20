@@ -625,6 +625,8 @@ class WorkflowStore:
         state["nodes"][node_id]["engineering_status"] = "completed"
 
     def _publish_engineering_unlocked(self, state, agent_id):
+        from coral.grader.analysis_artifacts import publish_analysis
+
         worker = state["engineering_workers"][agent_id]
         node_id = worker["node_id"]
         submission = worker["analysis_submission"]
@@ -635,8 +637,7 @@ class WorkflowStore:
         if path.exists():
             if load_document(path) != submission["document"]:
                 raise WorkflowError("immutable Engineering Analysis conflicts with frozen submission")
-        else:
-            atomic_write_text(path, json.dumps(submission["document"], sort_keys=True, ensure_ascii=False) + "\n")
+        publish_analysis(path, submission["document"])
         self._complete_engineering_unlocked(state, agent_id)
 
     def submit_engineering_analysis(self, agent_id: str, body: dict) -> dict[str, Any]:

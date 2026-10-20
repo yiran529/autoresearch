@@ -34,4 +34,7 @@ def validate_artifact(kind: str, content: str, context: dict[str, Any]) -> dict[
             relative = f"nodes/{node_id}/{mode}_{kind}_v{version}.md"
         else:
             raise ValueError(f"unsupported artifact kind: {kind}")
-    return {"relative_path": relative}
+    result = {"relative_path": relative}
+    if kind == "analysis":
+        result["format"] = "analysis-json-markdown"
+    return result

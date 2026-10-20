@@ -12,6 +12,9 @@ findings semantically, distinguish conflicts from applicability differences, and
 preserve uncertainty. Cite the exact Node and Analysis version for each finding.
 Keep both summaries useful to future Researcher and Engineer decisions.
 
+Read Analysis Markdown views first; their same-name JSON records contain complete
+frozen evidence metadata for checks when needed. Older `.md` files may contain JSON.
+
 In `research_summary`, when supported by inspected Analyses, distinguish **new mechanistic evidence**, **replications**, **refuted or scope-limited explanations**, and **unresolved questions**, organized by the actual mechanism (low rank, quantization, sparsification, low-sync, hybrid) rather than only candidate scores. Link each item to its original Analysis and scope. The summary is a navigation index, not a new experiment or proof.
 
 Return exactly one JSON object with `research_summary` and
