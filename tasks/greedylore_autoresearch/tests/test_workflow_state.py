@@ -658,21 +658,17 @@ def test_engineer_cannot_finish_pending_or_other_owners_work(engineering_ready):
 
 
 def test_scheduler_checks_memory_without_another_researcher_start(root_run):
-    from autoresearch.lifecycle import run_worker
+    from autoresearch.state import handle_workflow
 
-    _store(root_run).reconcile(0, 0)
-    calls = []
-
-    def launch(*args):
-        calls.append(args)
-    assert run_worker(str(root_run), memory_launcher=launch)["errors"] == {}
-    assert calls == []
-    for node_id in ("N001", "N002"):
-        path = root_run / f"public/notes/nodes/{node_id}/research_analysis_v1.md"
-        path.parent.mkdir(parents=True)
-        path.write_text("Published Analysis")
-    run_worker(str(root_run), memory_launcher=launch)
-    assert calls == [(root_run, "autoresearch.memory:run_worker")]
+    store = _store(root_run)
+    store.reconcile(0, 0)
+    context = {'coral_dir': str(root_run), 'is_manager': True,
+               'max_researchers': 0, 'max_engineers': 1}
+    result = handle_workflow('reconcile_workflow', {}, context)
+    assert result['memory_due'] is True
+    assert result['assignments'] == []
+    queue = json.loads((root_run / 'private/memory_state.json').read_text())
+    assert queue['nodes']['N000']['status'] == 'pending'
 
 
 def test_research_completion_accepts_quality_failure_but_not_engineering(root_run):
@@ -1004,3 +1000,18 @@ def test_mode_probability_comes_from_trusted_task_config(root_run, monkeypatch):
     (root_run / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {'p_explore': 0.9}}}))
     monkeypatch.setattr('autoresearch.state.random.random', lambda: 0.5)
     assert WorkflowStore(root_run).reconcile(1, 0)[0].research_mode == 'EXPLORE'
+
+
+def test_memory_gate_failure_does_not_block_reconcile(root_run, monkeypatch):
+    from autoresearch import memory
+    from autoresearch.state import handle_workflow
+
+    def broken(*args):
+        raise ValueError('bad summary state')
+    monkeypatch.setattr(memory, 'memory_due', broken)
+    result = handle_workflow('reconcile_workflow', {}, {
+        'coral_dir': str(root_run), 'is_manager': True,
+        'max_researchers': 1, 'max_engineers': 1,
+    })
+    assert result['assignments']
+    assert 'bad summary state' in result['memory_error']

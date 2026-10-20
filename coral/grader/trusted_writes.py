@@ -431,6 +431,7 @@ class TrustedWriteService:
         self.memory_launcher = memory_launcher
         self.diagnostic_handler = diagnostic_handler
         self._workflow_process = None
+        self._memory_process = None
         self._workflow_stopping = False
         self._workflow_lifecycle_lock = threading.Lock()
 
@@ -572,6 +573,16 @@ class TrustedWriteService:
                     self._workflow_process = start_task_worker(
                         self.coral_dir, entrypoint, log_name="workflow_worker.err"
                     )
+                memory_entry = configured.get("trusted_memory_worker")
+                if result.get("memory_due") and memory_entry and not self._workflow_stopping and (
+                    self._memory_process is None or self._memory_process.poll() is not None
+                ):
+                    from coral.grader.trusted_worker import start_task_worker
+
+                    try:
+                        self._memory_process = start_task_worker(self.coral_dir, memory_entry)
+                    except Exception as exc:
+                        result["memory_error"] = str(exc)
             return result
         binding = self.identity_resolver(self.coral_dir, peer_pid)
         return self.handle_authenticated(operation, payload, binding)

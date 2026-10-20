@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 from coral.grader.analysis_artifacts import publish_analysis
-from coral.grader.trusted_worker import start_task_worker
 from coral.grader.trusted_writes import trusted_writes_lock
 from coral.hub.attempts import read_attempts
 
@@ -23,7 +22,6 @@ from .analysis import (
 from .artifacts import validate_artifact
 from .atomic import atomic_write_text
 from .evaluation import refresh_node_evaluation
-from .memory import memory_due
 from .state import WorkflowError, WorkflowStore
 from .validation import load_document, validate_analysis
 
@@ -75,7 +73,7 @@ def _publisher(store, node_id, generation):
 
 
 def run_worker(coral_dir: str, *, runner=run_fresh_codex,
-               code_snapshotter=_prepare_code_snapshot, memory_launcher=start_task_worker,
+               code_snapshotter=_prepare_code_snapshot,
                now=time.time, checkout_root=None, only_node=None) -> dict:
     """One pass of eligible Analysis jobs. Never serialize Engineering behind Codex."""
     store = WorkflowStore(coral_dir, repo_path=checkout_root or Path(coral_dir).resolve().parent / "repo")
@@ -150,10 +148,4 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
                                    next_retry_at=now() + min(1800, 60 * 2 ** min(job["failures"] - 1, 5)))
                         store._save_unlocked(state)
                     errors[record["research"]["agent_id"]] = str(exc)
-        try:
-            if only_node is None and memory_due(store.notes_root).due:
-                memory_launcher(store.coral_dir, "autoresearch.memory:run_worker")
-        except Exception as exc:
-            logger.exception("Memory launch failed")
-            errors["memory"] = str(exc)
         return {"status": "advanced", "completed": completed, "errors": errors}

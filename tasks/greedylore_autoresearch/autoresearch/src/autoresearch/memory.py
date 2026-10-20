@@ -1,4 +1,4 @@
-"""Filename-only Global Memory gate and Summary validation."""
+"""Durable completed-Node Memory queue and Summary validation."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from coral.grader.trusted_writes import trusted_writes_lock
+from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 from coral.hub._island import island_root
 
 from .analysis import run_fresh_codex
@@ -28,7 +28,8 @@ _REF = re.compile(
 @dataclass(frozen=True)
 class MemoryGate:
     due: bool
-    trigger_research_refs: frozenset[str]
+    trigger_refs: frozenset[str]
+    pending_nodes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -125,18 +126,67 @@ def validate_summary(
     return refs
 
 
-def memory_due(notes_root: Path, threshold: int = 3) -> MemoryGate:
-    if not isinstance(threshold, int) or threshold < 1:
-        raise ValueError("Memory threshold must be a positive integer")
+def _completed_analysis_refs(notes_root: Path) -> dict[str, frozenset[str]]:
+    from .state import WorkflowStore
+
+    path = notes_root.parent.parent / "private/autoresearch_state.json"
+    if not path.exists():
+        return {}
+    state = json.loads(path.read_text())
+    available = frozenset(list_analysis_refs(notes_root))
+    result = {}
+    for node_id, record in state["nodes"].items():
+        if not WorkflowStore._node_completed(record):
+            continue
+        refs = frozenset(ref for ref in available if ref.split("/")[1] == node_id)
+        research = (record.get("analysis") or {}).get("analysis_ref")
+        if research not in refs:
+            continue
+        if record.get("engineering_claims") and not any("/engineering_analysis_" in ref for ref in refs):
+            continue
+        result[node_id] = refs
+    return result
+
+
+def memory_due(notes_root: Path) -> MemoryGate:
+    """Discover completed Nodes and persist their pending/completed consolidation."""
     notes_root = Path(notes_root)
-    processed = (
-        read_processed_analyses(notes_root / "research_summary.md")
-        & read_processed_analyses(notes_root / "engineering_summary.md")
-    )
-    research_refs = frozenset(list_analysis_refs(notes_root, mode="research"))
-    unprocessed = research_refs - processed
-    node_ids = {ref.split("/")[1] for ref in unprocessed}
-    return MemoryGate(len(node_ids) >= threshold, unprocessed)
+    coral_dir = notes_root.parent.parent
+    path = coral_dir / "private/memory_state.json"
+    with trusted_writes_lock(coral_dir):
+        completed = _completed_analysis_refs(notes_root)
+        processed = (read_processed_analyses(notes_root / "research_summary.md")
+                     & read_processed_analyses(notes_root / "engineering_summary.md"))
+        first_run = not path.exists()
+        state = json.loads(path.read_text()) if not first_run else {"version": 1, "nodes": {}}
+        before = json.dumps(state, sort_keys=True)
+        for node_id, refs in sorted(completed.items()):
+            row = state["nodes"].get(node_id)
+            if row is None or row["analysis_refs"] != sorted(refs):
+                state["nodes"][node_id] = {
+                    "status": "completed" if first_run and refs <= processed else "pending",
+                    "analysis_refs": sorted(refs),
+                    "sequence": row["sequence"] if row else len(state["nodes"]),
+                    "last_error": None,
+                }
+        if first_run or json.dumps(state, sort_keys=True) != before:
+            _atomic_json(path, state)
+        pending = tuple(sorted(
+            (node for node, row in state["nodes"].items()
+             if row["status"] == "pending" and node in completed),
+            key=lambda node: state["nodes"][node]["sequence"],
+        ))
+        return MemoryGate(bool(pending), completed[pending[0]] if pending else frozenset(), pending)
+
+
+def _record_memory_result(context, node_id, refs, error=None):
+    with trusted_writes_lock(context.coral_dir):
+        path = context.coral_dir / "private/memory_state.json"
+        state = json.loads(path.read_text())
+        row = state["nodes"][node_id]
+        if row["analysis_refs"] == sorted(refs):
+            row.update(status="pending" if error else "completed", last_error=error)
+            _atomic_json(path, state)
 
 
 def _host_publish(context: MemoryContext, kind: str, content: str) -> Path:
@@ -151,7 +201,7 @@ def _host_publish(context: MemoryContext, kind: str, content: str) -> Path:
         return atomic_write_text(target, content, mode=0o644)
 
 
-def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, ...]:
+def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None) -> tuple[Path, ...]:
     """Copy only public navigation/evidence files for the Memory session."""
     staged_notes = scratch / "public" / "notes"
     staged_logs = scratch / "public" / "eval_logs"
@@ -170,9 +220,13 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, .
         for node in nodes.iterdir():
             if not node.is_dir() or node.is_symlink() or not re.fullmatch(r"N[0-9]{3}", node.name):
                 continue
+            if node_ids is not None and node.name not in node_ids:
+                continue
             for name in ("spec.md", "evaluation.md"):
                 copy_file(node / name, staged_notes / "nodes" / node.name / name)
     for ref in list_analysis_refs(context.notes_root):
+        if node_ids is not None and ref.split("/")[1] not in node_ids:
+            continue
         copy_file(context.notes_root / ref, staged_notes / ref)
         copy_file((context.notes_root / ref).with_suffix('.json'), (staged_notes / ref).with_suffix('.json'))
 
@@ -282,43 +336,69 @@ def consolidate_memory(
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return MemoryResult("locked")
-        gate = memory_due(context.notes_root)
-        if if_due and not gate.due:
-            return MemoryResult("not_due")
-        prompt_path = Path(__file__).resolve().parents[3] / "prompts" / "global_memory_manager.md"
-        schema_path = Path(__file__).resolve().parents[2] / "schemas" / "memory.schema.json"
-        prompt = prompt_path.read_text(encoding="utf-8") + "\n\n" + json.dumps({
-            "trigger_research_refs": sorted(gate.trigger_research_refs),
-            "research_summary": "research_summary.md",
-            "engineering_summary": "engineering_summary.md",
-        }, sort_keys=True)
+        published = False
+        while True:
+            gate = memory_due(context.notes_root)
+            if not gate.due and (if_due or published):
+                return MemoryResult("published" if published else "not_due",
+                                    context.notes_root / "research_summary.md" if published else None,
+                                    context.notes_root / "engineering_summary.md" if published else None)
+            node_id = gate.pending_nodes[0] if gate.pending_nodes else None
+            try:
+                _consolidate_node(context, gate, runner, publisher)
+            except Exception as exc:
+                if node_id is not None:
+                    _record_memory_result(context, node_id, gate.trigger_refs, str(exc))
+                raise
+            if node_id is None:
+                return MemoryResult("published", context.notes_root / "research_summary.md",
+                                    context.notes_root / "engineering_summary.md")
+            _record_memory_result(context, node_id, gate.trigger_refs)
+            published = True
+
+
+def _consolidate_node(context, gate, runner, publisher):
+    prompt_path = Path(__file__).resolve().parents[3] / "prompts/global_memory_manager.md"
+    schema_path = Path(__file__).resolve().parents[2] / "schemas/memory.schema.json"
+    required = (gate.trigger_refs
+                | read_processed_analyses(context.notes_root / "research_summary.md")
+                | read_processed_analyses(context.notes_root / "engineering_summary.md"))
+    prompt = prompt_path.read_text(encoding="utf-8") + "\n\n" + json.dumps({
+        "trigger_node": gate.pending_nodes[0] if gate.pending_nodes else None,
+        "trigger_refs": sorted(gate.trigger_refs),
+        "required_refs": sorted(required),
+        "research_summary": "research_summary.md",
+        "engineering_summary": "engineering_summary.md",
+    }, sort_keys=True)
+    node_id = gate.pending_nodes[0] if gate.pending_nodes else None
+    sealed = context.coral_dir / "private/memory_outputs" / f"{node_id}.json" if node_id else None
+    document = None
+    if sealed is not None and sealed.exists():
+        cached = json.loads(sealed.read_text())
+        if cached["trigger_refs"] == sorted(gate.trigger_refs) and all(
+            required <= _parse_summary(cached["document"][kind])
+            for kind in ("research_summary", "engineering_summary")
+        ):
+            document = cached["document"]
+    if document is None:
         with tempfile.TemporaryDirectory(prefix="autoresearch-memory-") as scratch_dir:
             scratch = Path(scratch_dir)
-            read_roots = _stage_public_inputs(context, scratch)
-            output = runner(
-                prompt,
-                read_roots,
-                schema_path,
-                scratch,
-            )
+            with trusted_writes_lock(context.coral_dir):
+                completed = _completed_analysis_refs(context.notes_root)
+            staged_nodes = set(completed) | {ref.split("/")[1] for ref in required}
+            read_roots = _stage_public_inputs(context, scratch, node_ids=staged_nodes)
+            output = runner(prompt, read_roots, schema_path, scratch)
             document = json.loads(Path(output).read_text(encoding="utf-8"))
-        if not isinstance(document, dict) or set(document) != {
-            "research_summary", "engineering_summary",
-        }:
-            raise ValueError("Memory worker output has an invalid schema")
-        for kind in ("research_summary", "engineering_summary"):
-            validate_summary(
-                document[kind], context.notes_root,
-                required_refs=gate.trigger_research_refs,
-            )
-        publish = publisher or (lambda kind, content: _host_publish(context, kind, content))
-        publish("research_summary", document["research_summary"])
-        publish("engineering_summary", document["engineering_summary"])
-        return MemoryResult(
-            "published",
-            context.notes_root / "research_summary.md",
-            context.notes_root / "engineering_summary.md",
-        )
+    if not isinstance(document, dict) or set(document) != {"research_summary", "engineering_summary"}:
+        raise ValueError("Memory worker output has an invalid schema")
+    for kind in ("research_summary", "engineering_summary"):
+        validate_summary(document[kind], context.notes_root, required_refs=required)
+    if sealed is not None:
+        with trusted_writes_lock(context.coral_dir):
+            _atomic_json(sealed, {"trigger_refs": sorted(gate.trigger_refs), "document": document})
+    publish = publisher or (lambda kind, content: _host_publish(context, kind, content))
+    publish("research_summary", document["research_summary"])
+    publish("engineering_summary", document["engineering_summary"])
 
 
 def run_worker(coral_dir: str) -> dict[str, str]:

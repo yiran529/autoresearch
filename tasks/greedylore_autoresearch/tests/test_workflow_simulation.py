@@ -272,8 +272,8 @@ def _check_delivered_prompts(root, scenario):
             assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
         trigger = json.JSONDecoder().raw_decode(
             capture['stdin'][re.search(r'\{\s*"engineering_summary"\s*:', capture['stdin']).start():])[0]
-        assert trigger['trigger_research_refs']
-        assert set(trigger['trigger_research_refs']) <= set(capture['analysis_refs'])
+        assert trigger['trigger_refs']
+        assert set(trigger['trigger_refs']) <= set(capture['analysis_refs'])
     if scenario == 'faults':
         resumed = [p for p in producers if p['agent_id'] == 'research-N002']
         assert len(resumed) >= 2

@@ -686,6 +686,8 @@ def test_memory_launch_accepts_only_active_researcher_and_empty_payload(tmp_path
 
 
 def test_one_shot_memory_child_publishes_after_short_lived_launcher(tmp_path):
+    import json
+
     coral_dir = tmp_path / ".coral"
     python = coral_dir / "private" / "grader_venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
@@ -695,6 +697,15 @@ def test_one_shot_memory_child_publishes_after_short_lived_launcher(tmp_path):
         analysis = notes / "nodes" / f"N{index:03d}" / "research_analysis_v1.md"
         analysis.parent.mkdir(parents=True)
         analysis.write_text("# Published Analysis\n")
+    (coral_dir / 'private/autoresearch_state.json').write_text(json.dumps({'nodes': {
+        f'N{index:03d}': {
+            'research': {'status': 'completed'},
+            'analysis': {'status': 'completed',
+                         'analysis_ref': f'nodes/N{index:03d}/research_analysis_v1.md'},
+            'engineering_claims': [], 'engineering_status': 'skipped',
+            'engineering_skip_reason': 'quality_failed',
+        } for index in (1, 2, 3)
+    }}))
     (tmp_path / "memory_fake.py").write_text(
         "import json, time\n"
         "from pathlib import Path\n"
@@ -808,3 +819,37 @@ def test_research_multiple_candidates_require_explicit_task_authorization(tmp_pa
         with pytest.raises(TrustedWriteError, match='different Research SHA'):
             service.handle('submit_attempt', _payload(binding, second, parent), os.getpid())
         assert len(read_attempts(coral_dir)) == 1
+
+
+def test_memory_launch_is_independent_of_busy_analysis_worker(tmp_path, monkeypatch):
+    config = SimpleNamespace(grader=SimpleNamespace(args={
+        'trusted_workflow_worker': 'task.lifecycle:run_worker',
+        'trusted_memory_worker': 'task.memory:run_worker',
+    }))
+    service = TrustedWriteService(tmp_path / '.coral', config,
+        workflow_handler=lambda *_: {'assignments': [], 'memory_due': True})
+    service._workflow_process = SimpleNamespace(poll=lambda: None)
+    calls = []
+    memory_process = SimpleNamespace(poll=lambda: None)
+    monkeypatch.setattr('coral.grader.trusted_writes.os.getppid', lambda: 4242)
+    monkeypatch.setattr('coral.grader.trusted_worker.start_task_worker',
+                        lambda root, entry, **kw: calls.append(entry) or memory_process)
+    for _ in range(2):
+        service.handle('reconcile_workflow', {}, peer_pid=4242)
+    assert calls == ['task.memory:run_worker']
+    memory_process.poll = lambda: 1
+    service.handle('reconcile_workflow', {}, peer_pid=4242)
+    assert calls == ['task.memory:run_worker'] * 2
+
+
+def test_memory_launch_failure_does_not_block_workflow_assignments(tmp_path, monkeypatch):
+    config = SimpleNamespace(grader=SimpleNamespace(args={'trusted_memory_worker': 'task:memory'}))
+    service = TrustedWriteService(tmp_path / '.coral', config,
+        workflow_handler=lambda *_: {'assignments': [{'agent_id': 'research-N001'}], 'memory_due': True})
+    monkeypatch.setattr('coral.grader.trusted_writes.os.getppid', lambda: 4242)
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('memory launch unavailable')
+    monkeypatch.setattr('coral.grader.trusted_worker.start_task_worker', unavailable)
+    result = service.handle('reconcile_workflow', {}, peer_pid=4242)
+    assert result['assignments'] == [{'agent_id': 'research-N001'}]
+    assert 'memory launch unavailable' in result['memory_error']

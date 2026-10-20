@@ -225,15 +225,10 @@ def run_memory(coral_dir: str):
 def run_finalization(coral_dir: str):
     from autoresearch.lifecycle import run_worker
 
-    def launch_memory(coral, entrypoint):
-        if entrypoint != "autoresearch.memory:run_worker":
-            raise RuntimeError(f"unexpected worker {entrypoint}")
-        return launch_logged_worker(coral, "simulation_support:run_memory")
-
     previous_handler = signal.signal(signal.SIGTERM, worker_shutdown)
     try:
         event("worker_start", worker="finalization")
-        result = run_worker(coral_dir, runner=analysis_runner, memory_launcher=launch_memory, now=lambda: time.monotonic() * 10000)
+        result = run_worker(coral_dir, runner=analysis_runner, now=lambda: time.monotonic() * 10000)
         event("finalization_done", **result)
         return result
     finally:
@@ -511,6 +506,10 @@ def read_state(coral_dir):
     return json.loads((coral_dir / "private/autoresearch_state.json").read_text())
 
 
+def read_state_memory(coral_dir):
+    return json.loads((coral_dir / 'private/memory_state.json').read_text())['nodes']
+
+
 def controller(manager, paths, errors):
     try:
         wait_for(
@@ -555,7 +554,10 @@ def controller(manager, paths, errors):
 
         wait_for(engineering_done, "Engineering Analysis and completion")
         wait_for(
-            lambda: (paths.coral_dir / "public/notes/engineering_summary.md").exists(),
+            lambda: (paths.coral_dir / "public/notes/engineering_summary.md").exists()
+            and (paths.coral_dir / "private/memory_state.json").exists()
+            and all(read_state_memory(paths.coral_dir).get(n, {}).get("status") == "completed"
+                    for n in ("N000", "N001", "N002", "N003")),
             "Memory publication",
         )
         wait_for(

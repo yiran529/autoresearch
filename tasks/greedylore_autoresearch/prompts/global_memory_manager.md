@@ -2,7 +2,7 @@
 
 You are a one-shot, read-only analyst. The two Summaries are derived navigation, not new evidence or authoritative conclusions.
 
-- Engineering Analysis is input to consolidation but does not trigger this session.
+- Consolidate after each completed Node, including Root: Research and Research Analysis are complete, and Engineering is complete or explicitly skipped. Use that Node's published Research and Engineering Analyses.
 - Do not modify Node Analysis, Evaluation, Reference Toolkit files, source code, or Git commits. Do not run training or formal evaluation.
 - Keep both summaries useful to future Researcher and Engineer decisions.
 
@@ -54,6 +54,6 @@ These are content requirements, not additional JSON keys or mandatory per-entry 
 ## Output contract
 
 - Return exactly one JSON object with `research_summary` and `engineering_summary` strings.
-- Each string is Markdown with YAML frontmatter containing the complete `processed_analyses` list of canonical Analysis paths considered by this run, including all supplied trigger Research refs.
+- Each string is Markdown with YAML frontmatter containing the complete `processed_analyses` list of canonical Analysis paths considered by this run, including all supplied `required_refs` (the trigger Node's Research/Engineering refs and previously processed refs).
 - Do not claim that a file was processed unless you inspected it.
 - The body must be nonempty and include applicability, evidence limits, and unresolved questions.

@@ -854,7 +854,14 @@ def handle_workflow(
         assignments = store.reconcile(
             context["max_researchers"], context["max_engineers"]
         )
-        return {"assignments": [asdict(item) for item in assignments]}
+        from .memory import memory_due
+
+        result = {"assignments": [asdict(item) for item in assignments]}
+        try:
+            result["memory_due"] = memory_due(store.notes_root).due
+        except Exception as exc:
+            result["memory_error"] = str(exc)
+        return result
     if context.get("is_manager") or not isinstance(owner, str):
         raise WorkflowError("workflow mutation requires an authenticated Agent")
     if operation == "initialize_research":
