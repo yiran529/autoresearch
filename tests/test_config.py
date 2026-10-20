@@ -81,6 +81,20 @@ def test_dynamic_config_rejects_multiple_islands():
         })
 
 
+def test_dynamic_config_allows_engineer_only():
+    from coral.config import DynamicAgentConfig
+
+    config = DynamicAgentConfig(enabled=True, max_researchers=0, max_engineers=1)
+    assert config.max_researchers == 0
+
+
+def test_dynamic_config_rejects_negative_researcher_capacity():
+    from coral.config import DynamicAgentConfig
+
+    with pytest.raises(ValueError, match="max_researchers"):
+        DynamicAgentConfig(enabled=True, max_researchers=-1, max_engineers=1)
+
+
 def test_legacy_grader_type_rejected():
     """Removed grader.type field raises a ValueError with migration guidance."""
     data = {

@@ -33,6 +33,18 @@ Historical Analyses remain readable. Node-bound scheduling uses workflow state v
 
 ## Validation
 
+For a real Engineer-only workflow on existing passing Root evidence, run:
+
+```bash
+uv run python tasks/greedylore_autoresearch/scripts/run_root_engineer.py \
+  --source-run /path/to/root/run --output /path/to/new/engineer-experiment \
+  --model gpt-6.1-sol --effort medium
+```
+
+The driver snapshots current code, independently copies Root evidence, and uses normal AgentManager, Codex/SRT, prompts, formal grader and trusted Engineering publication. Researcher capacity is zero; existing Research Analysis is reused, and no Analyzer or Memory worker is launched. Normal workspace dependencies and SRT must be available. `status.json`, `run_contract.json`, delivered instructions/role, startup log entries and the run's logs/Artifacts record the result. Use the same command with `--resume` to recover without resetting Attempts or budgets. Root quality must pass; this runs real GPU timing and does not repeat Root bootstrap or quality training.
+
+The driver uses an isolated Codex home and adjusts read mounts for SRT 0.0.81 while retaining private filesystem exclusions. Its Linux IPC opt-in (`allowAllUnixSockets`) permits Unix and VM sockets so trusted task commands can connect; it is broader than a per-path socket grant.
+
 Scripted workflow simulations cover normal operation and injected failures, including same-SHA retry, automatic Node binding, foreign-claim rejection, publication and parallel Research. They use synthetic results, with no model, training or GPU calls. Scientific effectiveness requires a separate real low-rank pilot with matching budgets and legitimate saved training states; passing workflow tests does not establish scientific improvement.
 
 

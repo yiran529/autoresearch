@@ -222,8 +222,8 @@ class DynamicAgentConfig:
     max_engineers: int = 0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.max_researchers, int) or self.max_researchers < 1:
-            raise ValueError("agents.dynamic.max_researchers must be >= 1")
+        if not isinstance(self.max_researchers, int) or self.max_researchers < 0:
+            raise ValueError("agents.dynamic.max_researchers must be >= 0")
         if not isinstance(self.max_engineers, int) or self.max_engineers < 0:
             raise ValueError("agents.dynamic.max_engineers must be >= 0")
 

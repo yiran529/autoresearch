@@ -136,7 +136,8 @@ def test_v1_state_is_rejected_without_rewriting(root_run):
     assert store.state_path.read_bytes() == before
 
 
-def test_root_engineering_is_required_before_first_researcher(root_run):
+@pytest.mark.parametrize("researchers", [0, 2])
+def test_root_engineering_is_required_before_first_researcher(root_run, researchers):
     repo = root_run.parent / "repo"
     repo.mkdir()
     _git(repo, "init")
@@ -165,7 +166,7 @@ def test_root_engineering_is_required_before_first_researcher(root_run):
     body["source_commit"] = source
     policy.write_text(json.dumps(body))
     store = _store(root_run, repo)
-    roster = store.reconcile(2, 1)
+    roster = store.reconcile(researchers, 1)
     assert [(a.role, a.node_id) for a in roster] == [("engineering", "N000")]
     assert store.claim_engineering(roster[0].agent_id, "N000")["research_sha"] == root_sha
     from coral.types import Attempt
@@ -179,10 +180,10 @@ def test_root_engineering_is_required_before_first_researcher(root_run):
         "summary": "Recorded.", "findings": ["No speedup."], "limitations": ["Simulation."],
         "attempt_shas": ["e" * 40],
     })
-    assert store.reconcile(2, 1) == ()  # Analysis still pending.
+    assert store.reconcile(researchers, 1) == ()  # Analysis still pending.
     from test_workflow_state import _publish_analysis
     _publish_analysis(root_run, "N000")
-    assert len(store.reconcile(2, 1)) == 2
+    assert len(store.reconcile(researchers, 1)) == researchers
     assert store.is_node_completed("N000")
     assert _git(repo, "rev-parse", "HEAD") == root_sha
 
