@@ -15,7 +15,7 @@ from .results import geometric_mean_speedup, quality_gate
 
 def score_results(
     mode, quality, timing, reference, *, contract_hash, comparable, evidence_paths,
-    max_relative_eval_loss=1.06,
+    max_relative_eval_loss=1.06, hardware_comparison=None,
 ):
     scores = {}
     quality_ok = True
@@ -65,9 +65,13 @@ def score_results(
         failure_class = None
     return ScoreBundle(
         scores=scores, aggregated=aggregated,
+        feedback=("Warning [cross_topology]: " + " ".join(hardware_comparison["warnings"])
+                  if hardware_comparison and hardware_comparison["warnings"] else ""),
         metadata={
             "failure_class": failure_class, "contract_hash": contract_hash,
-            "comparability": "comparable" if comparable else "incomparable_hardware",
+            "comparability": (hardware_comparison["status"] if hardware_comparison
+                              else "comparable" if comparable else "incomparable_hardware"),
+            **({"hardware_comparison": hardware_comparison} if hardware_comparison else {}),
             "evidence_paths": list(evidence_paths),
         },
     )
@@ -120,9 +124,15 @@ class Grader(TaskGrader):
         journal = getattr(self, "_journal", None)
         if journal is not None:
             journal.event(getattr(self, "_stage", "setup"), "failed", reason=message)
+        comparison = getattr(self, "_hardware_comparison", None)
+        if comparison and comparison["warnings"]:
+            message += "\nWarning [" + comparison["status"] + "]: " + " ".join(comparison["warnings"])
         return ScoreBundle(
             scores={"eval": Score(None, "eval", message)}, aggregated=None,
             feedback=message, metadata={"failure_class": failure_class,
+                                        **({"hardware_comparison": comparison,
+                                            "comparability": comparison["status"]}
+                                           if comparison else {}),
                                         "evidence_paths": self._resource_paths()},
         )
 
@@ -305,7 +315,25 @@ class Grader(TaskGrader):
                 tuple(env["gpu_uuids"]), tuple(env["gpu_names"]), env["topology_fingerprint"],
                 tuple(env["numa_nodes"]), dict(env["nccl_env"]),
             )
-            if not validate_efficiency_comparability(reference_env, current_env).valid:
+            from dataclasses import asdict
+
+            from .evaluation_context import _plain, publish_hardware_comparison
+
+            comparison = validate_efficiency_comparability(reference_env, current_env)
+            hardware_comparison = _plain({
+                "status": comparison.status, "allowed": comparison.valid,
+                "reason": comparison.reason,
+                "baseline": asdict(reference_env), "candidate": asdict(current_env),
+                "differences": {
+                    field: {"baseline": getattr(reference_env, field),
+                            "candidate": getattr(current_env, field)}
+                    for field in comparison.differences
+                },
+                "warnings": comparison.warnings,
+            })
+            self._hardware_comparison = hardware_comparison
+            publish_hardware_comparison(evidence_root, hardware_comparison)
+            if not comparison.valid:
                 raise InfraFailure("incomparable_hardware before timing")
             self._timing_reservation = reservation
             try:
@@ -345,17 +373,19 @@ class Grader(TaskGrader):
         for name, repetitions in timing_repetitions.items():
             summary = aggregate_timing_cell(repetitions)
             timing[name] = {"mean": summary.mean, "relative_spread": summary.relative_spread}
-        comparable = validate_efficiency_comparability(reference_env, current_env).valid
+        comparable = comparison.valid
         return score_results(
             mode, quality_results, timing, reference,
             contract_hash=contract.contract_hash, comparable=comparable,
             evidence_paths=evidence_paths + self._resource_paths(),
+            hardware_comparison=hardware_comparison,
             max_relative_eval_loss=contract.raw["quality"]["max_relative_eval_loss"],
         )
 
     def evaluate(self) -> ScoreBundle:
         from .gpu import InfraFailure
 
+        self._hardware_comparison = None
         validation = bool(self.tasks and self.tasks[0].metadata.get("coral_validation"))
         try:
             contract = EvalContract.load(

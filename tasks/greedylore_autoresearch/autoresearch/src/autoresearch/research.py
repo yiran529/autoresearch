@@ -35,7 +35,7 @@ def quality_eligible(attempt) -> bool:
     return (not attempt.archived and scored_success(attempt)
             and not attempt.metadata.get('failure_class')
             and type(quality) in (float, int) and quality == 1
-            and comparable in (None, True, 'comparable'))
+            and comparable in (None, True, 'comparable', 'cross_topology'))
 
 
 def select_research_attempt(attempts):

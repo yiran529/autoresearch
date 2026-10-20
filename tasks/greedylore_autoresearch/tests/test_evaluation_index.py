@@ -144,3 +144,13 @@ def test_evaluation_links_resolve_without_enumerating_every_result(tmp_path):
     assert all(p.exists() for p in targets)
     assert len(links) <= 4
     assert 'result-39.json' not in report
+
+
+def test_evaluation_displays_cross_topology_warning(tmp_path):
+    attempt = _attempt('a' * 40, 'research', '2026-01-01T00:00:00+00:00')
+    attempt.metadata.update(comparability='cross_topology', hardware_comparison={
+        'warnings': ['topology_fingerprint differs; comparison allowed.'],
+    })
+    report = refresh_node_evaluation('N001', [attempt], tmp_path)
+    assert 'cross_topology' in report
+    assert 'topology_fingerprint differs' in report

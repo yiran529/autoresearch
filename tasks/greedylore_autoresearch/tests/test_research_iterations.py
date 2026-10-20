@@ -182,3 +182,11 @@ def test_trusted_submission_accepts_three_candidates_then_freezes_best(root_run)
     assert node['research']['selected_sha'] == shas[0]
     assert node['analysis']['research_sha'] == shas[0]
     assert node['engineering_status'] == 'pending'
+
+
+def test_cross_topology_candidate_can_be_selected():
+    from autoresearch.research import quality_eligible, select_research_attempt
+
+    cross = candidate('e', .9, comparability='cross_topology')
+    assert quality_eligible(cross)
+    assert select_research_attempt([candidate('d', .8), cross]) == cross

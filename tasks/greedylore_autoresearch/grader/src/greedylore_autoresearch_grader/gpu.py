@@ -173,6 +173,14 @@ class EfficiencyEnvironment:
 class Comparability:
     valid: bool
     reason: str | None = None
+    differences: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def status(self) -> str:
+        if not self.valid:
+            return "incomparable_hardware"
+        return "cross_topology" if self.warnings else "comparable"
 
 
 def gpu_topology_fingerprint(
@@ -201,18 +209,24 @@ def validate_efficiency_comparability(
         and len(set(dense.gpu_uuids)) == len(dense.gpu_uuids)
         and len(set(candidate.gpu_uuids)) == len(candidate.gpu_uuids)
     )
+    differences = tuple(
+        field for field in EfficiencyEnvironment.__dataclass_fields__
+        if getattr(dense, field) != getattr(candidate, field)
+    )
     environment_matches = (
         sorted(dense.gpu_names) == sorted(candidate.gpu_names)
-        and dense.topology_fingerprint == candidate.topology_fingerprint
-        and sorted(str(x) for x in dense.numa_nodes) == sorted(str(x) for x in candidate.numa_nodes)
         and dict(dense.nccl_env) == dict(candidate.nccl_env)
     )
-    same_gpus = set(dense.gpu_uuids) == set(candidate.gpu_uuids)
-    equivalent = same_cardinality and environment_matches and same_gpus
-    if not same_gpus:
-        complete_numa = all(node is not None for node in (*dense.numa_nodes, *candidate.numa_nodes))
-        equivalent = same_cardinality and environment_matches and complete_numa
-    return Comparability(equivalent, None if equivalent else "incomparable_hardware")
+    warnings = []
+    if dense.topology_fingerprint != candidate.topology_fingerprint:
+        warnings.append("topology_fingerprint differs from the baseline.")
+    if sorted(str(x) for x in dense.numa_nodes) != sorted(str(x) for x in candidate.numa_nodes):
+        warnings.append("numa_nodes differ from the baseline.")
+    if any(node is None for node in (*dense.numa_nodes, *candidate.numa_nodes)):
+        warnings.append("NUMA information is incomplete.")
+    valid = same_cardinality and environment_matches
+    return Comparability(valid, None if valid else "incomparable_hardware",
+                         differences, tuple(warnings) if valid else ())
 
 
 class GpuReservation:

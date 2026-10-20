@@ -115,6 +115,7 @@ def refresh_node_evaluation(
     if len(research) > 1 or frozen_sha:
         selection = f"Selected Research SHA: `{anchor}`" if anchor else "Selected Research SHA: pending Research finish."
         lines[2:2] = [selection, ""]
+    warnings = []
     rendered = 0
     for attempt in ordered:
         mode = attempt.metadata.get("mode")
@@ -150,7 +151,11 @@ def refresh_node_evaluation(
             )
             + " |"
         )
+        for warning in attempt.metadata.get("hardware_comparison", {}).get("warnings", []):
+            warnings.append(f"- `{attempt.commit_hash}`: {warning}")
         rendered += 1
+    if warnings:
+        lines.extend(("", "Hardware comparison warnings (cross_topology / 跨拓扑比较):", "", *warnings))
     if rendered == 0:
         lines.extend(("", "No formal evaluations recorded."))
     lines.extend(("", "Evidence labels are relative to the public state directory; links resolve from this Node. "

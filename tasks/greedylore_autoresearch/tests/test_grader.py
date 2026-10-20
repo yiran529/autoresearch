@@ -184,7 +184,7 @@ def test_formal_evaluation_fails_as_infrastructure_before_gpu_when_references_mi
 
 
 @pytest.mark.parametrize("mode", ["research", "engineering"])
-@pytest.mark.parametrize("fault", [None, "missing_monitoring", "incomparable", "interference"])
+@pytest.mark.parametrize("fault", [None, "missing_monitoring", "incomparable", "interference", "cross_interference", "wrong_model"])
 def test_formal_stages_reserve_separately_and_validate_before_scoring(
     contract, tmp_path, monkeypatch, mode, fault,
 ):
@@ -252,8 +252,11 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
             self.indices = (4, 5, 6, 7) if stage == "quality" else (0, 1, 2, 3)
             self.devices = tuple(GpuDevice(i, f"GPU-{i}", "A100", 0, 0, (), 0)
                                  for i in self.indices)
+            if fault == 'wrong_model' and stage == 'timing':
+                from dataclasses import replace
+                self.devices = tuple(replace(d, name='H100') for d in self.devices)
             self.uuids = tuple(d.uuid for d in self.devices)
-            self.topology = "wrong-topology" if fault == "incomparable" else "topology"
+            self.topology = "wrong-topology" if fault in {"incomparable", "cross_interference"} else "topology"
             assert not held
             held.append(self)
             reservations.append(self)
@@ -307,7 +310,7 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
             (output / "all_results.json").write_text(json.dumps(payload))
             return SimpleNamespace(
                 timed_out=False, returncode=0, stderr_tail="",
-                infra_failure="timing interference" if fault == "interference"
+                infra_failure="timing interference" if fault in {"interference", "cross_interference"}
                 and "c4/table_v_timing.py" in spec.argv else None,
             )
 
@@ -324,12 +327,20 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
     bundle = grader.evaluate()
 
     assert not held
-    if fault is not None:
+    if fault not in {None, "incomparable"}:
         assert bundle.aggregated is None
         assert bundle.metadata["failure_class"] == "infra"
-        if fault in {"missing_monitoring", "incomparable"}:
+        if fault in {'interference', 'cross_interference', 'wrong_model'}:
+            assert 'hardware_comparison' in bundle.metadata
+        if fault == 'wrong_model':
+            assert bundle.metadata['comparability'] == 'incomparable_hardware'
+            assert 'gpu_names' in bundle.metadata['hardware_comparison']['differences']
+        if fault in {"missing_monitoring", "wrong_model"}:
             assert not any("c4/table_v_timing.py" in command for command in grader.commands)
-        if fault == "interference":
+        if fault == 'cross_interference':
+            assert bundle.metadata['comparability'] == 'cross_topology'
+            assert 'cross_topology' in bundle.feedback
+        if fault in {"interference", "cross_interference"}:
             assert "interference" in bundle.feedback
         return
     assert bundle.aggregated == pytest.approx(2.0)
@@ -340,6 +351,17 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
     assert bundle.metadata["failure_class"] is None
     assert len(bundle.metadata["evidence_paths"]) == (15 if mode == "research" else 11)
     context = json.loads((grader.eval_logs_dir / 'evaluation_context.json').read_text())
+    comparison = context['hardware_comparison']
+    assert comparison == bundle.metadata['hardware_comparison']
+    assert comparison['status'] == bundle.metadata['comparability']
+    if fault == 'incomparable':
+        assert comparison['status'] == 'cross_topology'
+        assert 'topology_fingerprint' in comparison['differences']
+        assert comparison['baseline']['topology_fingerprint'] == topology
+        assert comparison['candidate']['topology_fingerprint'] != topology
+        assert 'cross_topology' in bundle.feedback
+    else:
+        assert comparison['status'] == 'comparable'
     assert context['contract_hash'] == contract.contract_hash
     assert context['dense_quality']['llama60m_adamw']['final_eval_loss'] == 1.0
     assert any(path.endswith("gpu_resources.jsonl") for path in bundle.metadata["evidence_paths"])

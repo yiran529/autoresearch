@@ -33,3 +33,13 @@ def publish_context(contract, reference, root: Path, mode: str) -> Path:
     }
     _atomic_json(path, _plain(value))
     return path
+
+
+def publish_hardware_comparison(root: Path, comparison: dict) -> None:
+    """Retain the actual timing allocation and differences before timing starts."""
+    import json
+
+    path = root / 'evaluation_context.json'
+    value = json.loads(path.read_text())
+    value['hardware_comparison'] = comparison
+    _atomic_json(path, _plain(value))
