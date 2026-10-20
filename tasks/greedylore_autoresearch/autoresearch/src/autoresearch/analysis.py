@@ -665,31 +665,23 @@ def analyze(
             if task is not None:
                 total_remaining, successful_remaining = remaining_budget(task.read())
                 guidance = (
-                    "\nControlled diagnostics are enabled: at most 3 successful executions and "
-                    "10 total executions per analysis task, including failed, timed-out and "
-                    f"interrupted runs; {total_remaining} total and {successful_remaining} "
-                    "successful executions remaining. Request 1–4 GPUs as needed, at most 600 seconds "
-                    "per execution and 3600 seconds per queue wait. Write scripts in experiments/ "
-                    "and outputs in results/. Run only through the authoritative entrypoint:\n"
+                    "\n## Controlled diagnostic session\n\n"
+                    "- Controlled diagnostics are enabled.\n"
+                    f"- Remaining budget: {total_remaining} total and {successful_remaining} "
+                    "successful executions remaining.\n"
+                    "- Request 1–4 GPUs as needed; at most 3600 seconds per queue wait.\n"
+                    "- Write scripts in experiments/ and outputs in results/.\n\n"
+                    "Run only through the authoritative entrypoint:\n\n```bash\n"
                     "autoresearch diagnostic run --gpus 4 --timeout 600 -- "
-                    "python experiments/probe.py --output results/probe.json\n"
-                    "Use diagnostics only when key evidence is missing and a bounded experiment "
-                    "can distinguish leading explanations; do not repeat sufficient existing tests. "
-                    "Never bypass this entrypoint to launch GPU work. Cite diagnostic IDs and "
-                    "persistent results. When execution fails, inspect its stdout/stderr and "
-                    "record, debug the cause, then retry through the same entrypoint with a new "
-                    "request ID after fixing it; do not blindly repeat unchanged failing commands. "
-                    "Reuse the original request ID only to retrieve its existing result, not to "
-                    "rerun it. All retries consume the total execution budget. "
-                    "Report uncertainty when failures remain unresolved or budget is "
-                    "insufficient; do not invent mechanism conclusions."
+                    "python experiments/probe.py --output results/probe.json\n```\n"
                 )
                 output = diagnostic_runner(session_prompt + guidance, analyzer_roots,
                                            _schema("analysis"), analyzer_scratch, task)
             else:
                 output = runner(
-                    session_prompt + "\nControlled diagnostics are unavailable for this session. "
-                    "Do not launch GPU experiments yourself; report missing evidence as a limitation.",
+                    session_prompt + "\n## Controlled diagnostic session\n\n"
+                    "- Controlled diagnostics are unavailable for this session.\n"
+                    "- Do not launch GPU experiments yourself; report missing evidence as a limitation.",
                     analyzer_roots,
                     _schema("analysis"),
                     analyzer_scratch,

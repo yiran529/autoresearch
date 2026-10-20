@@ -33,24 +33,27 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         raise ValueError("workflow prompt requires a role and a bound Node")
     action = "Resume" if resuming else "Start"
     scope = (
-        "Use one distinct formal Research candidate; only permitted same-SHA infrastructure "
-        "retries are allowed. After the final result, wait for host retirement; Research Analysis "
+        "- Use one distinct formal Research candidate; only permitted same-SHA infrastructure "
+        "retries are allowed.\n- After the final result, wait for host retirement; Research Analysis "
         "and quality-gated Engineering are handled independently by the host."
         if spec.workflow_role == "research" else
-        "Use at most 3 successful formal Engineering runs and 10 total formal Engineering runs, including "
-        "failures, same-SHA retries and all resumes. A valid scored regression counts as success. "
-        "Stop evaluating at either limit. Preserve algorithm semantics and author the final Engineering Analysis "
-        "yourself. Use the trusted Engineering finish command, then wait for publication and "
+        "- Use at most 3 successful formal Engineering runs and 10 total formal Engineering runs, including "
+        "failures, same-SHA retries and all resumes. A valid scored regression counts as success.\n"
+        "- Stop evaluating at either limit.\n- Preserve algorithm semantics and author the final Engineering Analysis "
+        "yourself.\n- Use the trusted Engineering finish command, then wait for publication and "
         "retirement; do not wait for Research Analysis before starting Engineering."
     )
     prompt = (
-        f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`. "
-        f"Read `{instruction_file}` and your role at `{shared_dir}/roles/{spec.agent_id}.md` "
-        f"before acting, then follow that role's numbered steps and concrete work guidance. "
-        "On start or resume, inspect the existing Spec, Evaluation/Attempts and Worktree first; "
-        "continue from the recorded stage and preserve existing changes and frozen submissions. "
-        "Do not restart completed steps, choose another Node or reset the candidate count. "
-        f"{scope} Work autonomously within these steps and limits."
+        f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`.\n\n"
+        "## Read first\n\n"
+        f"- Read `{instruction_file}` and your role at `{shared_dir}/roles/{spec.agent_id}.md` "
+        "before acting, then follow that role's numbered steps and concrete work guidance.\n\n"
+        "## Recover progress\n\n"
+        "- On start or resume, inspect the existing Spec, Evaluation/Attempts and Worktree first; "
+        "continue from the recorded stage and preserve existing changes and frozen submissions.\n"
+        "- Do not restart completed steps, choose another Node or reset the candidate count.\n\n"
+        f"## Workflow limits and completion\n\n{scope}\n\n"
+        "Work autonomously within these steps and limits."
     )
     if feedback:
         prompt += f"\n\nHost feedback for this same assignment:\n{feedback}"

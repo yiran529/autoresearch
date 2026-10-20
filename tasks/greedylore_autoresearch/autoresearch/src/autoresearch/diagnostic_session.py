@@ -154,12 +154,13 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
             register_workflow_model(process, token=environment['CORAL_WORKFLOW_PROCESS_TOKEN'])
             task.bind(process.pid, timeout=min(5, remaining()))
             location = (
-                f'\nWorkspace root: {task.workspace}\n'
-                f'Your initial working directory is {task.workspace / "results"}. '
-                'Only experiments/ and results/ beneath the workspace root are writable. '
-                'Use absolute workspace paths for reading fixed code/evidence and writing scripts. '
+                f'\n## Workspace paths\n\nWorkspace root: {task.workspace}\n\n'
+                f'- Your initial working directory is {task.workspace / "results"}.\n'
+                '- Only experiments/ and results/ beneath the workspace root are writable.\n'
+                '- Use absolute workspace paths for reading fixed code/evidence and writing scripts.\n'
+                '- '
                 'The authoritative diagnostic command argv is resolved relative to the workspace root, '
-                'not this initial working directory. Do not change code/ or evidence/.\n'
+                'not this initial working directory.\n- Do not change code/ or evidence/.\n\n'
                 'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
             )
             _stdout, stderr = process.communicate(prompt + location,

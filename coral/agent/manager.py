@@ -1826,8 +1826,11 @@ class AgentManager:
         if self.config.agents.dynamic.enabled:
             lines.extend([
                 "",
-                "This result does not reset your assignment or candidate budget. Inspect existing "
-                "Attempts and follow your assigned role's remaining steps. Use only permitted "
+                "## Continue this assignment",
+                "",
+                "- This result does not reset your assignment or candidate budget.",
+                "- Inspect existing Attempts and follow your assigned role's remaining steps.",
+                "- Use only permitted "
                 "same-SHA infrastructure retries; if the formal candidate budget is exhausted, "
                 "proceed to the role's required completion steps and host retirement.",
             ])

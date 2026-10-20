@@ -32,27 +32,29 @@ def generate_coral_md(
     if config.agents.dynamic.enabled:
         if workflow_role == "research" and node_id:
             scope = (
-                f"You own Research Node `{node_id}`. Choose a completed Parent, then run "
-                "`autoresearch node initialize` before changing the code base. "
-                "Run one formal Research evaluation; handle same-SHA infrastructure retries "
-                "if needed, then wait for Research assignment completion and Agent retirement. The host independently runs this Node's Research Analyzer and quality-gated Engineering; only their completion makes this Node an eligible Parent."
+                f"- You own Research Node `{node_id}`.\n"
+                "- Choose a completed Parent, then run "
+                "`autoresearch node initialize` before changing the code base.\n"
+                "- Run one formal Research evaluation; handle same-SHA infrastructure retries "
+                "if needed, then wait for Research assignment completion and Agent retirement.\n"
+                "- The host independently runs this Node's Research Analyzer and quality-gated Engineering; only their completion makes this Node an eligible Parent."
             )
             mode = research_mode if research_mode is not None else "REFINE"
             if mode not in {"REFINE", "EXPLORE"}:
                 raise ValueError("invalid trusted research mode")
-            scope += (f" Your host-assigned research mode is `{mode}`, pinned to this "
+            scope += (f"\n- Your host-assigned research mode is `{mode}`, pinned to this "
                       "assignment across resumes and retries. Follow its definition in your role; "
                       "do not resample or supply a mode to node initialize.")
         elif workflow_role == "engineering" and node_id:
             scope = (
-                f"You own Engineering for Node `{node_id}`, bound by the host. "
-                f"On first setup in a clean Worktree, run `autoresearch engineering claim {node_id}` "
-                "to confirm your binding and start from its fixed Research commit. "
-                "On resume preserve your existing changes. Do not select another Node or cancel "
-                "required Engineering. Its Research Analyzer runs independently; do not wait for it. "
-                "When finished evaluating candidates, author a final JSON summary and run "
-                "`autoresearch engineering finish --analysis-file /absolute/scratch/final.json`. "
-                "Wait for host publication, completion and Agent retirement. The Node becomes "
+                f"- You own Engineering for Node `{node_id}`, bound by the host.\n"
+                f"- On first setup in a clean Worktree, run `autoresearch engineering claim {node_id}` "
+                "to confirm your binding and start from its fixed Research commit.\n"
+                "- On resume preserve your existing changes.\n- Do not select another Node or cancel "
+                "required Engineering.\n- Its Research Analyzer runs independently; do not wait for it.\n"
+                "- When finished evaluating candidates, author a final JSON summary and run "
+                "`autoresearch engineering finish --analysis-file /absolute/scratch/final.json`.\n"
+                "- Wait for host publication, completion and Agent retirement.\n- The Node becomes "
                 "a completed Parent only after Research Analysis and Engineering both finish."
             )
         else:
@@ -60,11 +62,13 @@ def generate_coral_md(
         return (
             f"# {config.task.name}: {agent_id}\n\n"
             f"{config.task.description}\n\n"
+            "## Read first\n\n"
             f"Read your role at `{shared_dir}/roles/{agent_id}.md` and follow its task rules.\n\n"
-            f"{scope}\n\n"
             f"Task resources, when supplied, are under `{shared_dir}/notes/toolkit/`: "
             "read workflow_rules.md and references there. Shared summaries and the "
             f"Tree are under `{shared_dir}/notes/`.\n\n"
+            f"## Assignment workflow\n\n{scope}\n\n"
+            "## Worktree and recovery\n\n"
             "Use only your own Worktree for code edits; publish shared results through "
             "the documented task commands. On an interrupted run, resume this "
             "same assignment and Codex Session.\n"

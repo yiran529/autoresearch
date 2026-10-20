@@ -1,11 +1,56 @@
 # AutoResearch V1 — Shared Workflow Rules
 
-- Read project code and published evidence; write directly only in your own Worktree/scratch. Use task commands for shared records. Do not edit Tree, Spec, Attempts, evaluation logs or historical Artifacts; private evaluation data and credentials are out of scope.
-- Each Node has one formal Research candidate SHA. Before submission, smoke tests and ordinary commits are allowed; later algorithm changes belong in a child Node handled by a new Agent. Engineering optimizes the original Node without replacing its Research result.
-- Complete `submission.yaml` using the task template before `coral eval`. Run and record the applicable checks in `semantic_criteria.md`; fix failed self-checks before submission. Engineering must preserve algorithm semantics. Do not alter the formal benchmark or include profiling/gradient instrumentation in formal timing.
-- Only infrastructure failures may use `autoresearch retry <sha>`: keep the same SHA and code, never create an empty commit to retry. Candidate/algorithm failures are evidence. Retain failed, regressed, incomparable and missing results honestly; CORAL's `improved` label does not prove quality passes.
-- After the terminal Research Attempt has no remaining infrastructure retry, Researcher retirement, Evaluation refresh, independent Research Analysis and quality-gated Engineering assignment are automatic. The host binds one Engineer to each quality-passing Node, subject to the Engineer capacity; pending Engineering cannot be skipped for lack of capacity. Research Analysis and Engineering do not wait for each other. A Node (including Root N000) enables child expansion only after Research Analysis is published and Engineering is completed or explicitly skipped because quality failed or was unavailable.
-- Engineering has at most 3 successful formal runs and 10 total formal runs per assignment, across all resumes. A completed evaluation with a valid score counts as successful even when performance regresses. Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions/retries reserve capacity. Stop evaluating when either limit is reached, even if infrastructure retries remain. After a terminal run, the Engineer authors a final summary covering all claim Attempts and calls `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`. See the Engineer role and `references/engineer_runtime.md` for the JSON fields. The host seals and publishes the versioned Analysis before completing the claim. No independent Engineering Analyzer is launched. Once submitted, do not change the summary or submit another candidate; wait for publication and retirement.
+## Read and write boundaries
+
+- Read project code and published evidence; write directly only in your own Worktree/scratch.
+- Use task commands for shared records.
+- Do not edit Tree, Spec, Attempts, evaluation logs or historical Artifacts; private evaluation data and credentials are out of scope.
+
+## Research candidates and formal evaluation
+
+- Each Node has one formal Research candidate SHA.
+- Before submission, smoke tests and ordinary commits are allowed; later algorithm changes belong in a child Node handled by a new Agent.
+- Engineering optimizes the original Node without replacing its Research result.
+- Complete `submission.yaml` using the task template before `coral eval`.
+- Run and record the applicable checks in `semantic_criteria.md`; fix failed self-checks before submission.
+- Engineering must preserve algorithm semantics.
+- Do not alter the formal benchmark or include profiling/gradient instrumentation in formal timing.
+
+## Retries and evidence
+
+- Only infrastructure failures may use `autoresearch retry <sha>`: keep the same SHA and code, never create an empty commit to retry.
+- Candidate/algorithm failures are evidence.
+- Retain failed, regressed, incomparable and missing results honestly; CORAL's `improved` label does not prove quality passes.
+
+## Node lifecycle
+
+- After the terminal Research Attempt has no remaining infrastructure retry, Researcher retirement, Evaluation refresh, independent Research Analysis and quality-gated Engineering assignment are automatic.
+- The host binds one Engineer to each quality-passing Node, subject to the Engineer capacity; pending Engineering cannot be skipped for lack of capacity.
+- Research Analysis and Engineering do not wait for each other.
+- A Node (including Root N000) enables child expansion only after Research Analysis is published and Engineering is completed or explicitly skipped because quality failed or was unavailable.
+
+## Engineering runs and completion
+
+- Engineering has at most 3 successful formal runs and 10 total formal runs per assignment, across all resumes.
+- A completed evaluation with a valid score counts as successful even when performance regresses.
+- Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions/retries reserve capacity.
+- Stop evaluating when either limit is reached, even if infrastructure retries remain.
+- After a terminal run, the Engineer authors a final summary covering all claim Attempts and calls `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`.
+- See the Engineer role and `references/engineer_runtime.md` for the JSON fields.
+- The host seals and publishes the versioned Analysis before completing the claim.
+- No independent Engineering Analyzer is launched.
+- Once submitted, do not change the summary or submit another candidate; wait for publication and retirement.
+
+## Evaluation and Analysis records
+
 - For diagnostics, `autoresearch refresh-evaluation --node Nxxx` rebuilds Evaluation.
-- Read versioned Analysis `.md` files for conclusions and limitations. New versions link a same-name `.json` containing the complete fixed evidence record; inspect it only when needed. Diagnostic IDs locate immutable records/results under the public diagnostics directory. Legacy Analysis `.md` files may still contain JSON.
-- Subagents are optional for substantive uncertainty. Give each a bounded task and output; they inherit Sandbox, Evaluation and Artifact publication boundaries. Handle simple work yourself.
+- Read versioned Analysis `.md` files for conclusions and limitations.
+- New versions link a same-name `.json` containing the complete fixed evidence record; inspect it only when needed.
+- Diagnostic IDs locate immutable records/results under the public diagnostics directory.
+- Legacy Analysis `.md` files may still contain JSON.
+
+## Subagents
+
+- Subagents are optional for substantive uncertainty.
+- Give each a bounded task and output; they inherit Sandbox, Evaluation and Artifact publication boundaries.
+- Handle simple work yourself.
