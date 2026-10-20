@@ -171,6 +171,14 @@ def _manifest_hash(manifest: dict[str, Any]) -> str:
 
 
 def _reference_path(reference: str, context: AnalysisContext) -> Path:
+    if reference.startswith('diagnostics/'):
+        relative = Path(reference.removeprefix('diagnostics/'))
+        root = context.coral_dir / 'public/diagnostics'
+        target = root / relative
+        if (relative.is_absolute() or '..' in relative.parts or target.is_symlink()
+                or not target.resolve().is_relative_to(root.resolve())):
+            raise ArtifactValidationError('diagnostic evidence escapes public diagnostics')
+        return target
     if reference.startswith("notes/"):
         relative = reference.removeprefix("notes/")
         if not re.fullmatch(r"nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.(?:md|json)", relative):
@@ -285,6 +293,10 @@ def resolve_evidence(
                 raw_references.add(f"notes/{sidecar.relative_to(ctx.notes_root).as_posix()}")
     for item in engineering_evidence:
         raw_references.update(item.eval_refs)
+    if mode == 'engineering' and (ctx.coral_dir / 'private/autoresearch_state.json').exists():
+        from .engineer_diagnostics import evidence_references
+
+        raw_references.update(evidence_references(ctx.coral_dir, node_id, research_attempt.commit_hash))
     evidence_paths = {
         "evidence/spec.md",
         "evidence/evaluation.md",

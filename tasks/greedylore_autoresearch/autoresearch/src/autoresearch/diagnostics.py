@@ -18,7 +18,7 @@ from coral.grader.trusted_writes import (
     process_start_time,
 )
 
-_TASK = re.compile(r'N[0-9]{3}-(research|engineering)-v[1-9][0-9]*')
+_TASK = re.compile(r'N[0-9]{3}-(?:(research|engineering)-v[1-9][0-9]*|engineer-E[0-9]{4,})')
 _REQUEST = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 
 
@@ -48,8 +48,12 @@ def _live_descendant(peer: int, root: dict | None) -> bool:
 
 
 def _validate_request(payload: dict) -> None:
-    if not isinstance(payload, dict) or set(payload) != {'request_id', 'argv', 'gpus', 'timeout'}:
+    fields = {'request_id', 'argv', 'gpus', 'timeout'}
+    if not isinstance(payload, dict) or set(payload) not in (fields, fields | {'scripts_dir'}):
         raise ValueError('invalid diagnostic request fields')
+    if 'scripts_dir' in payload and (not isinstance(payload['scripts_dir'], str)
+                                   or not Path(payload['scripts_dir']).is_absolute()):
+        raise ValueError('diagnostic scripts_dir must be absolute')
     if not isinstance(payload['request_id'], str) or not _REQUEST.fullmatch(payload['request_id']):
         raise ValueError('invalid diagnostic request ID')
     argv = payload['argv']
@@ -134,11 +138,13 @@ class DiagnosticTask:
             state['process'] = None
             _atomic_json(self.path, state)
 
-    def run(self, payload: dict, peer_pid: int, executor) -> dict:
+    def run(self, payload: dict, peer_pid: int, executor, *, prepare=None, authorize=None) -> dict:
         _validate_request(payload)
         # This task-local lock covers one bounded command, never the workflow lock.
         with self.locked():
             state = self.read()
+            if authorize:
+                authorize()
             root = state.get('process')
             if not _live_descendant(peer_pid, root):
                 raise PermissionError('diagnostic caller is not this active Analyzer')
@@ -150,12 +156,17 @@ class DiagnosticTask:
                 return previous['result']
             if 0 in remaining_budget(state):
                 raise ValueError('analysis diagnostic execution budget exhausted')
+            if prepare:
+                prepare(state)
             diagnostic_id = f'{self.task_id}/{request_id}'
             record = {**payload, 'diagnostic_id': diagnostic_id,
                       'node_id': state['node_id'], 'mode': state['mode'],
                       'analysis_version': state['version'], 'research_sha': state['research_sha'],
                       'evidence_hash': state.get('evidence_hash'),
                       'cwd': str(self.workspace), 'requested_at': time.time()}
+            if state.get('source_role') == 'engineer':
+                record.update(owner_agent_id=state['owner_agent_id'], candidate_sha=state['candidate_sha'],
+                              code_path=state['code_path'])
             interrupted = {'status': 'interrupted', 'started': True,
                            'diagnostic_id': diagnostic_id,
                            'reason': 'worker interrupted before completion; request is not rerun'}
@@ -168,6 +179,8 @@ class DiagnosticTask:
             _atomic_json(record_dir / 'record.json', {**record, **interrupted}, mode=0o644)
 
             def cancelled():
+                if authorize:
+                    authorize()
                 if (self.coral_dir / 'private/workflow_stopping').exists():
                     raise PermissionError('workflow is stopping')
                 if not _live_descendant(root['pid'], root):
@@ -219,6 +232,10 @@ def handle_diagnostic(payload: dict, context: dict, *, executor=None) -> dict:
     peer = context['peer_pid']
     for path in (coral_dir / 'private/diagnostics').glob('*/task.json'):
         task = DiagnosticTask(coral_dir, path.parent.name)
-        if _live_descendant(peer, task.read().get('process')):
+        if task.read().get('source_role') != 'engineer' and _live_descendant(peer, task.read().get('process')):
+            if 'scripts_dir' in payload:
+                raise ValueError('Analyzer scripts belong in its supplied workspace')
             return task.run(payload, peer, executor)
-    raise PermissionError('peer does not belong to an active Analyzer diagnostic task')
+    from .engineer_diagnostics import run_engineer_diagnostic
+
+    return run_engineer_diagnostic(coral_dir, peer, payload, executor)

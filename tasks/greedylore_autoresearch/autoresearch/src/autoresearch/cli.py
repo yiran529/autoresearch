@@ -141,12 +141,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autoresearch")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    diagnostic = commands.add_parser("diagnostic", help="run a bounded Analyzer diagnostic")
+    diagnostic = commands.add_parser("diagnostic", help="run a bounded Analyzer or Engineer diagnostic")
     diagnostic_commands = diagnostic.add_subparsers(dest="diagnostic_command", required=True)
     diagnostic_run = diagnostic_commands.add_parser("run")
     diagnostic_run.add_argument("--gpus", type=int, default=1)
     diagnostic_run.add_argument("--timeout", type=float, default=DIAGNOSTIC_EXECUTION_TIMEOUT)
     diagnostic_run.add_argument("--request-id", default=None, help="reuse this ID after a channel timeout")
+    diagnostic_run.add_argument("--scripts-dir", type=Path, help="Engineer diagnostic scripts in your Worktree or /tmp/<agent-id>/")
     diagnostic_run.add_argument("argv", nargs=argparse.REMAINDER)
 
     retry = commands.add_parser("retry", help="retry one same-SHA infrastructure failure")
@@ -205,13 +206,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         from autoresearch.diagnostics import _validate_request
 
         run = os.environ.get("CORAL_DIAGNOSTIC_RUN")
-        if not run:
-            raise SystemExit("diagnostics are available only inside an enabled Analyzer session")
         argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         payload = {"request_id": args.request_id or uuid.uuid4().hex,
                    "argv": argv, "gpus": args.gpus, "timeout": args.timeout}
+        if args.scripts_dir is not None:
+            payload["scripts_dir"] = str(args.scripts_dir.absolute())
         _validate_request(payload)
-        result = request_trusted(Path(run), "run_diagnostic", payload, timeout=DIAGNOSTIC_CLIENT_TIMEOUT)
+        result = request_trusted(Path(run) if run else _coral_dir(), "run_diagnostic", payload,
+                                 timeout=DIAGNOSTIC_CLIENT_TIMEOUT)
     elif args.command == "retry":
         result = request_trusted(_coral_dir(), "retry_attempt", {"commit_hash": args.commit_hash})
     elif args.command == "bootstrap-root-analysis":

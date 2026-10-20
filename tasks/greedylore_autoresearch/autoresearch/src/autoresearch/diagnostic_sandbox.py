@@ -250,7 +250,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
             IdleGpuPolicy(0, 512, 5), wait_timeout=DIAGNOSTIC_QUEUE_TIMEOUT, poll_interval=5,
             allow_other_users=allow_other_users,
             check_cancelled=cancelled,
-            source_role='analyzer', execution_group=str(task.coral_dir.resolve()),
+            source_role=state.get('source_role', 'analyzer'), execution_group=str(task.coral_dir.resolve()),
             execution_limit=execution_limit,
         )
     except Exception as exc:
@@ -292,6 +292,9 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                        'CUDA_VISIBLE_DEVICES': ','.join(reservation.uuids),
                        'HF_HUB_OFFLINE': '1', 'HF_DATASETS_OFFLINE': '1',
                        'TRANSFORMERS_OFFLINE': '1', 'WANDB_MODE': 'disabled'}
+        if state.get('source_role') == 'engineer':
+            environment['PYTHONPATH'] = state['code_path']
+            environment['CORAL_DIAGNOSTIC_CODE'] = state['code_path']
         started = time.monotonic()
         result['started_at'] = time.time()
         process = None

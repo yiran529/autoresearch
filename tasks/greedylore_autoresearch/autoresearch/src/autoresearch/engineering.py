@@ -15,6 +15,13 @@ from .validation import seal_document, validate_analysis
 
 
 def submit(store, agent_id: str, body: dict) -> dict:
+    from .engineer_diagnostics import publication_guard
+
+    with publication_guard(store, agent_id):
+        return _submit(store, agent_id, body)
+
+
+def _submit(store, agent_id: str, body: dict) -> dict:
     # Import here: WorkflowStore uses this helper without a module cycle.
     from .state import WorkflowError
 

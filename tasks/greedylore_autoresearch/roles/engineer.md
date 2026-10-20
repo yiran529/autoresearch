@@ -18,6 +18,10 @@ Locate task resources in your shared `notes/toolkit/` directory:
    - Keep the Worktree clean on first claim and start from the fixed Research Commit selected by the command. On resume preserve your existing Engineering changes and inspect the current branch before repeating setup.
    - Use profiling to distinguish algorithmic limits, implementation overhead and unverified attribution.
    - Make bounded optimizations and run available self-checks from `semantic_criteria.md`; record commands, results, coverage, failures and deviations.
+   - For missing GPU evidence, use the controlled diagnostic entrypoint described in `references/engineer_runtime.md`. Your shell has no direct GPU authorization; diagnostic scripts run in a separate host-managed workspace.
+   - Commit tracked candidate changes before diagnosis (an ordinary commit creates no formal Attempt). Put scripts in your Worktree or `/tmp/<your-agent-id>/diagnostics/experiments/`; prefer the latter to keep instrumentation out of formal candidates. Run `autoresearch diagnostic run --scripts-dir /absolute/path/to/experiments --gpus 4 --timeout 600 -- python experiments/probe.py --output results/probe.json`.
+   - The host imports code from your committed HEAD into `code/<candidate-sha>/`, sets `CORAL_DIAGNOSTIC_CODE` and `PYTHONPATH` to it, and stages your scripts as `experiments/`. Commands start at the diagnostic workspace root. Write persistent outputs to `results/`; `/tmp` inside the diagnostic is temporary. Worktree paths, credentials and direct GPU execution are unavailable there.
+   - Diagnostics have a separate persistent budget of at most 3 successful and 10 total executions, 1–4 GPUs, at most 600 seconds per execution and 3600 seconds per queue wait. They produce evidence, not formal scores, and do not consume the formal Engineering run budget. Inspect returned records/stdout/stderr on failure, fix the cause, then use a new request ID; reuse an ID only to retrieve the same request's result. Cite diagnostic IDs, candidate SHAs and archived results, including failed records.
 3. **Submit and evaluate a formal candidate.**
    - Complete `submission.yaml` from the template with `mode: engineering`; both `base_commit` and `quality_anchor` always identify this Node's Research SHA. Run `coral eval`.
    - Each distinct formal candidate has its own Engineering commit/Attempt; later candidates may descend from the preceding Engineering Commit.
@@ -32,6 +36,7 @@ Locate task resources in your shared `notes/toolkit/` directory:
    - Report all results, not only the best; CORAL owns the raw results.
 5. **Author the final Engineering Analysis yourself.**
    - Once at least one formal Engineering Attempt has reached a terminal state and you decide to stop (mandatory when either run limit is reached), use all actual Engineering Attempts, fixed SHAs, formal end-to-end evaluation, semantic self-checks and available profiling. Summarize improvements, failures and regressions.
+   - Wait for every diagnostic to finish before submitting the final Analysis. Diagnostic records are retained separately and sealed as supporting evidence; do not edit them or treat diagnostic output as a formal score or fresh quality measurement.
    - Clearly distinguish:
      - **Implementation headroom:** measured overhead that may be improved while preserving algorithm semantics;
      - **Algorithmic limitations:** communication, synchronization or computation costs inherent to the current algorithm's mechanisms whose removal would change its semantics;

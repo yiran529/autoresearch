@@ -27,6 +27,7 @@ grader:
     trusted_memory_worker: autoresearch.memory:run_worker
     trusted_diagnostic_handler: autoresearch.diagnostics:handle_diagnostic
     analyzer_diagnostics: true
+    engineer_diagnostics: true
     p_explore: 0.20
     # Opt in per run only: local IPC exception for the isolated Analyzer.
     analyzer_allow_unix_sockets: false

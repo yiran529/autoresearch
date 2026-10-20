@@ -35,6 +35,8 @@ Historical Analyses remain readable. Node-bound scheduling uses workflow state v
 
 ## Validation
 
+Active Engineer claims can use `autoresearch diagnostic run --scripts-dir /absolute/own/scripts --gpus 4 --timeout 600 -- python experiments/probe.py --output results/probe.json`. See `references/engineer_runtime.md` for staging and paths. Tracked code must be committed before diagnosis; scripts come from the authenticated Worktree or `/tmp/<agent-id>/`. Host-owned records preserve candidate code, scripts, logs and results separately from formal Attempts. Diagnostics have their own persistent 3-success/10-total budget, share existing GPU locks, and cannot run after Engineering finish. `engineer_diagnostics: false` disables them. The final Analysis seals matching diagnostic records; a running diagnostic must finish before final submission. Ordinary scratch output outside this interface is not automatically archived.
+
 For a real Engineer-only workflow on existing passing Root evidence, run:
 
 ```bash
