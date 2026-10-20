@@ -109,7 +109,8 @@ def archive_attempts(
     The JSON stays on disk (and `read_attempt` / `coral show` can still
     resolve an explicit hash), but `read_attempts` and everything built on
     it (leaderboard, status, recent, search) skip archived records
-    unconditionally. Scans every view root so multi-island runs archive the
+    by default. Budget auditing may explicitly include archived records.
+    Scans every view root so multi-island runs archive the
     record wherever it lives. Returns the commit hashes actually archived.
     """
     from coral.hub._island import all_view_roots
@@ -196,11 +197,14 @@ def read_eval_count(coral_dir: str | Path, island_id: str | int | None = None) -
         return 0
 
 
-def read_attempts(coral_dir: str | Path, island_id: str | int | None = None) -> list[Attempt]:
+def read_attempts(
+    coral_dir: str | Path, island_id: str | int | None = None, *,
+    include_archived: bool = False,
+) -> list[Attempt]:
     """Read all attempt records.
 
-    Archived attempts (e.g. discarded by `coral resume --from`) are treated
-    as soft-deleted: they never appear here or in any view built on this.
+    Archived attempts are hidden by default. Budget auditing may opt in to
+    their persisted records without changing public listing behavior.
     """
     d = _attempts_dir(coral_dir, island_id)
     attempts = []
@@ -210,7 +214,7 @@ def read_attempts(coral_dir: str | Path, island_id: str | int | None = None) -> 
             attempts.append(Attempt.from_dict(data))
         except (json.JSONDecodeError, KeyError):
             continue
-    return [a for a in attempts if not a.archived]
+    return attempts if include_archived else [a for a in attempts if not a.archived]
 
 
 def _read_all_island_attempts(coral_dir: str | Path) -> list[Attempt]:

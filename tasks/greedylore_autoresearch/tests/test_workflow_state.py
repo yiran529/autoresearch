@@ -780,16 +780,132 @@ def test_engineer_authored_finish_covers_all_attempts_and_never_launches_analyze
     assert store.submit_engineering_analysis('engineer-E0001', body)['status'] == 'completed'
 
 
-def test_two_engineering_candidates_allow_same_sha_retry_but_reject_third(engineering_ready):
+@pytest.mark.parametrize("successes,failures,allow", [
+    (2, 0, True), (3, 0, False), (0, 9, True), (0, 10, False),
+    (2, 7, True), (2, 8, False),
+])
+def test_engineering_success_and_total_limits(engineering_ready, successes, failures, allow):
     from autoresearch.state import authorize_attempt
 
-    store, _, body = _engineer_with_attempts(engineering_ready)
+    store, _, _ = _engineer_with_attempts(engineering_ready, count=0)
+    for index in range(successes + failures):
+        success = index < successes
+        write_attempt(store.coral_dir, Attempt(
+            commit_hash=f'{index:040x}', agent_id='engineer-E0001', title='Candidate',
+            score=-0.1 if success else None, status='regressed' if success else 'crashed',
+            parent_hash=ROOT_SHA, timestamp='2026-01-03T00:00:00+00:00',
+            metadata={'node_id': 'N001', 'mode': 'engineering', 'grader_runs': [],
+                      **({} if success else {'failure_class': 'candidate', 'budget_class': 'grader_error'})},
+        ))
     context = {'coral_dir': str(store.coral_dir), 'agent_id': 'engineer-E0001',
-               'commit_hash': body['attempt_shas'][-1]}
+               'commit_hash': 'd' * 40}
+    canonical = {'node_id': 'N001', 'mode': 'engineering'}
+    if allow:
+        assert authorize_attempt(canonical, context) == {}
+    else:
+        with pytest.raises(ValueError, match='Engineering.*limit'):
+            authorize_attempt(canonical, context)
+
+
+@pytest.mark.parametrize("runs,allow", [(9, True), (10, False)])
+@pytest.mark.parametrize("counter", ["retries", "history", "invocations"])
+def test_engineering_same_sha_retries_consume_total_budget(engineering_ready, runs, allow, counter):
+    from autoresearch.state import authorize_attempt
+
+    store, _, body = _engineer_with_attempts(engineering_ready, count=1)
+    attempt = next(a for a in read_attempts(store.coral_dir) if a.commit_hash == body['attempt_shas'][0])
+    attempt.status, attempt.score = 'crashed', None
+    attempt.metadata.update(failure_class='infra', budget_class='grader_error',
+                            infra_retry_count=runs - 1 if counter == 'retries' else 0,
+                            max_infra_retries=20,
+                            grader_runs=[{'status': 'crashed'}] * runs if counter == 'history' else [],
+                            grader_invocation_count=runs if counter == 'invocations' else 0)
+    write_attempt(store.coral_dir, attempt)
+    context = {'coral_dir': str(store.coral_dir), 'agent_id': 'engineer-E0001',
+               'commit_hash': attempt.commit_hash, 'retry': True}
+    canonical = {'node_id': 'N001', 'mode': 'engineering'}
+    if allow:
+        assert authorize_attempt(canonical, context) == {}
+        with pytest.raises(ValueError, match='not terminal'):
+            store._terminal_engineering_unlocked('engineer-E0001', 'N001')
+    else:
+        with pytest.raises(ValueError, match='Engineering.*limit'):
+            authorize_attempt(canonical, context)
+        # Exhausting the overall budget must permit final analysis despite infra retries left.
+        store._terminal_engineering_unlocked('engineer-E0001', 'N001')
+        assert store.submit_engineering_analysis('engineer-E0001', body)['status'] == 'finalizing'
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_engineering_pending_runs_reserve_capacity_and_allow_idempotent_submission(engineering_ready, archived):
+    from autoresearch.state import authorize_attempt
+
+    store, _, body = _engineer_with_attempts(engineering_ready, count=2)
+    sha = '1' * 40
+    write_attempt(store.coral_dir, Attempt(
+        commit_hash=sha, agent_id='engineer-E0001', title='Pending third run',
+        score=None, status='pending', parent_hash=ROOT_SHA,
+        timestamp='2026-01-05T00:00:00+00:00',
+        metadata={'node_id': 'N001', 'mode': 'engineering', 'archived': archived,
+                  'grader_runs': [{'status': 'running'}]},
+    ))
+    context = {'coral_dir': str(store.coral_dir), 'agent_id': 'engineer-E0001',
+               'commit_hash': sha}
     canonical = {'node_id': 'N001', 'mode': 'engineering'}
     assert authorize_attempt(canonical, context) == {}
-    with pytest.raises(ValueError, match='two'):
-        authorize_attempt(canonical, {**context, 'commit_hash': '1' * 40})
+    assert authorize_attempt(canonical, {**context, 'commit_hash': body['attempt_shas'][0]}) == {}
+    with pytest.raises(ValueError, match='Engineering.*limit'):
+        authorize_attempt(canonical, {**context, 'commit_hash': '2' * 40})
+    with pytest.raises(ValueError, match='not terminal'):
+        store._terminal_engineering_unlocked('engineer-E0001', 'N001')
+
+
+def test_engineering_tune_cannot_bypass_formal_run_limits(engineering_ready):
+    from autoresearch.state import authorize_attempt
+
+    store, _, _ = _engineer_with_attempts(engineering_ready, count=0)
+    with pytest.raises(ValueError, match='Engineering.*tune'):
+        authorize_attempt({'node_id': 'N001', 'mode': 'engineering'}, {
+            'coral_dir': str(store.coral_dir), 'agent_id': 'engineer-E0001',
+            'commit_hash': '1' * 40, 'budget_class': 'tune',
+        })
+
+
+def test_engineering_archived_successes_still_count_and_can_be_reported(engineering_ready):
+    from autoresearch.state import authorize_attempt
+
+    from coral.hub.attempts import archive_attempts
+
+    store, _, body = _engineer_with_attempts(engineering_ready, count=2)
+    # Use an existing Engineering record as the shape, with a third distinct SHA.
+    third = next(a for a in read_attempts(store.coral_dir) if a.commit_hash == body['attempt_shas'][0])
+    third.commit_hash = '1' * 40
+    write_attempt(store.coral_dir, third)
+    body['attempt_shas'].append(third.commit_hash)
+    archive_attempts(store.coral_dir, set(body['attempt_shas']), reason='discarded by resume --from')
+    assert not any(a.agent_id == 'engineer-E0001' for a in read_attempts(store.coral_dir))
+    with pytest.raises(ValueError, match='Engineering.*limit'):
+        authorize_attempt({'node_id': 'N001', 'mode': 'engineering'}, {
+            'coral_dir': str(store.coral_dir), 'agent_id': 'engineer-E0001', 'commit_hash': '2' * 40,
+        })
+    assert store.submit_engineering_analysis('engineer-E0001', body)['status'] == 'finalizing'
+    store.reconcile(0, 1)
+    assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'completed'
+
+
+def test_engineering_archived_terminal_infra_failure_can_finish_without_retry(engineering_ready):
+    from coral.hub.attempts import archive_attempts
+
+    store, _, body = _engineer_with_attempts(engineering_ready, count=1)
+    failed = next(a for a in read_attempts(store.coral_dir) if a.commit_hash == body['attempt_shas'][0])
+    failed.score, failed.status = None, 'crashed'
+    failed.metadata.update(failure_class='infra', budget_class='grader_error',
+                           infra_retry_count=0, max_infra_retries=2)
+    write_attempt(store.coral_dir, failed)
+    archive_attempts(store.coral_dir, {failed.commit_hash}, reason='discarded by resume --from')
+    assert store.submit_engineering_analysis('engineer-E0001', body)['status'] == 'finalizing'
+    store.reconcile(0, 1)
+    assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'completed'
 
 
 def test_bare_engineering_finish_cannot_start_independent_analyzer(engineering_ready):

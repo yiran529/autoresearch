@@ -63,7 +63,7 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
     assert report["simulated"] is True
     assert report["completed_research"] == ["N001", "N002", "N003"]
     assert report["quality_failed"] == ["N002"]
-    assert report["engineering_attempts"] == 6
+    assert report["engineering_attempts"] == 9
     assert report["engineering_completed"] == 3
     timeline = [json.loads(line) for line in (root / "timeline.jsonl").read_text().splitlines()]
     assert any(e.get("event") == "analyzer" and e.get("mode") == "research" for e in timeline)
@@ -129,10 +129,10 @@ def _check_delivered_prompts(root, scenario):
         else:
             node = state['engineering_workers'][aid]['node_id']
             assert f'`{node}`' in capture['startup_prompt']
-            assert 'at most two distinct formal Engineering candidates' in capture['startup_prompt']
+            assert 'at most 3 successful formal Engineering runs and 10 total formal Engineering runs' in capture['startup_prompt']
             assert 'do not wait for Research Analysis' in capture['startup_prompt']
             assert '--analysis-file /absolute/scratch/final.json' in capture['instructions']
-            assert 'author the final Engineering Analysis yourself' in capture['role_text']
+            assert 'author the final engineering analysis yourself' in capture['role_text'].lower()
     assert {state['nodes'][p['agent_id'].removeprefix('research-')]['research']['research_mode']
             for p in producers if p['role'] == 'researcher'} == {'REFINE', 'EXPLORE'}
     analyzers = [p for p in captures if p['role'] == 'research_analyzer']

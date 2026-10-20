@@ -847,6 +847,7 @@ class TrustedWriteService:
                     "island_id": binding.island_id,
                     "commit_hash": commit_hash,
                     "budget_class": "real",
+                    "retry": True,
                 },
             )
 

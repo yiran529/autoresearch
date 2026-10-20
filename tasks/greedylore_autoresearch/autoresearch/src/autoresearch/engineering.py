@@ -41,10 +41,13 @@ def submit(store, agent_id: str, body: dict) -> dict:
         if worker['status'] != 'active':
             raise WorkflowError('Engineering summary owner is not active')
         store._terminal_engineering_unlocked(agent_id, node_id)
-        attempts = tuple(read_attempts(store.coral_dir, island_id=store.island_id))
+        attempts = tuple(
+            a for a in read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True)
+            if not a.archived or a.metadata.get('mode') == 'engineering'
+        )
         owned = {a.commit_hash for a in attempts if a.agent_id == agent_id
                  and a.metadata.get('node_id') == node_id
-                 and a.metadata.get('mode') == 'engineering' and a.budget_class == 'real'}
+                 and a.metadata.get('mode') == 'engineering' and a.budget_class != 'tune'}
         if set(shas) != owned:
             raise WorkflowError('Engineering summary must cover all claim Attempts')
         node = store.notes_root / 'nodes' / node_id

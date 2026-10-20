@@ -61,7 +61,7 @@ CORAL Manager 周期性请求 `reconcile_workflow`。可信服务调用任务的
 
 该模块将 assignment 转成实际运行环境。CORAL 为 Agent 建立独立 Git worktree，配置虚拟环境、共享目录链接、运行时设置和沙箱，再启动 Codex 等外部 CLI 子进程。动态 assignment 只提供身份、角色、Node 和状态；运行时和角色文件来自宿主配置。
 
-Researcher 负责一个算法假设和一个正式 Research 候选。宿主把 Engineer 绑定到一个质量达标节点及其固定 Research SHA；`engineering claim` 仅确认绑定并准备 Worktree，不能自主更换目标。Engineer 不等待该 Node 的 Research Analysis，从固定 Research SHA 出发进行语义保持优化。Engineer 的角色规则规定每次认领最多两轮正式候选；提示词规则与服务端硬约束需要分别看待。
+Researcher 负责一个算法假设和一个正式 Research 候选。宿主把 Engineer 绑定到一个质量达标节点及其固定 Research SHA；`engineering claim` 仅确认绑定并准备 Worktree，不能自主更换目标。Engineer 不等待该 Node 的 Research Analysis，从固定 Research SHA 出发进行语义保持优化。每个 Engineering assignment 最多 3 次成功正式运行、10 次正式运行总额，宿主强制执行。成功指完整评测获得有效分数，包含性能退步；失败及同 SHA 基础设施重试计入总额，pending 提交或重试预留额度，跨恢复累计。达到任一上限后停止评测，继续提交最终分析。
 
 dynamic 模式生成精简的任务专用指令，指向对应角色文件。当前 Codex runtime 将其写为 worktree 根目录的 `AGENTS.md`，不会加载通用长版 `CORAL.md` 模板。角色文件再指引 Agent 阅读共享工作流规则。
 
@@ -113,7 +113,7 @@ Research Analysis 关注质量变化、算法机制、竞争解释、局限和�
 
 Analyzer 及其诊断进程只读挂载当前 Attempt 的完整 checkpoint。小型 manifest 进入固定证据，大型 tensor 文件不复制进 evidence/workspace 或 64 MiB 诊断归档。加载辅助函数 `diagnostic_checkpoint.load_checkpoint` 位于匹配 SHA 的代码快照；恢复须匹配模型、优化器、world size 和 DDP bucket 布局，不隐式清零 EF，也不承诺恢复原数据流位置。可读取现成 checkpoint，也可通过现有权威诊断命令进行预算内的小规模训练；实验设计仍以 Reference 为准。当前不实现 checkpoint 自动删除，已完成 Analysis 仍保留其 checkpoint。
 
-关键证据不足时，Analyzer 可在同一 Session 中编写小型诊断脚本，通过权威入口申请 GPU；它不是正式 Attempt，不改变质量、评分或 Engineer 两轮规则：
+关键证据不足时，Analyzer 可在同一 Session 中编写小型诊断脚本，通过权威入口申请 GPU；它不是正式 Attempt，不改变质量、评分或 Engineer 的 3 次成功／10 次总运行限制：
 
 ```bash
 autoresearch diagnostic run --gpus 4 --timeout 300 -- \
@@ -186,6 +186,6 @@ CORAL CLI 提供实验、日志、笔记和状态查询；Starlette 后端与 Re
 
 ## 10. 实现边界与阅读注意
 
-七模块是职责划分，不表示代码已完全解耦：`state.py` 同时处理研究树约束和工作流调度，`lifecycle.py` 同时衔接任务完成、分析和记忆。角色规则也不都等价于服务端硬约束，例如 Engineering 两轮上限主要由角色指令表达。
+七模块是职责划分，不表示代码已完全解耦：`state.py` 同时处理研究树约束和工作流调度，`lifecycle.py` 同时衔接任务完成、分析和记忆。角色规则也不都等价于服务端硬约束，Engineering 的 3 次成功／10 次总运行限制同时由角色指令和服务端授权检查约束。
 
 通用机制与任务语义仍有需要注意的接缝：Research 提交校验目前要求候选直接 Git parent 等于 Spec 的 Parent SHA，与正式提交前允许普通 commit 的角色规则存在冲突；dynamic Agent 仍可能收到鼓励持续实验的通用恢复 prompt；长训练需要同时考虑评分超时、CLI 等待期限和 Agent watchdog。理解这些边界有助于排查工作流问题，不能仅依据 prompt 推断系统实际行为。

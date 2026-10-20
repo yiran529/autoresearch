@@ -37,8 +37,9 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         "retries are allowed. After the final result, wait for host retirement; Research Analysis "
         "and quality-gated Engineering are handled independently by the host."
         if spec.workflow_role == "research" else
-        "Use at most two distinct formal Engineering candidates across this assignment, including "
-        "all resumes. Preserve algorithm semantics and author the final Engineering Analysis "
+        "Use at most 3 successful formal Engineering runs and 10 total formal Engineering runs, including "
+        "failures, same-SHA retries and all resumes. A valid scored regression counts as success. "
+        "Stop evaluating at either limit. Preserve algorithm semantics and author the final Engineering Analysis "
         "yourself. Use the trusted Engineering finish command, then wait for publication and "
         "retirement; do not wait for Research Analysis before starting Engineering."
     )

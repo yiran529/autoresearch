@@ -29,6 +29,24 @@ class WorkflowError(ValueError):
     """An ownership transition or persisted workflow state is invalid."""
 
 
+def _engineering_budget(attempts) -> tuple[int, int, int]:
+    """Count successful runs, reserved/used runs and pending success slots."""
+    successful = total = pending = 0
+    for attempt in attempts:
+        # Submission/retry reserves its run before dispatch; persistently count that
+        # reservation so queued work and restarts cannot oversubscribe either cap.
+        total += max(1 + int(attempt.metadata.get("infra_retry_count", 0)),
+                     len(attempt.metadata.get("grader_runs") or []),
+                     int(attempt.metadata.get("grader_invocation_count", 0)))
+        pending += attempt.status == "pending"
+        successful += (
+            attempt.status in {"improved", "baseline", "regressed", "reverted"}
+            and attempt.score is not None and math.isfinite(attempt.score)
+            and not attempt.metadata.get("failure_class")
+        )
+    return successful, total, pending
+
+
 class ResearchNotReadyError(WorkflowError):
     """The formal Attempt does not exist yet or still permits infrastructure retry."""
 
@@ -237,9 +255,14 @@ class WorkflowStore:
             raise WorkflowError(f"Node {node_id} Research code snapshot is unavailable")
         return attempt.commit_hash
 
-    def _context(self) -> AnalysisContext:
+    def _context(self, *, include_archived_engineering: bool = False) -> AnalysisContext:
+        attempts = tuple(
+            a for a in read_attempts(self.coral_dir, island_id=self.island_id,
+                                     include_archived=include_archived_engineering)
+            if not a.archived or a.metadata.get("mode") == "engineering"
+        )
         return AnalysisContext(self.coral_dir, self.notes_root, self.island_id,
-                               tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
+                               attempts,
                                self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent)
 
     def _prepare_research_unlocked(self, state: dict, node_id: str) -> None:
@@ -589,10 +612,7 @@ class WorkflowStore:
         if not submission:
             raise WorkflowError("Engineering completion requires an Engineer-authored summary")
         path = self.notes_root / "nodes" / node_id / f"engineering_analysis_v{submission['version']}.md"
-        current = resolve_evidence(node_id, "engineering", context=AnalysisContext(
-            self.coral_dir, self.notes_root, self.island_id,
-            tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
-            self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent))
+        current = resolve_evidence(node_id, "engineering", context=self._context(include_archived_engineering=True))
         validate_analysis(submission["document"], current)
         if load_document(path) != submission["document"]:
             raise WorkflowError("published Engineering Analysis differs from author submission")
@@ -609,7 +629,7 @@ class WorkflowStore:
         node_id = worker["node_id"]
         submission = worker["analysis_submission"]
         self._terminal_engineering_unlocked(agent_id, node_id)
-        current = resolve_evidence(node_id, "engineering", context=self._context())
+        current = resolve_evidence(node_id, "engineering", context=self._context(include_archived_engineering=True))
         validate_analysis(submission["document"], current)
         path = self.notes_root / "nodes" / node_id / f"engineering_analysis_v{submission['version']}.md"
         if path.exists():
@@ -651,17 +671,21 @@ class WorkflowStore:
 
     def _terminal_engineering_unlocked(self, agent_id: str, node_id: str) -> None:
         attempts = [
-            attempt for attempt in read_attempts(self.coral_dir, island_id=self.island_id)
+            attempt for attempt in read_attempts(self.coral_dir, island_id=self.island_id, include_archived=True)
             if attempt.agent_id == agent_id and attempt.metadata.get("node_id") == node_id
-            and attempt.metadata.get("mode") == "engineering" and attempt.budget_class == "real"
+            and attempt.metadata.get("mode") == "engineering" and attempt.budget_class != "tune"
         ]
         if not attempts:
             raise WorkflowError(f"Node {node_id} requires an Engineering Attempt")
+        successful, total, _ = _engineering_budget(attempts)
+        budget_exhausted = successful >= 3 or total >= 10
         if any(attempt.status == "pending" or (
             attempt.status in {"crashed", "timeout"}
             and attempt.metadata.get("failure_class") == "infra"
+            and not attempt.archived
             and int(attempt.metadata.get("infra_retry_count", 0))
             < int(attempt.metadata.get("max_infra_retries", 0))
+            and not budget_exhausted
         ) for attempt in attempts):
             raise WorkflowError("Engineering Attempt is not terminal")
 
@@ -693,12 +717,17 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
     ):
         raise WorkflowError("Attempt owner is not the active Node assignment")
     _reject_finalizing(state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode"))
-    if canonical.get("mode") == "engineering" and context.get("budget_class", "real") == "real":
-        shas = {a.commit_hash for a in read_attempts(store.coral_dir, island_id=store.island_id)
-                if a.agent_id == context.get("agent_id") and a.metadata.get("node_id") == canonical.get("node_id")
-                and a.metadata.get("mode") == "engineering" and a.budget_class == "real"}
-        if len(shas) >= 2 and context.get("commit_hash") not in shas:
-            raise WorkflowError("Engineering allows at most two distinct formal candidates per claim")
+    if canonical.get("mode") == "engineering":
+        if context.get("budget_class", "real") != "real":
+            raise WorkflowError("Engineering requires formal runs; --tune is not supported")
+        attempts = [a for a in read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True)
+                    if a.agent_id == context.get("agent_id") and a.metadata.get("node_id") == canonical.get("node_id")
+                    and a.metadata.get("mode") == "engineering" and a.budget_class != "tune"]
+        existing = any(a.commit_hash == context.get("commit_hash") for a in attempts)
+        if not existing or context.get("retry"):
+            successful, total, pending = _engineering_budget(attempts)
+            if successful + pending >= 3 or total >= 10:
+                raise WorkflowError("Engineering run limit reached: at most 3 successful runs and 10 total runs")
     return {}
 
 

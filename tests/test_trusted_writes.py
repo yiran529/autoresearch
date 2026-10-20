@@ -444,6 +444,32 @@ def test_retry_rechecks_active_assignment_before_reset(tmp_path):
     assert read_attempt(coral_dir, commit).status == "crashed"
 
 
+def test_retry_is_authorized_as_an_additional_run_before_reset(tmp_path):
+    coral_dir = tmp_path / ".coral"
+    repo, _base = _init_repo(tmp_path / "agent")
+    commit, parent = _commit(repo, "engineering")
+    binding = AgentBinding(
+        "engineer-E0001", os.getpid(), process_start_time(os.getpid()), str(repo), None
+    )
+    service = _service(coral_dir, binding)
+    service.handle("submit_attempt", _payload(binding, commit, parent), os.getpid())
+    attempt = read_attempt(coral_dir, commit)
+    attempt.status = "crashed"
+    attempt.metadata["failure_class"] = "infra"
+    write_attempt(coral_dir, attempt)
+
+    def authorize(_canonical, context):
+        if context.get("retry"):
+            raise TrustedWriteError("total run limit reached")
+        return {}
+
+    service.attempt_authorizer = authorize
+    with pytest.raises(TrustedWriteError, match="total run limit"):
+        service.handle("retry_attempt", {"commit_hash": commit}, os.getpid())
+    assert read_attempt(coral_dir, commit).status == "crashed"
+    assert read_attempt(coral_dir, commit).metadata["infra_retry_count"] == 0
+
+
 def test_incomplete_trusted_connection_times_out_without_unbounded_thread(tmp_path):
     import socket
 

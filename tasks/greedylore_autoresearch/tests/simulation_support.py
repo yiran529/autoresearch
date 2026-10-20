@@ -366,7 +366,7 @@ def agent(coral_dir: Path, aid: str):
         cli("autoresearch.cli", "engineering", "claim", node)
         event("claim_won", agent=aid, node=node)
         base = git(Path.cwd(), "rev-parse", "HEAD")
-        for number in (1, 2):
+        for number in (1, 2, 3):
             declaration(coral_dir, node, "engineering", base, number)
             cli("coral.cli", "eval", "-m", f"SIMULATED engineering {number}", "--timeout", "30")
             event(
@@ -382,7 +382,7 @@ def agent(coral_dir: Path, aid: str):
                 if a.agent_id == aid and a.metadata.get("mode") == "engineering"]
         summary.write_text(json.dumps({
             "summary": "SIMULATED Engineer-authored result; no scientific measurement.",
-            "findings": ["Both scripted candidate results are recorded."],
+            "findings": ["All three scripted candidate results are recorded."],
             "limitations": ["No training, real profiling or speedup validation."],
             "attempt_shas": shas,
         }))

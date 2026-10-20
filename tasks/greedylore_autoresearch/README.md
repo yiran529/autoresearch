@@ -18,7 +18,7 @@ Standalone Analyzer and Memory model calls recover transient connection failures
 
 ## Engineering completion
 
-A claim permits at most two distinct formal Engineering candidates. Same-SHA infrastructure retries are counted separately under the existing retry policy. The second candidate does not retire the Engineer: it must still author and submit the final summary.
+An assignment permits at most 3 successful formal Engineering runs and 10 total formal runs, counted across resumes. Success means a completed evaluation with a valid score, including a performance regression. Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions and retries reserve capacity. Reaching either limit ends evaluation, including any remaining per-SHA retry allowance, but does not retire the Engineer: it must still author and submit the final summary.
 
 Write JSON in authorized scratch outside the tracked Worktree, containing exactly:
 

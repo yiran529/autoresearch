@@ -239,7 +239,10 @@ def resolve_evidence(
     node_attempts = [
         attempt
         for attempt in ctx.attempts
-        if attempt.metadata.get("node_id") == node_id and attempt.budget_class == "real"
+        if attempt.metadata.get("node_id") == node_id and (attempt.budget_class == "real" or (
+            mode == "engineering" and attempt.metadata.get("mode") == "engineering"
+            and attempt.budget_class == "grader_error"
+        ))
     ]
     research = [
         attempt
