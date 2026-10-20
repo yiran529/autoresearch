@@ -3,16 +3,17 @@ mode: research                 # research | engineering
 node_id: N023
 node_type: research             # research | seed; only N000 is seed; this does not change the grader profile
 base_commit: "<full sha>"      # selected Parent base for Research; this Node's Research SHA for Engineering
-quality_anchor: null           # required for Engineering: the unique quality-evaluated Research SHA
+quality_anchor: null           # required for Engineering: the selected quality-evaluated Research SHA
 analysis_refs:
   parent_research: "N017/research_analysis_v1.md"  # null for seed Root
   parent_engineering: null
 
 # Seed Root: pin baseline SHA S0 first; coral eval creates A0 after this file is added.
 # Record S0 and A0 separately; Bootstrap must not change the algorithm implementation.
-# One distinct formal Research SHA per Node; infrastructure retries use exactly the same SHA.
-change_summary: "<Code changes; Research identifies this Node's unique algorithm implementation.>"
-selection_rationale: "<1–3 sentences: why this Parent/base commit for Research, or optimization focus for the host-bound Engineering Node.>"
+# Research: fixed method hypothesis, Parent/base_commit and Spec; up to 3 successful scored / 10 total formal runs.
+# Later candidates may descend from earlier candidates; infrastructure retries use exactly the same SHA.
+change_summary: "<Code changes; Research records this candidate's refinement or meaningful parameter change.>"
+selection_rationale: "<1–3 sentences: why this Parent/base commit and candidate change for Research, or optimization focus for the host-bound Engineering Node.>"
 
 # Soft semantic evidence, not a strict equivalence proof from the grader.
 semantic_self_check:

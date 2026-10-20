@@ -42,9 +42,12 @@ class EvidenceAttempt:
     run_ids: tuple[str, ...]
     eval_refs: tuple[str, ...]
     comparability: str
+    score: float | None = None
+    budget_class: str | None = None
+    archived: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "commit_sha": self.commit_sha,
             "timestamp": self.timestamp,
             "status": self.status,
@@ -52,6 +55,10 @@ class EvidenceAttempt:
             "eval_refs": list(self.eval_refs),
             "comparability": self.comparability,
         }
+
+        if self.budget_class is not None:
+            result.update(score=self.score, budget_class=self.budget_class, archived=self.archived)
+        return result
 
 
 @dataclass(frozen=True)
@@ -79,9 +86,10 @@ class EvidenceBundle:
     evidence_paths: tuple[str, ...]
     evidence_records: tuple[EvidenceRecord, ...]
     manifest_hash: str
+    research_attempts: tuple[EvidenceAttempt, ...] = ()
 
     def manifest(self) -> dict[str, Any]:
-        return {
+        manifest = {
             "node_id": self.node_id,
             "mode": self.mode,
             "research_sha": self.research_sha,
@@ -92,6 +100,10 @@ class EvidenceBundle:
             "evidence_paths": list(self.evidence_paths),
             "evidence_records": [item.to_dict() for item in self.evidence_records],
         }
+
+        if self.research_attempts:
+            manifest["research_attempts"] = [item.to_dict() for item in self.research_attempts]
+        return manifest
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -133,13 +145,13 @@ def _default_context() -> AnalysisContext:
         coral_dir=coral_dir,
         notes_root=root / "notes",
         island_id=island_id,
-        attempts=tuple(read_attempts(coral_dir, island_id=island_id)),
+        attempts=tuple(read_attempts(coral_dir, island_id=island_id, include_archived=True)),
         log_root=root / "eval_logs",
         checkout_root=checkout_root,
     )
 
 
-def _attempt_evidence(attempt: Any) -> EvidenceAttempt:
+def _attempt_evidence(attempt: Any, *, candidate: bool = False) -> EvidenceAttempt:
     runs = tuple(
         str(run["run_id"]) for run in attempt.metadata.get("grader_runs", []) if run.get("run_id")
     )
@@ -151,6 +163,9 @@ def _attempt_evidence(attempt: Any) -> EvidenceAttempt:
     )
     return EvidenceAttempt(
         commit_sha=attempt.commit_hash,
+        score=attempt.score if candidate else None,
+        budget_class=attempt.budget_class if candidate else None,
+        archived=attempt.archived if candidate else None,
         timestamp=attempt.timestamp,
         status=attempt.status,
         run_ids=runs,
@@ -252,17 +267,16 @@ def resolve_evidence(
             and attempt.budget_class == "grader_error"
         ))
     ]
-    research = [
-        attempt
-        for attempt in node_attempts
-        if attempt.metadata.get("mode") == "research" and attempt.status != "pending"
-    ]
-    research_shas = {attempt.commit_hash for attempt in research}
-    if len(research_shas) != 1:
-        raise ValueError(f"Node {node_id} requires one terminal Research SHA")
-    research_attempt = sorted(research, key=lambda item: item.timestamp)[-1]
+    from .research import frozen_research_attempt, research_attempts
+
+    research = sorted(
+        (attempt for attempt in research_attempts(ctx.attempts, node_id)
+         if attempt.status != "pending"),
+        key=lambda item: (item.timestamp, item.commit_hash),
+    )
+    research_attempt = frozen_research_attempt(ctx.coral_dir, node_id, research)
     if mode == "research":
-        evaluation_snapshot = refresh_node_evaluation(node_id, tuple(research), ctx.log_root)
+        evaluation_snapshot = refresh_node_evaluation(node_id, tuple(research), ctx.log_root, coral_dir=ctx.coral_dir)
         evaluation_bytes = evaluation_snapshot.encode()
     else:
         evaluation_snapshot = evaluation_bytes.decode("utf-8")
@@ -279,8 +293,9 @@ def resolve_evidence(
         else []
     )
     engineering_evidence = tuple(_attempt_evidence(item) for item in engineering)
-    research_evidence = _attempt_evidence(research_attempt)
-    raw_references = set(research_evidence.eval_refs)
+    research_evidence = tuple(_attempt_evidence(item, candidate=True) for item in research)
+    candidate_evidence = research_evidence if len(research_evidence) > 1 else ()
+    raw_references = {reference for item in research_evidence for reference in item.eval_refs}
     for reference in spec.get("analysis_refs", {}).values():
         if reference is not None:
             if not isinstance(reference, str) or not re.fullmatch(
@@ -317,6 +332,8 @@ def resolve_evidence(
         "evidence_paths": sorted(evidence_paths),
         "evidence_records": [item.to_dict() for item in records],
     }
+    if candidate_evidence:
+        values["research_attempts"] = [item.to_dict() for item in candidate_evidence]
     return EvidenceBundle(
         node_id=node_id,
         mode=mode,
@@ -327,6 +344,7 @@ def resolve_evidence(
         spec_sha256=values["spec_sha256"],
         spec_path=str(spec_path),
         evaluation_path=str(evaluation_path),
+        research_attempts=candidate_evidence,
         engineering_attempts=engineering_evidence,
         evidence_paths=tuple(values["evidence_paths"]),
         evidence_records=records,
@@ -471,6 +489,16 @@ def _artifact_evidence(
     ):
         raise ArtifactValidationError("published Analysis evaluation snapshot does not match")
     try:
+        research = tuple(
+            EvidenceAttempt(
+                commit_sha=item["commit_sha"], timestamp=item["timestamp"],
+                status=item["status"], run_ids=tuple(item["run_ids"]),
+                score=item.get("score"), budget_class=item.get("budget_class"),
+                archived=item.get("archived"),
+                eval_refs=tuple(item["eval_refs"]), comparability=item["comparability"],
+            )
+            for item in manifest.get("research_attempts", [])
+        )
         engineering = tuple(
             EvidenceAttempt(
                 commit_sha=item["commit_sha"],
@@ -508,6 +536,7 @@ def _artifact_evidence(
         spec_sha256=current.spec_sha256,
         spec_path=current.spec_path,
         evaluation_path=current.evaluation_path,
+        research_attempts=research,
         engineering_attempts=engineering,
         evidence_paths=evidence_paths,
         evidence_records=records,
@@ -546,6 +575,7 @@ def _prepare_code_snapshot(
     root = scratch / "code"
     commits = [
         evidence.research_sha,
+        *(item.commit_sha for item in getattr(evidence, "research_attempts", ())),
         *(item.commit_sha for item in evidence.engineering_attempts),
     ]
     for commit in dict.fromkeys(commits):
@@ -577,8 +607,19 @@ def _prompt(evidence: EvidenceBundle) -> str:
         if prompt_path.is_file()
         else "You are the independent Analyzer."
     )
+    inventory = ""
+    if evidence.research_attempts:
+        inventory = ("\n\nResearch candidate inventory (selected anchor: "
+                     + evidence.research_sha + "):\n"
+                     + "\n".join(
+                         f"- {item.commit_sha}: {item.status}; score: {item.score}; "
+                         f"budget: {item.budget_class}; archived: {item.archived}; runs: {', '.join(item.run_ids) or 'none'}; "
+                         f"evidence: {', '.join(item.eval_refs) or 'none'}"
+                         for item in evidence.research_attempts
+                     )
+                     + "\nCompare all candidates and their limitations; retain the selected anchor.\n")
     return (
-        role_prompt + "\n\nProduce only the JSON document required by the supplied schema. "
+        role_prompt + inventory + "\n\nProduce only the JSON document required by the supplied schema. "
         "Inspect code only in the supplied code snapshots named by fixed commit SHA. "
         "Every claim must cite the fixed evidence paths. "
         + json.dumps(
@@ -606,7 +647,7 @@ def analyze(
     ctx = context or _default_context()
     publish = publisher or _default_publisher(ctx)
     references = _task_root() / "references"
-    evaluation_content = refresh_node_evaluation(node_id, ctx.attempts, ctx.log_root)
+    evaluation_content = refresh_node_evaluation(node_id, ctx.attempts, ctx.log_root, coral_dir=ctx.coral_dir)
     evaluation_result = publish(
         "evaluation",
         evaluation_content,

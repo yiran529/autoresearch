@@ -33,9 +33,17 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         raise ValueError("workflow prompt requires a role and a bound Node")
     action = "Resume" if resuming else "Start"
     scope = (
-        "- Use one distinct formal Research candidate; only permitted same-SHA infrastructure "
-        "retries are allowed.\n- After the final result, wait for host retirement; Research Analysis "
-        "and quality-gated Engineering are handled independently by the host."
+        "- Keep one method hypothesis, Parent/base_commit and Spec fixed; refine that method or meaningful "
+        "parameters within at most 3 successful scored formal Research runs and 10 total formal Research runs, "
+        "including failures, same-SHA infrastructure retries, archived Attempts and all resumes. "
+        "A valid scored regression counts as success regardless of quality passing.\n"
+        "- After the first terminal result, continue justified refinement within budget; do not stop merely "
+        "because one result exists. Later candidates may descend from earlier candidates; core mechanism "
+        "or hypothesis changes require a child Node.\n"
+        "- Stop evaluating at either limit. To finish earlier when no justified refinement remains, use "
+        "`autoresearch node complete --mode research` after all runs end. After explicit early completion "
+        "or either cap, the host freezes Research once all runs end, selects its fixed result, and retires you; only then do independent Research "
+        "Analysis over all Attempts and quality-gated Engineering start."
         if spec.workflow_role == "research" else
         "- Use at most 3 successful formal Engineering runs and 10 total formal Engineering runs, including "
         "failures, same-SHA retries and all resumes. A valid scored regression counts as success.\n"

@@ -5,11 +5,13 @@
 
 Last refreshed: <UTC timestamp>
 
-## Research (one formal Attempt SHA per Node)
+## Research (all formal candidate Attempts)
+
+Selected Research SHA: `<host-selected SHA after freezing, or pending selection>`
 
 | Research Attempt / Commit (full SHA) | Status | Quality (measured) | Efficiency (measured) | Contract / environment | Evidence / retry logs |
 |---|---|---|---|---|---|
-| `<unique research SHA>` | `<terminal or pending>` | `<value/quality result or —>` | `<value ms or —>` | `<contract/version/hardware>` | `<attempt + eval logs; same-SHA infra retry logs if any>` |
+| `<research candidate SHA; one row per candidate>` | `<terminal or pending>` | `<value/quality result or —>` | `<value ms or —>` | `<contract/version/hardware>` | `<attempt + eval logs; same-SHA infra retry logs if any>` |
 
 ## Engineering (one formal efficiency Attempt per iteration)
 
@@ -20,11 +22,11 @@ Last refreshed: <UTC timestamp>
 ## Validity / incomparability
 
 - <Quality failure, semantic self-check gaps and profiler-only results must be reported as such.>
-- <If more than one DISTINCT research SHA exists for this Node, flag contract violation; do not overwrite.>
+- <Preserve every Research candidate, including failures, regressions and archived Attempts. After freezing, identify the host-selected quality-passing, comparable candidate with the highest valid score; if none qualifies, identify the failure representative and skipped Engineering.>
 - <Do not rank incomparable hardware/contract/workloads; pending, failed or missing metrics stay visible as —.>
 
 ## Source of truth
 
 - CORAL Attempts and immutable raw grader outputs; rerunning `refresh_node_evaluation(node_id)` must regenerate this file.
 - Infrastructure retry on identical Research SHA does not create a second research version; preserve logs for all retry outcomes.
-- No `engineering_history.md`, no separate iteration database, no runtime Best selection.
+- No `engineering_history.md` or separate iteration database; the host freezes the selected Research SHA in workflow state.

@@ -52,7 +52,7 @@ def _publisher(store, node_id, generation):
             if kind == "evaluation":
                 # The public projection includes Engineering, even when this Analyzer
                 # started before its Attempts. Research input remains a fixed snapshot.
-                content = refresh_node_evaluation(node_id, read_attempts(store.coral_dir),
+                content = refresh_node_evaluation(node_id, read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True),
                                                   store.island_root / "eval_logs")
             elif metadata.get("version") != job["version"]:
                 raise WorkflowError("Analysis version does not match its fixed job")
@@ -94,7 +94,7 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
             for node_id in nodes:
                 if (store.notes_root / "nodes" / node_id / "spec.md").exists():
                     atomic_write_text(store.notes_root / "nodes" / node_id / "evaluation.md",
-                                      refresh_node_evaluation(node_id, read_attempts(store.coral_dir),
+                                      refresh_node_evaluation(node_id, read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True),
                                                               store.island_root / "eval_logs"), mode=0o644)
         errors = {}
         for node_id in nodes:

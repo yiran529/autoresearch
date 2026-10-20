@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from .checkpoint_retention import checkpoint_is_pruned
 from .validation import ArtifactValidationError
 
 
@@ -28,6 +29,10 @@ def discover_checkpoints(evidence, context):
             value = json.loads(path.read_text())
             if not isinstance(value, dict) or value.get('version') != 1:
                 raise ValueError('unsupported manifest')
+            if checkpoint_is_pruned(context.coral_dir, path):
+                descriptions.append(f'{root.name}: tensor payload pruned by research retention; '
+                                    'original manifest and logs retained.')
+                continue
             if value.get('status') != 'complete':
                 descriptions.append(f'{root.name}: unavailable; ' + json.dumps(value))
                 continue

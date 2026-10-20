@@ -8,8 +8,10 @@
 
 ## Research candidates and formal evaluation
 
-- Each Node has one formal Research candidate SHA.
-- Before submission, smoke tests and ordinary commits are allowed; later algorithm changes belong in a child Node handled by a new Agent.
+- Each Research Node fixes one method hypothesis, one Parent/base_commit and its Spec; candidates may refine that method or meaningful parameters (for example refresh period or rank). A core mechanism or hypothesis change belongs in a child Node handled by a new Agent.
+- Smoke tests and ordinary commits are allowed; later candidates may descend from earlier candidates in the same Node. Record each change and rationale in the existing `change_summary` and `selection_rationale` fields.
+- Research allows at most 3 successful scored formal runs and 10 total formal runs, across resumes and archived Attempts. Valid scored regressions count as successful regardless of quality passing; failures and permitted same-SHA infrastructure retries count toward the total, and pending runs reserve capacity.
+- After the first terminal result, Researcher remains active: within budget continue justified refinement, rather than stopping merely because one result exists. Stop evaluating at either cap; finish earlier with `autoresearch node complete --mode research` when no justified refinement remains and all runs have ended.
 - Engineering optimizes the original Node without replacing its Research result.
 - Complete `submission.yaml` using the task template before `coral eval`.
 - Run and record the applicable checks in `semantic_criteria.md`; fix failed self-checks before submission.
@@ -24,7 +26,9 @@
 
 ## Node lifecycle
 
-- After the terminal Research Attempt has no remaining infrastructure retry, Researcher retirement, Evaluation refresh, independent Research Analysis and quality-gated Engineering assignment are automatic.
+- Research freezes after explicit early completion or either formal-run cap, once all runs have ended. The host selects the quality-passing, comparable candidate with valid score and highest efficiency, with deterministic ties; if none qualifies it retains a representative failure and skips Engineering.
+- Only after Research freezes does the host retire Researcher, refresh Evaluation and start independent Research Analysis over all Research Attempts and quality-gated Engineering at the selected fixed SHA.
+- Root bootstrap remains one fixed baseline Attempt A0; historical completed Nodes are not reopened.
 - The host binds one Engineer to each quality-passing Node, subject to the Engineer capacity; pending Engineering cannot be skipped for lack of capacity.
 - Research Analysis and Engineering do not wait for each other.
 - A Node (including Root N000) enables child expansion only after Research Analysis is published and Engineering is completed or explicitly skipped because quality failed or was unavailable.
@@ -53,10 +57,10 @@
 
 ## Supporting self-check files
 
-- Before Research submission (which can retire the Researcher) or Engineering finish, archive any uncommitted self-check script/log that later Analysis must cite: `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log`.
+- Before each formal Research evaluation (the host may auto-retire at the cap), or before Engineering finish, archive any uncommitted candidate self-check script/log that later Analysis must cite: `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log`.
 - This copies small regular files (unique basenames, 32 KiB total per bundle, at most 64 bundles per assignment) into immutable public diagnostics attachments. Use managed diagnostics for larger execution records. Keep the returned public-relative paths; do not cite `/tmp` paths in final Analysis.
 - Attachments record the authenticated uploading Agent, an uploader-declared code-context SHA and content hashes. The host checks that the SHA exists, but does not certify that those bytes were executed. These are agent-provided evidence, not host-verified executions or formal scores. Document commands, inputs and limitations in the attached log.
-- Research attachments must be archived while the Research assignment is active; Engineering attachments before finish. The host includes them in the role-appropriate frozen evidence manifest. Unneeded scratch need not be preserved.
+- Research attachments must be archived before each formal evaluation while the assignment is active; Engineering attachments before finish. The host includes them in the role-appropriate frozen evidence manifest. Unneeded scratch need not be preserved.
 
 ## Subagents
 

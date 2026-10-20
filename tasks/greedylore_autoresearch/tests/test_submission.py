@@ -288,7 +288,7 @@ def test_engineering_anchor_is_scoped_to_authenticated_island(tmp_path):
         )
     )
 
-    with pytest.raises(SubmissionError, match="unique terminal Research SHA"):
+    with pytest.raises(SubmissionError, match="frozen terminal Research SHA"):
         validate_submission(
             _git(repo, "rev-parse", "HEAD"),
             {
@@ -320,6 +320,7 @@ def test_engineering_provenance_uses_same_node_research_sha_and_allows_commit_ch
     attempts.mkdir(parents=True)
     (attempts / f"{research_sha}.json").write_text(json.dumps({
         "commit_hash": research_sha,
+        "agent_id": "researcher", "title": "research", "timestamp": "2026-01-01",
         "status": "improved",
         "metadata": {"mode": "research", "node_id": node_id},
     }))
@@ -372,3 +373,33 @@ def test_engineering_rejects_spec_base_instead_of_research_sha(tmp_path):
             "contract_path": str(_contract(tmp_path)), "parent_hash": research_sha,
             "island_id": None,
         })
+
+
+def test_iterative_research_allows_refinement_chain_with_fixed_spec(tmp_path):
+    repo, base = _repo(tmp_path)
+    coral_dir = tmp_path / '.coral'
+    _write_node_spec(coral_dir, base)
+    private = coral_dir / 'private'
+    private.mkdir()
+    (private / 'autoresearch_state.json').write_text(json.dumps({
+        'nodes': {'N023': {'research': {'iterative': True}}},
+    }))
+    declaration = _submission(base)
+    (repo / 'submission.yaml').write_text(yaml.safe_dump(declaration))
+    _git(repo, 'add', '.')
+    _git(repo, 'commit', '-m', 'first candidate')
+    first = _git(repo, 'rev-parse', 'HEAD')
+    (repo / 'model.py').write_text('refresh_period = 16\n')
+    _git(repo, 'add', '.')
+    _git(repo, 'commit', '-m', 'refine refresh period')
+    second = _git(repo, 'rev-parse', 'HEAD')
+    context = {'worktree': str(repo), 'coral_dir': str(coral_dir),
+               'contract_path': str(_contract(tmp_path)), 'parent_hash': first, 'island_id': None}
+    assert validate_submission(second, context)['base_commit'] == base
+    declaration['base_commit'] = first
+    (repo / 'submission.yaml').write_text(yaml.safe_dump(declaration))
+    _git(repo, 'add', '.')
+    _git(repo, 'commit', '-m', 'invalid rebase of Node')
+    context['parent_hash'] = second
+    with pytest.raises(SubmissionError, match='Node spec base_commit'):
+        validate_submission(_git(repo, 'rev-parse', 'HEAD'), context)

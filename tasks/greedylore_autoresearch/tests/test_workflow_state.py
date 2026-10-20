@@ -453,11 +453,16 @@ def _active_research(root_run):
     return store, item
 
 
-def test_scheduler_finishes_research_without_agent_analyze_or_complete(root_run):
+def test_scheduler_finishes_research_after_explicit_early_finish(root_run):
     from autoresearch.lifecycle import run_worker
 
     store, item = _active_research(root_run)
     _publish_research_evidence(root_run, item.node_id, quality=0.0)
+    run_worker(str(root_run), runner=lambda *_: pytest.fail("premature Analyzer"))
+    research = _state(root_run)["nodes"][item.node_id]["research"]
+    assert research["status"] == "active" and not research.get("finish_requested")
+    assert not store.is_node_completed(item.node_id)
+    store.request_finish(item.agent_id, "research")
     # Reusing a valid immutable Analysis must not start Codex again.
     run_worker(str(root_run), runner=lambda *_: pytest.fail("unexpected Codex"))
     assert store.is_node_completed(item.node_id)
@@ -488,8 +493,9 @@ def test_scheduler_retries_failed_analyzer_and_blocks_agent_mutations(root_run):
     from autoresearch.lifecycle import run_worker
     from autoresearch.state import authorize_artifact, authorize_attempt
 
-    _, item = _active_research(root_run)
+    store, item = _active_research(root_run)
     _publish_research_evidence(root_run, item.node_id, quality=0.0)
+    store.request_finish(item.agent_id, "research")
     path = root_run / f"public/notes/nodes/{item.node_id}/research_analysis_v1.md"
     valid = path.read_text()
     path.unlink()
@@ -688,7 +694,9 @@ def test_attempt_and_artifact_authorizers_reject_other_nodes(root_run):
     context = {
         "coral_dir": str(root_run), "island_id": None, "agent_id": first.agent_id,
     }
-    assert authorize_attempt({"node_id": first.node_id, "mode": "research"}, context) == {}
+    assert authorize_attempt({"node_id": first.node_id, "mode": "research"}, context) == {
+        "allow_multiple_research": True,
+    }
     with pytest.raises(ValueError, match="owner"):
         authorize_attempt({"node_id": second.node_id, "mode": "research"}, context)
     for kind in ("tree", "spec"):

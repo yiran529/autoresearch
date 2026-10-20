@@ -788,3 +788,23 @@ def test_artifact_authorizer_rebuilds_stale_evaluation_before_replace(tmp_path):
     assert (tmp_path / ".coral/public/notes/nodes/N001/evaluation.md").read_text() == (
         "fresh from latest Attempts\n"
     )
+
+
+@pytest.mark.parametrize('grant_multiple', [False, True])
+def test_research_multiple_candidates_require_explicit_task_authorization(tmp_path, grant_multiple):
+    coral_dir = tmp_path / '.coral'
+    repo, _ = _init_repo(tmp_path / 'researcher')
+    first, parent = _commit(repo, 'first research candidate')
+    binding = AgentBinding('researcher-0', os.getpid(), process_start_time(os.getpid()), str(repo), None)
+    service = _service(coral_dir, binding)
+    service.attempt_authorizer = lambda *_: {'allow_multiple_research': grant_multiple}
+    service.handle('submit_attempt', _payload(binding, first, parent), os.getpid())
+    second, parent = _commit(repo, 'second research candidate')
+    if grant_multiple:
+        result = service.handle('submit_attempt', _payload(binding, second, parent), os.getpid())
+        assert result['commit_hash'] == second
+        assert len(read_attempts(coral_dir)) == 2
+    else:
+        with pytest.raises(TrustedWriteError, match='different Research SHA'):
+            service.handle('submit_attempt', _payload(binding, second, parent), os.getpid())
+        assert len(read_attempts(coral_dir)) == 1

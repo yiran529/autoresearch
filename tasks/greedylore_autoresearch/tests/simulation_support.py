@@ -198,18 +198,28 @@ def launch_logged_worker(coral_dir, entrypoint, **kwargs):
     return process
 
 
+def worker_shutdown(signum, _frame):
+    # Manager shutdown intentionally sends SIGTERM to a late finalizer. Let the
+    # test wrapper record its exit before the process ends, just as on success.
+    raise SystemExit(128 + signum)
+
+
 def run_memory(coral_dir: str):
     from autoresearch.memory import MemoryContext, consolidate_memory
 
-    event("worker_start", worker="memory")
+    previous_handler = signal.signal(signal.SIGTERM, worker_shutdown)
     try:
+        event("worker_start", worker="memory")
         result = consolidate_memory(
             if_due=True, context=MemoryContext(Path(coral_dir)), runner=memory_runner
         )
         event("memory_done", status=result.status)
         return {"status": result.status}
     finally:
-        event("worker_end", worker="memory")
+        try:
+            event("worker_end", worker="memory")
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
 
 
 def run_finalization(coral_dir: str):
@@ -220,13 +230,17 @@ def run_finalization(coral_dir: str):
             raise RuntimeError(f"unexpected worker {entrypoint}")
         return launch_logged_worker(coral, "simulation_support:run_memory")
 
-    event("worker_start", worker="finalization")
+    previous_handler = signal.signal(signal.SIGTERM, worker_shutdown)
     try:
+        event("worker_start", worker="finalization")
         result = run_worker(coral_dir, runner=analysis_runner, memory_launcher=launch_memory, now=lambda: time.monotonic() * 10000)
         event("finalization_done", **result)
         return result
     finally:
-        event("worker_end", worker="finalization")
+        try:
+            event("worker_end", worker="finalization")
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
 
 
 def declaration(coral_dir, node, mode, base, round_number):
@@ -371,6 +385,17 @@ def agent(coral_dir: Path, aid: str):
                 commit=sha,
                 head_after=git(Path.cwd(), "rev-parse", "HEAD"),
             )
+        from coral.hub.attempts import read_attempt
+
+        sha = git(Path.cwd(), "rev-parse", "HEAD")
+
+        def terminal():
+            attempt = read_attempt(coral_dir, sha)
+            return attempt if attempt and attempt.status != "pending" else None
+
+        wait_for(terminal, "terminal Research result before explicit finish")
+        cli("autoresearch.cli", "node", "complete", "--mode", "research")
+        event("research_finish_requested", node=node, commit=sha)
     else:
         node = re.search(r"You own Engineering for Node `(N[0-9]{3})`", Path("AGENTS.md").read_text()).group(1)
         if node != "N000":

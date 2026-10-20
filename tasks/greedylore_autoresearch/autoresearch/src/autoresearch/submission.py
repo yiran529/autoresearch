@@ -52,23 +52,6 @@ def _full_sha(value: Any, field: str) -> str:
     return value
 
 
-def _attempt_payloads(coral_dir: Path, island_id: str | int | None) -> list[dict[str, Any]]:
-    if island_id is None:
-        roots = [coral_dir / "public" / "attempts"]
-    else:
-        roots = [coral_dir / "islands" / str(island_id) / "attempts"]
-    payloads: list[dict[str, Any]] = []
-    for root in roots:
-        for path in sorted(root.glob("*.json")) if root.is_dir() else ():
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(value, dict) and not value.get("archived"):
-                payloads.append(value)
-    return payloads
-
-
 def _notes_root(context: dict[str, Any]) -> Path:
     coral_dir = Path(context["coral_dir"]).resolve()
     island_id = context.get("island_id")
@@ -122,7 +105,18 @@ def _validate_node_provenance(declaration: dict[str, Any], context: dict[str, An
     if declaration["mode"] == "research":
         if spec["base_commit"] != declaration["base_commit"]:
             raise SubmissionError("Node spec base_commit does not match submission")
-        if spec["parent_commit"] != context.get("parent_hash"):
+        state_path = Path(context["coral_dir"]) / "private/autoresearch_state.json"
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        iterative = state.get("nodes", {}).get(declaration["node_id"], {}).get("research", {}).get("iterative")
+        if iterative:
+            # Refinements descend the fixed Parent, possibly via earlier candidates.
+            parent = context.get("parent_hash")
+            if not parent or subprocess.run(
+                ["git", "merge-base", "--is-ancestor", spec["parent_commit"], parent],
+                cwd=context["worktree"], capture_output=True,
+            ).returncode != 0:
+                raise SubmissionError("candidate parent must descend from the fixed Node Parent")
+        elif spec["parent_commit"] != context.get("parent_hash"):
             raise SubmissionError("Node spec parent_commit does not match candidate parent")
     elif declaration["base_commit"] != declaration["quality_anchor"]:
         raise SubmissionError("Engineering base_commit must equal the Node Research SHA")
@@ -203,22 +197,21 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
     else:
         anchor = _full_sha(anchor, "quality_anchor")
         coral_dir = Path(context["coral_dir"])
-        matches = [
-            attempt
-            for attempt in _attempt_payloads(coral_dir, context.get("island_id"))
-            if attempt.get("metadata", {}).get("mode") == "research"
-            and attempt.get("metadata", {}).get("node_id") == node_id
-        ]
-        if (
-            len(matches) != 1
-            or matches[0].get("commit_hash") != anchor
-            or matches[0].get("status") == "pending"
-            or (matches[0].get("status") in {"crashed", "timeout"}
-                and matches[0].get("metadata", {}).get("failure_class") == "infra"
-                and int(matches[0].get("metadata", {}).get("infra_retry_count", 0))
-                < int(matches[0].get("metadata", {}).get("max_infra_retries", 0)))
-        ):
-            raise SubmissionError("quality_anchor is not the unique terminal Research SHA")
+        from coral.hub.attempts import read_attempts
+
+        from .research import frozen_research_attempt
+
+        try:
+            selected = frozen_research_attempt(coral_dir, node_id,
+                read_attempts(coral_dir, island_id=context.get("island_id"), include_archived=True))
+        except ValueError as exc:
+            raise SubmissionError("quality_anchor is not the frozen terminal Research SHA") from exc
+        if (selected.commit_hash != anchor
+                or (selected.status in {"crashed", "timeout"}
+                    and selected.metadata.get("failure_class") == "infra"
+                    and int(selected.metadata.get("infra_retry_count", 0))
+                    < int(selected.metadata.get("max_infra_retries", 0)))):
+            raise SubmissionError("quality_anchor is not the frozen terminal Research SHA")
 
     if node_type == "seed" and mode == "research":
         changed = _git(repo, "diff", "--name-only", base, commit_hash).splitlines()

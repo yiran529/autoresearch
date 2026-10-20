@@ -5,7 +5,7 @@ import re
 from urllib.parse import unquote
 
 import pytest
-from autoresearch.evaluation import EvaluationConsistencyError, refresh_node_evaluation
+from autoresearch.evaluation import refresh_node_evaluation
 
 from coral.types import Attempt
 
@@ -59,13 +59,14 @@ def test_evaluation_rebuild_is_deterministic(tmp_path, engineering_count):
     assert "run-r" in first
 
 
-def test_multiple_research_shas_are_consistency_error(tmp_path):
+def test_multiple_research_shas_show_pending_selection(tmp_path):
     attempts = [
         _attempt("a" * 40, "research", "2026-01-01T00:00:00+00:00"),
         _attempt("b" * 40, "research", "2026-01-02T00:00:00+00:00"),
     ]
-    with pytest.raises(EvaluationConsistencyError, match="Research"):
-        refresh_node_evaluation("N001", attempts, tmp_path)
+    report = refresh_node_evaluation("N001", attempts, tmp_path)
+    assert "Selected Research SHA: pending Research finish." in report
+    assert report.count("| research |") == 2
 
 
 def test_evaluation_reads_submission_from_fixed_commit(tmp_path):

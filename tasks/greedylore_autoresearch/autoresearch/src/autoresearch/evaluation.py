@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
@@ -78,16 +79,32 @@ def refresh_node_evaluation(
     node_id: str,
     attempts: Iterable[Attempt],
     log_root: str | Path,
+    *,
+    coral_dir: str | Path | None = None,
 ) -> str:
     """Return canonical Markdown; the caller publishes it as evaluation.md."""
     selected = [attempt for attempt in attempts if attempt.metadata.get("node_id") == node_id]
-    research_shas = {
-        attempt.commit_hash
-        for attempt in selected
-        if attempt.metadata.get("mode") == "research" and attempt.budget_class == "real"
-    }
-    if len(research_shas) > 1:
-        raise EvaluationConsistencyError(f"Node {node_id} has multiple formal Research SHAs")
+    research = [attempt for attempt in selected
+                if attempt.metadata.get("mode") == "research"
+                and attempt.budget_class in {"real", "grader_error"}]
+    anchor = None
+    root = Path(log_root)
+    if coral_dir is None:
+        coral_dir = next((parent for parent in root.parents
+                          if (parent / "private/autoresearch_state.json").is_file()), None)
+    frozen_sha = None
+    if coral_dir is not None:
+        state_path = Path(coral_dir) / "private/autoresearch_state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            frozen_sha = state.get("nodes", {}).get(node_id, {}).get("research", {}).get("selected_sha")
+    if frozen_sha and research:
+        from .research import frozen_research_attempt
+
+        try:
+            anchor = frozen_research_attempt(Path(coral_dir), node_id, research).commit_hash
+        except ValueError as exc:
+            raise EvaluationConsistencyError(str(exc)) from exc
     ordered = sorted(selected, key=lambda item: (item.timestamp, item.commit_hash))
     lines = [
         f"# Evaluation {node_id}",
@@ -95,7 +112,9 @@ def refresh_node_evaluation(
         "| mode | commit | submission | status | score | contract | comparable | run IDs | evidence |",
         "| --- | --- | --- | --- | ---: | --- | --- | --- | --- |",
     ]
-    root = Path(log_root)
+    if len(research) > 1 or frozen_sha:
+        selection = f"Selected Research SHA: `{anchor}`" if anchor else "Selected Research SHA: pending Research finish."
+        lines[2:2] = [selection, ""]
     rendered = 0
     for attempt in ordered:
         mode = attempt.metadata.get("mode")

@@ -151,6 +151,44 @@ def test_cleanup_tracks_spawned_worker_before_its_first_event(tmp_path):
     assert simulation_support.live_processes(tmp_path) == [os.getpid()]
 
 
+@pytest.mark.parametrize("worker", ["run_finalization", "run_memory"])
+def test_worker_shutdown_records_end_during_active_work(tmp_path, worker, monkeypatch):
+    import simulation_support
+
+    monkeypatch.setenv("CORAL_SIM_ROOT", str(tmp_path))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+    script = """
+import signal, sys
+import autoresearch.lifecycle
+import autoresearch.memory
+import simulation_support
+
+def block(*args, **kwargs):
+    signal.pause()
+
+autoresearch.lifecycle.run_worker = block
+autoresearch.memory.consolidate_memory = block
+getattr(simulation_support, sys.argv[1])(sys.argv[2])
+"""
+    process = subprocess.Popen([sys.executable, "-c", script, worker, str(tmp_path)], env=env)
+    try:
+        simulation_support.wait_for(
+            lambda: any(e["event"] == "worker_start"
+                        for e in simulation_support.read_events(tmp_path)),
+            "worker entered active task", timeout=5,
+        )
+        process.terminate()
+        process.wait(timeout=5)
+        records = simulation_support.read_events(tmp_path)
+        assert [e["event"] for e in records] == ["worker_start", "worker_end"]
+        assert not simulation_support.live_processes(tmp_path)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
 def _check_delivered_prompts(root, scenario):
     task = Path(__file__).resolve().parents[1]
     capture_paths = sorted((root / 'prompt_audit').glob('*.json'))
@@ -178,8 +216,10 @@ def _check_delivered_prompts(root, scenario):
             mode = state['nodes'][node]['research'].get('research_mode', 'REFINE')
             assert f'`{mode}`' in capture['instructions']
             assert f'`{node}`' in capture['instructions']
-            assert 'one formal Research evaluation' in capture['instructions']
-            assert 'one distinct formal Research candidate' in capture['startup_prompt']
+            assert '3 successful scored formal Research runs' in capture['instructions']
+            assert 'autoresearch node complete --mode research' in capture['instructions']
+            assert '10 total formal Research runs' in capture['startup_prompt']
+            assert 'first terminal result' in capture['startup_prompt']
         else:
             node = state['engineering_workers'][aid]['node_id']
             assert f'`{node}`' in capture['startup_prompt']

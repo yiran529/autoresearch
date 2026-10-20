@@ -22,6 +22,13 @@ from coral.hub.attempts import read_attempts
 from .analysis import AnalysisContext, _artifact_evidence, resolve_evidence
 from .atomic import atomic_write_text
 from .nodes import create_node
+from .research import (
+    frozen_research_attempt,
+    quality_eligible,
+    research_attempts,
+    run_budget,
+    select_research_attempt,
+)
 from .validation import load_document, validate_analysis
 
 
@@ -265,30 +272,41 @@ class WorkflowStore:
     def _context(self, *, include_archived_engineering: bool = False) -> AnalysisContext:
         attempts = tuple(
             a for a in read_attempts(self.coral_dir, island_id=self.island_id,
-                                     include_archived=include_archived_engineering)
-            if not a.archived or a.metadata.get("mode") == "engineering"
+                                     include_archived=True)
+            if not a.archived or a.metadata.get("mode") in {"engineering", "research"}
         )
         return AnalysisContext(self.coral_dir, self.notes_root, self.island_id,
                                attempts,
                                self.island_root / "eval_logs", self.repo_path or self.coral_dir.parent)
 
-    def _prepare_research_unlocked(self, state: dict, node_id: str) -> None:
+    def _prepare_research_unlocked(self, state: dict, node_id: str, *, finishing=False) -> None:
         from .evaluation import refresh_node_evaluation
 
         record = state["nodes"][node_id]
         if record.get("analysis") is not None:
             return
-        attempt = self._terminal_research_unlocked(node_id)
+        attempt = self._terminal_research_unlocked(node_id, finishing=finishing, state=state)
         if attempt.agent_id != record["research"]["agent_id"]:
             raise WorkflowError("Research Attempt owner does not match Node")
         quality = attempt.metadata.get("scores", {}).get("quality_gate", {}).get("value")
-        if type(quality) in (int, float) and quality in (0, 1):
+        if record['research'].get('iterative') and not quality_eligible(attempt):
+            skip = 'quality_failed' if quality == 0 else 'quality_or_timing_unavailable'
+        elif type(quality) in (int, float) and quality in (0, 1):
             skip = "quality_failed" if quality == 0 else None
         elif quality is None and attempt.metadata.get("failure_class") in {"infra", "candidate"}:
             skip = "quality_unavailable"
         else:
             raise WorkflowError(f"Node {node_id} has missing or invalid quality evidence")
+        if record['research'].get('iterative'):
+            record['research'].update(selected_sha=attempt.commit_hash, finish_requested=True)
+            # Persist the immutable choice before constructing its evidence envelope.
+            _atomic_json(self.state_path, state)
         context = self._context()
+        if record['research'].get('iterative'):
+            from .checkpoint_retention import prune_research_checkpoints
+
+            prune_research_checkpoints(self.coral_dir, node_id, context.attempts,
+                selected_sha=attempt.commit_hash, island_id=self.island_id)
         content = refresh_node_evaluation(node_id, context.attempts, context.log_root)
         atomic_write_text(self.notes_root / "nodes" / node_id / "evaluation.md", content, mode=0o644)
         evidence = resolve_evidence(node_id, "research", context=context)
@@ -309,10 +327,20 @@ class WorkflowStore:
             if record["research"]["status"] not in {"active", "completed"}:
                 continue
             try:
-                self._terminal_research_unlocked(node_id)
+                if record['research'].get('iterative') and record.get('analysis') is None:
+                    from .checkpoint_retention import prune_research_checkpoints
+
+                    attempts = research_attempts(read_attempts(self.coral_dir, island_id=self.island_id,
+                                                               include_archived=True), node_id)
+                    if any(a.agent_id != record['research']['agent_id'] for a in attempts):
+                        raise WorkflowError('Research Attempt owner does not match Node')
+                    if any(a.status != 'pending' for a in attempts):
+                        prune_research_checkpoints(self.coral_dir, node_id, attempts,
+                            selected_sha=record['research'].get('selected_sha'), island_id=self.island_id)
+                self._terminal_research_unlocked(node_id, state=state)
             except ResearchNotReadyError:
                 continue
-            except WorkflowError as exc:
+            except (ValueError, OSError, TypeError) as exc:
                 record["error"] = str(exc)
                 continue
             try:
@@ -391,6 +419,7 @@ class WorkflowStore:
                 state["nodes"][node_id] = {
                     "research": {"agent_id": f"research-{node_id}", "status": "reserved",
                                  "spec_ref": None,
+                                 "iterative": True,
                                  "research_mode": "EXPLORE" if random.random() < self.p_explore else "REFINE"},
                     "engineering_claims": [], "engineering_status": "blocked", "analysis": None,
                 }
@@ -463,26 +492,31 @@ class WorkflowStore:
             raise WorkflowError("assignment owner was not found")
 
 
-    def _terminal_research_unlocked(self, node_id: str):
-        attempts = [
-            attempt for attempt in read_attempts(self.coral_dir, island_id=self.island_id)
-            if attempt.metadata.get("node_id") == node_id
-            and attempt.metadata.get("mode") == "research"
-            and attempt.budget_class == "real"
-        ]
+    def _terminal_research_unlocked(self, node_id: str, *, finishing=False, state=None):
+        state = state if state is not None else self._load_unlocked()
+        record = state['nodes'][node_id]['research']
+        attempts = research_attempts(read_attempts(self.coral_dir, island_id=self.island_id,
+                                                 include_archived=True), node_id)
         if not attempts:
             raise ResearchNotReadyError(f"Node {node_id} requires one formal Research Attempt")
-        if len(attempts) != 1:
+        iterative = bool(record.get('iterative'))
+        if not iterative and len(attempts) != 1:
             raise WorkflowError(f"Node {node_id} requires one formal Research Attempt")
-        attempt = attempts[0]
-        if attempt.status == "pending" or (
-            attempt.status in {"crashed", "timeout"}
-            and attempt.metadata.get("failure_class") == "infra"
-            and int(attempt.metadata.get("infra_retry_count", 0))
-            < int(attempt.metadata.get("max_infra_retries", 0))
-        ):
+        if any(a.agent_id != record['agent_id'] for a in attempts):
+            raise WorkflowError('Research Attempt owner does not match Node')
+        successful, total, _ = run_budget(attempts)
+        exhausted = iterative and (successful >= 3 or total >= 10)
+        if any(a.status == 'pending' or (a.status in {'crashed', 'timeout'}
+                and a.metadata.get('failure_class') == 'infra'
+                and int(a.metadata.get('infra_retry_count', 0)) < int(a.metadata.get('max_infra_retries', 0))
+                and not iterative) for a in attempts):
             raise ResearchNotReadyError(f"Node {node_id} Research Attempt is not terminal")
-        return attempt
+        if iterative and not (finishing or record.get('finish_requested') or exhausted
+                              or record.get('status') == 'completed'):
+            raise ResearchNotReadyError(f'Node {node_id} Research is still active')
+        if record.get('selected_sha'):
+            return frozen_research_attempt(self.coral_dir, node_id, attempts)
+        return select_research_attempt(attempts)
 
     def _validated_analysis_ref_unlocked(self, node_id: str, mode: str) -> str:
         node_root = self.notes_root / "nodes" / node_id
@@ -497,7 +531,7 @@ class WorkflowStore:
             coral_dir=self.coral_dir,
             notes_root=self.notes_root,
             island_id=self.island_id,
-            attempts=tuple(read_attempts(self.coral_dir, island_id=self.island_id)),
+            attempts=self._context().attempts,
             log_root=self.island_root / "eval_logs",
             checkout_root=self.repo_path or self.coral_dir.parent,
         )
@@ -581,7 +615,7 @@ class WorkflowStore:
                         return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
                     if research["status"] != "active":
                         raise WorkflowError("Research assignment is not active")
-                    self._prepare_research_unlocked(state, node_id)
+                    self._prepare_research_unlocked(state, node_id, finishing=True)
                     self._save_unlocked(state)
                     return {"agent_id": agent_id, "node_id": node_id, "status": "completed"}
             if mode == "engineering":
@@ -664,7 +698,7 @@ class WorkflowStore:
                 if item.status not in {"active", "finalizing"}:
                     raise WorkflowError("assignment is not active")
                 if mode == "research":
-                    self._terminal_research_unlocked(item.node_id)
+                    self._terminal_research_unlocked(item.node_id, finishing=True, state=state)
                     record = state["nodes"][item.node_id]["research"]
                 else:
                     self._terminal_engineering_unlocked(agent_id, item.node_id)
@@ -725,18 +759,23 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
     ):
         raise WorkflowError("Attempt owner is not the active Node assignment")
     _reject_finalizing(state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode"))
-    if canonical.get("mode") == "engineering":
+    mode = canonical.get("mode")
+    iterative = mode == "research" and state["nodes"][canonical["node_id"]]["research"].get("iterative")
+    if mode == "engineering" or iterative:
+        label = "Research" if iterative else "Engineering"
         if context.get("budget_class", "real") != "real":
-            raise WorkflowError("Engineering requires formal runs; --tune is not supported")
+            raise WorkflowError(f"{label} requires formal runs; --tune is not supported")
         attempts = [a for a in read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True)
                     if a.agent_id == context.get("agent_id") and a.metadata.get("node_id") == canonical.get("node_id")
-                    and a.metadata.get("mode") == "engineering" and a.budget_class != "tune"]
+                    and a.metadata.get("mode") == mode and a.budget_class != "tune"]
         existing = any(a.commit_hash == context.get("commit_hash") for a in attempts)
         if not existing or context.get("retry"):
-            successful, total, pending = _engineering_budget(attempts)
+            successful, total, pending = (_engineering_budget(attempts) if mode == "engineering"
+                                          else run_budget(attempts))
             if successful + pending >= 3 or total >= 10:
-                raise WorkflowError("Engineering run limit reached: at most 3 successful runs and 10 total runs")
-    return {}
+                raise WorkflowError(f"{label} run limit reached: at most 3 successful runs and 10 total runs")
+    return {"allow_multiple_research": True} if iterative else {}
+
 
 
 def _reject_finalizing(state, agent_id, node_id, mode) -> None:
@@ -772,7 +811,7 @@ def authorize_artifact(kind: str, context: dict[str, Any]) -> dict[str, Any]:
 
     content = refresh_node_evaluation(
         node_id,
-        read_attempts(store.coral_dir, island_id=store.island_id),
+        read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True),
         store.island_root / "eval_logs",
     )
     return {"content": content}

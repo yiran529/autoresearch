@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from coral.agent.dynamic import DynamicAssignmentClient, spec_for_assignment
+from coral.agent.dynamic import DynamicAssignmentClient, prompt_for_assignment, spec_for_assignment
 from coral.agent.manager import AgentManager
 from coral.config import CoralConfig
 from coral.template.coral_md import generate_coral_md
@@ -58,6 +58,33 @@ def test_dynamic_instruction_is_node_bound_and_omits_private_protocol():
     assert ".codex/roles/research-N001.md" in content
     assert "trusted_writes.lock" not in content
     assert "SO_PEERCRED" not in content
+
+
+@pytest.mark.parametrize("resuming", [False, True])
+def test_research_instructions_keep_refinement_bounded_across_resume(tmp_path, resuming):
+    assignment = DynamicAssignmentClient(
+        tmp_path / ".coral", request=lambda *_: {"assignments": [{
+            "agent_id": "research-N001", "role": "research",
+            "node_id": "N001", "status": "active",
+        }]},
+    ).reconcile()[0]
+    spec = spec_for_assignment(_config(), assignment)
+    prompt = prompt_for_assignment(
+        spec, instruction_file="AGENTS.md", shared_dir=".codex", resuming=resuming,
+    )
+    instructions = generate_coral_md(
+        _config(), spec.agent_id, workflow_role="research", node_id=spec.node_id,
+    )
+    for content in (prompt, instructions):
+        assert "3 successful scored formal Research runs" in content
+        assert "10 total formal Research runs" in content
+        assert "archived Attempts" in content
+        assert "first terminal result" in content
+        assert "autoresearch node complete --mode research" in content
+        assert "all Attempts" in content
+        assert "quality-gated Engineering" in content
+        assert "one formal Research evaluation" not in content
+        assert "one distinct formal Research candidate" not in content
 
 
 def test_dynamic_score_feedback_does_not_request_open_ended_iteration():

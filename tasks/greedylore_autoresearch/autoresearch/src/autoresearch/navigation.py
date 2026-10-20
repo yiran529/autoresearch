@@ -45,6 +45,9 @@ def rebuild_node_indexes(store, state: dict) -> None:
                  'Start here. Links point to persistent shared files; producer worktrees may have retired.', '',
                  f'Parent: {parent}', '', f'Research mode: {research_mode}', '',
                  '## Reports', '']
+        selected_sha = record['research'].get('selected_sha')
+        if selected_sha:
+            lines.extend([f'Selected Research SHA: `{selected_sha}`', ''])
         for name in ('spec.md', 'evaluation.md'):
             if (node / name).is_file():
                 lines.append(f'- [{name}]({name})')
@@ -73,8 +76,9 @@ def rebuild_node_indexes(store, state: dict) -> None:
                       'From any worktree of this run, use `git show <SHA>:<file>` or '
                       '`git diff <Research-SHA> <Engineering-SHA> -- <file>`. '
                       'The current checked-out HEAD may differ from the candidate below.', '',
-                      'Only real, non-archived Attempts are current formal evaluations; tune and archived rows '
-                      'are retained for inspection, not as replacement Research anchors.', '',
+                      'The selected Research SHA is the frozen Engineering anchor. All Research candidates, '
+                      'including archived attempts and grader errors, remain evidence; tune rows '
+                      'do not count toward formal Research selection.', '',
                       '| Mode | Candidate SHA | Status | Budget | Visibility | Attempt | Runs |',
                       '| --- | --- | --- | --- | --- | --- | --- |'])
         selected = sorted((a for a in attempts if a.metadata.get('node_id') == node_id),

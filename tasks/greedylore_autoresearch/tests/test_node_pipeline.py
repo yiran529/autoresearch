@@ -67,6 +67,7 @@ def test_quality_failure_requires_analysis_before_node_completes(root_run):
     analysis = root_run / f"public/notes/nodes/{item.node_id}/research_analysis_v1.md"
     saved = analysis.read_bytes()
     analysis.unlink()
+    store.request_finish(item.agent_id, "research")
     store.reconcile(0, 1)
     assert not store.is_node_completed(item.node_id)
     assert _state(root_run)["nodes"][item.node_id]["engineering_status"] == "skipped"
@@ -269,9 +270,11 @@ def test_engineering_capacity_queues_every_node_in_readiness_order(engineering_r
     second.agent_id, second.status = child.agent_id, "regressed"
     second.metadata["node_id"] = "N002"
     write_attempt(coral, second)
+    store.request_finish(child.agent_id, "research")
     store.reconcile(0, 0)  # N002 becomes ready first, despite its larger ID.
     first.status = "improved"
     write_attempt(coral, first)
+    store.request_finish(first.agent_id, "research")
     roster = store.reconcile(0, 1)
     assert [(a.role, a.node_id) for a in roster] == [("engineering", "N002")]
     assert _state(coral)["nodes"]["N001"]["engineering_status"] == "pending"
@@ -291,13 +294,15 @@ def test_engineering_capacity_queues_every_node_in_readiness_order(engineering_r
 
 
 @pytest.mark.parametrize("value", [None, True, 0.5, "1"])
-def test_malformed_quality_is_an_error_not_an_engineering_skip(root_run, value):
+def test_unavailable_quality_skips_engineering_after_explicit_finish(root_run, value):
     store, item = _active_research(root_run)
     attempt = _publish_research_evidence(root_run, item.node_id, 0.0)
     attempt.metadata["scores"]["quality_gate"]["value"] = value
     write_attempt(root_run, attempt)
+    store.request_finish(item.agent_id, "research")
     store.reconcile(0, 1)
     record = _state(root_run)["nodes"][item.node_id]
-    assert "quality evidence" in record["error"]
-    assert record["engineering_status"] == "blocked"
-    assert not store.is_node_completed(item.node_id)
+    assert "error" not in record
+    assert record["engineering_status"] == "skipped"
+    assert record["engineering_skip_reason"] == "quality_or_timing_unavailable"
+    assert store.is_node_completed(item.node_id)

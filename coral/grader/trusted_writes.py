@@ -745,8 +745,9 @@ class TrustedWriteService:
         with trusted_writes_lock(self.coral_dir):
             if _git(worktree, "rev-parse", "HEAD") != commit_hash:
                 raise TrustedWriteError("authenticated worktree HEAD moved during submission")
+            authorization = None
             if root_source_commit is None:
-                self._authorize(
+                authorization = self._authorize(
                     "trusted_workflow_authorizer",
                     self.attempt_authorizer,
                     canonical,
@@ -774,7 +775,7 @@ class TrustedWriteService:
                     and attempt.commit_hash != commit_hash
                     and attempt.budget_class == BUDGET_CLASS_REAL
                 ]
-                if clashes:
+                if clashes and (authorization or {}).get("allow_multiple_research") is not True:
                     raise TrustedWriteError(
                         f"node {canonical['node_id']} already has a different Research SHA"
                     )

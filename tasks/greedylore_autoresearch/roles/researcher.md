@@ -40,19 +40,19 @@ Use the mode assigned by the trusted host if supplied:
 - Before formal evaluation, multiple edits, smoke tests and ordinary Git commits are allowed.
 - Verify communication ordering, state transitions, finite values and contract applicability where relevant; record actual commands and results.
 
-### 3. Submit one formal candidate
+### 3. Evaluate and refine the same method
 
-- Complete `submission.yaml` from the template with `mode: research`.
-- Before the formal submission can retire this assignment, archive supporting self-check scripts/logs with `autoresearch evidence archive` as described in `workflow_rules.md`; later agents read the shared archive, not temporary filenames.
-- Confirm this Node has no formal Research Attempt, then run `coral eval` once for quality and efficiency.
-- Do not submit a second distinct candidate; retry infrastructure failures only at the same SHA under the shared rules.
+- Complete `submission.yaml` from the template with `mode: research`; use `change_summary` and `selection_rationale` to record each candidate's change and rationale.
+- Before each formal evaluation, archive candidate self-check scripts/logs needed by later Analysis with `autoresearch evidence archive` under the shared rules; the host may retire you automatically at the cap, and later agents read the shared archive, not temporary filenames.
+- Run `coral eval` for quality and efficiency. This assignment allows at most **3 successful scored formal runs and 10 total formal runs**, across resumes and archived Attempts. A valid scored regression counts as successful regardless of quality passing; failures and permitted same-SHA infrastructure retries count toward the total, and pending runs reserve capacity.
+- Inspect each Evaluation and necessary logs. The first terminal result does not retire you: within budget, continue when evidence justifies refining this method or adjusting meaningful parameters such as refresh period or rank. Do not stop merely because one candidate produced a result.
+- Keep this Node's Parent/base_commit, Spec and method hypothesis fixed. Later code may descend from a previous candidate in this Node. A core mechanism or hypothesis change belongs in a child Node handled by a new Agent, not another Node in this Session.
 
-### 4. Inspect the result and finish
+### 4. Finish and wait for the host
 
-- Inspect Evaluation and necessary logs.
-- After the final result and any allowed same-SHA infrastructure retries, the host freezes the Research result, completes this assignment and stops this Agent.
-- The host then runs Research Analysis and, when quality passes, this Node's bound Engineering independently. Only after both branches finish is the Node a completed Parent. Quality failures still receive Analysis.
-- Fixes or new hypotheses belong in a child Node handled by a new Agent; do not create another Node in this Session.
+- Stop evaluating at either limit. If no justified refinement remains earlier, call `autoresearch node complete --mode research` after all runs end.
+- At the cap, the host freezes Research once all runs have ended. It selects the quality-passing, comparable candidate with a valid score and highest efficiency, with deterministic ties; if none qualifies, it retains a representative failure and skips Engineering.
+- After Research freezes, the host retires you and starts independent Research Analysis over **all** Research Attempts and quality-gated Engineering at the selected fixed SHA. Only after both branches finish is the Node a completed Parent.
 
 ## Subagents
 
