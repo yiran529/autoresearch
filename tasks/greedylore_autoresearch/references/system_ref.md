@@ -1,6 +1,6 @@
 # System Reference Toolkit — Distributed Communication Efficiency (V1)
 
-**用途**：辅助 Engineer 选择优化方向、Engineering Analyzer 找出算法结构对 efficiency 的限制。静态、按需读取，不开发 Reference Mutation/Promotion。每条工具统一使用 **Applicable Conditions → System Principle → Metrics → Diagnostic Procedure → Potential Mutations**。
+**用途**：辅助 Engineer 选择优化方向、撰写分析并找出算法结构对 efficiency 的限制。静态、按需读取，不开发 Reference Mutation/Promotion。每条工具统一使用 **Applicable Conditions → System Principle → Metrics → Diagnostic Procedure → Potential Mutations**。
 
 目标是无额外诊断开销的**端到端摊销平均步时**，包括通信、压缩、刷新、正交化及周期性开销。Profiler 只用于**独立诊断**；不把 profiler 各项加和当成正式 step time。
 

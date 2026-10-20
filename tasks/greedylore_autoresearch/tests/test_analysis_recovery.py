@@ -239,23 +239,48 @@ def test_analyze_runs_one_session_and_publishes_no_review(tmp_path):
     assert not list(result.analysis_path.parent.glob("*_review_v*.md"))
 
 
-def test_engineering_analysis_allows_no_engineering_attempt(tmp_path):
-    result, _, context = _run(tmp_path, mode="engineering")
+@pytest.mark.parametrize("revise", [False, True])
+def test_independent_engineering_analysis_is_rejected_before_side_effects(tmp_path, revise):
+    context = _context(tmp_path, engineering_count=1)
+    evaluation = context.notes_root / "nodes/N001/evaluation.md"
+    original = evaluation.read_bytes()
 
-    assert result.evidence.engineering_attempts == ()
-    evaluation = context.notes_root / "nodes" / "N001" / "evaluation.md"
-    assert "r" * 40 in evaluation.read_text()
+    with pytest.raises(ValueError, match="engineering finish --analysis-file"):
+        _analyze("N001", "engineering", revise=revise, context=context,
+                 runner=lambda *_: pytest.fail("independent Engineering Analyzer started"),
+                 publisher=_publisher(context.notes_root))
+
+    assert evaluation.read_bytes() == original
+    assert not list(context.notes_root.glob("nodes/N001/engineering_analysis_v*.md"))
 
 
-def test_engineering_analysis_freezes_all_attempts(tmp_path):
-    result, _, _ = _run(tmp_path, mode="engineering", engineering_count=3)
+def test_analyze_cli_rejects_engineering_mode(capsys):
+    from autoresearch.cli import main
 
-    assert [item.commit_sha for item in result.evidence.engineering_attempts] == [
+    with pytest.raises(SystemExit) as error:
+        main(["analyze", "--node", "N001", "--mode", "engineering"])
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_engineering_evidence_allows_no_engineering_attempt(tmp_path):
+    context = _context(tmp_path)
+    evidence = resolve_evidence("N001", "engineering", context=context)
+
+    assert evidence.engineering_attempts == ()
+    assert evidence.research_sha == "r" * 40
+
+
+def test_engineering_evidence_freezes_all_attempts(tmp_path):
+    context = _context(tmp_path, engineering_count=3)
+    evidence = resolve_evidence("N001", "engineering", context=context)
+
+    assert [item.commit_sha for item in evidence.engineering_attempts] == [
         "0" * 40,
         "1" * 40,
         "2" * 40,
     ]
-    assert all(item.eval_refs for item in result.evidence.engineering_attempts)
+    assert all(item.eval_refs for item in evidence.engineering_attempts)
 
 
 def test_research_analysis_excludes_engineering_attempts(tmp_path):
@@ -342,7 +367,14 @@ def test_completed_analysis_is_idempotent(tmp_path):
 def test_published_engineering_analysis_keeps_original_attempt_snapshot(tmp_path):
     from dataclasses import replace
 
-    first, runner, context = _run(tmp_path, mode="engineering", engineering_count=1)
+    from autoresearch.analysis import _artifact_evidence
+    from autoresearch.validation import load_document, seal_document, validate_analysis
+
+    context = _context(tmp_path, engineering_count=1)
+    evidence = resolve_evidence("N001", "engineering", context=context)
+    path = context.notes_root / "nodes/N001/engineering_analysis_v1.md"
+    path.write_text(json.dumps(seal_document(_analysis_payload(evidence), evidence)))
+    original = path.read_bytes()
     later = _attempt(
         "9" * 40,
         "engineering",
@@ -350,17 +382,13 @@ def test_published_engineering_analysis_keeps_original_attempt_snapshot(tmp_path
     )
     updated = replace(context, attempts=(*context.attempts, later))
 
-    second = _analyze(
-        "N001",
-        "engineering",
-        context=updated,
-        runner=runner,
-        publisher=_publisher(context.notes_root),
-    )
+    document = load_document(path)
+    current = resolve_evidence("N001", "engineering", context=updated)
+    recovered = _artifact_evidence(document, current, updated)
+    validate_analysis(document, recovered)
 
-    assert [item.commit_sha for item in second.evidence.engineering_attempts] == ["0" * 40]
-    assert second.analysis_version == 1
-    assert runner.analysis_calls == 1
+    assert [item.commit_sha for item in recovered.engineering_attempts] == ["0" * 40]
+    assert path.read_bytes() == original
 
 
 def test_recovery_rejects_tampered_manifest(tmp_path):

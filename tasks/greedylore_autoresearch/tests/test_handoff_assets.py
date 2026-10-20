@@ -34,7 +34,6 @@ def test_required_handoff_assets_exist_and_are_nonempty():
         "roles/researcher.md",
         "roles/engineer.md",
         "prompts/research_analysis.md",
-        "prompts/engineering_analysis.md",
         "references/algorithm_ref.md",
         "references/system_ref.md",
         "references/semantic_criteria.md",

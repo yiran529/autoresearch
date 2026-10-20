@@ -576,6 +576,11 @@ def analyze(
     code_snapshotter: CodeSnapshotter = _prepare_code_snapshot,
     diagnostic_runner: Callable | None = None,
 ) -> AnalysisResult:
+    if mode != "research":
+        raise ValueError(
+            "Independent analysis supports research only; "
+            "use engineering finish --analysis-file for Engineer-authored analysis"
+        )
     ctx = context or _default_context()
     publish = publisher or _default_publisher(ctx)
     references = _task_root() / "references"

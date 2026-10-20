@@ -138,7 +138,7 @@ autoresearch diagnostic run --gpus 4 --timeout 300 -- \
 
 `memory.py` 在累计达到条件时整理全局记忆，发布 `research_summary.md` 和 `engineering_summary.md`，并记录所覆盖的 Analysis 引用。Summary 帮助新 Agent 定位证据，具体判断仍需追溯到固定 SHA、Analysis 和原始记录。
 
-主要代码：[evaluation.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/evaluation.py)、[analysis.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py)、[memory.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/memory.py)、[research_analysis.md](../tasks/greedylore_autoresearch/prompts/research_analysis.md)、[engineering_analysis.md](../tasks/greedylore_autoresearch/prompts/engineering_analysis.md)。
+主要代码：[evaluation.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/evaluation.py)、[analysis.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/analysis.py)、[memory.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/memory.py)、[research_analysis.md](../tasks/greedylore_autoresearch/prompts/research_analysis.md)、[Engineer 角色](../tasks/greedylore_autoresearch/roles/engineer.md)、[Engineering Analysis 格式](../tasks/greedylore_autoresearch/templates/engineering_analysis.md)。
 
 ## 8. 状态存储与可观测性
 

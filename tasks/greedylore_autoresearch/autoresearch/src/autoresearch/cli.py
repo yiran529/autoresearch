@@ -191,10 +191,10 @@ def _parser() -> argparse.ArgumentParser:
     refresh.add_argument("--node", required=True)
 
     analyze_parser = commands.add_parser(
-        "analyze", help="publish a fixed-evidence Analysis"
+        "analyze", help="publish a fixed-evidence Research Analysis"
     )
     analyze_parser.add_argument("--node", required=True)
-    analyze_parser.add_argument("--mode", choices=("research", "engineering"), required=True)
+    analyze_parser.add_argument("--mode", choices=("research",), required=True)
     analyze_parser.add_argument("--revise", action="store_true")
     return parser
 
@@ -253,8 +253,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif args.command == "refresh-evaluation":
         result = _refresh_evaluation(args)
     elif args.command == "analyze":
-        if args.mode == "engineering":
-            raise SystemExit("Author the summary and use engineering finish --analysis-file; no independent Engineering Analyzer")
         from autoresearch.analysis import analyze
 
         analysis = analyze(args.node, args.mode, revise=args.revise)
