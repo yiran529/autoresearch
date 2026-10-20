@@ -191,6 +191,21 @@ def stop_workflow_model(process: subprocess.Popen, *, token=None) -> None:
 
 
 def run_workflow_model(command, *, input: str, timeout: float = 18000):
+    """Recover standalone model connections without stacking AgentManager retries."""
+    from coral.agent.model_retry import check_connection_failure, retry_model_connection
+
+    def invoke(remaining, attempt):
+        registry = os.environ.get('CORAL_WORKFLOW_CORAL_DIR')
+        if registry and (Path(registry) / 'private/workflow_stopping').exists():
+            raise PermissionError('workflow is stopping')
+        result = _run_workflow_model_once(command, input=input, timeout=remaining)
+        check_connection_failure(result)
+        return result
+
+    return retry_model_connection(invoke, timeout=timeout)
+
+
+def _run_workflow_model_once(command, *, input: str, timeout: float):
     """Bound model execution and retain enough identity to recover its process group."""
     environment = workflow_model_environment()
     record = prepare_workflow_model(environment)

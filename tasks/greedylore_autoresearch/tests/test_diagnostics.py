@@ -216,6 +216,65 @@ def test_analyzer_timeout_rejects_unbounded_or_invalid_configuration(tmp_path, m
         diagnostic_session.analyzer_timeout(tmp_path)
 
 
+@pytest.mark.parametrize(('errors', 'expected_starts'), [
+    (['workspace routing discovery failed', None], 2),
+    (['request timed out', 'request timed out', None], 3),
+    (['workspace routing discovery failed'] * 4, 3),
+    (['401 Unauthorized: request timed out'], 1),
+    (['invalid configuration'], 1),
+])
+def test_model_connection_retries_preserve_diagnostics(task, monkeypatch, errors, expected_starts):
+    from pathlib import Path
+
+    from autoresearch import diagnostic_session
+
+    task.run(request('preserved'), os.getpid(), execute)
+    task.close()
+    original = task.path.read_text()
+    schema = task.workspace / 'input.schema.json'
+    schema.write_text('{}')
+    starts, stops, sleeps = [], [], []
+    monkeypatch.setattr(diagnostic_session, 'settings', lambda _: {'analyzer_timeout_seconds': 120})
+    monkeypatch.setattr(diagnostic_session.shutil, 'which', lambda _: '/usr/bin/true')
+    monkeypatch.setattr(diagnostic_session, 'build_sandbox', lambda *a, **k: ['true', '--', 'true'])
+    monkeypatch.setattr(diagnostic_session.time, 'sleep', sleeps.append)
+
+    class Process:
+        pid = os.getpid()
+
+        def __init__(self, command, **kwargs):
+            self.command = command
+            self.error = errors[len(starts)]
+            self.returncode = 1 if self.error else 0
+            starts.append(self)
+
+        def communicate(self, prompt, timeout=None):
+            assert 0 < timeout <= 120
+            if not self.error:
+                Path(self.command[self.command.index('--output-last-message') + 1]).write_text('{}')
+            return '', self.error or ''
+
+    monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', Process)
+    monkeypatch.setattr('coral.grader.trusted_worker.register_workflow_model', lambda *_, **__: None)
+    monkeypatch.setattr('coral.grader.trusted_worker.stop_workflow_model', lambda p, **_: stops.append(p))
+    if errors[expected_starts - 1]:
+        with pytest.raises(RuntimeError):
+            diagnostic_session.run_diagnostic_codex('analyze', [], schema, task.workspace, task)
+    else:
+        output = diagnostic_session.run_diagnostic_codex('analyze', [], schema, task.workspace, task)
+        assert output.read_text() == '{}'
+    assert len(starts) == expected_starts
+    assert stops == starts
+    assert sleeps == [15, 30][:expected_starts - 1]
+    for number in range(1, expected_starts + 1):
+        assert (task.private / f'session-attempt-{number}.stderr.log').is_file()
+    state = task.read()
+    before = json.loads(original)
+    assert state['requests'] == before['requests']
+    assert state['executions'] == 1
+    assert state['process'] is None
+
+
 def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task):
     from autoresearch.diagnostic_sandbox import build_sandbox
     command = build_sandbox(task.workspace, [], [2, 5], ['python', 'experiments/p.py'])

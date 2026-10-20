@@ -14,6 +14,8 @@ Root N000 follows the same two branches after the host pins S0, creates A0 and s
 
 The existing Analysis worker handles only Research Analysis. Short host reconciliation publishes sealed Engineering summaries without waiting for that worker. Analysis retries preserve their fixed evidence/version and diagnostic budget, apply bounded backoff, and do not block later eligible jobs. A validated private output or published immutable Analysis is reused after interruption. Workflow/model process identities are recorded for stop and restart cleanup; Analyzer sessions have a default overall limit of 18000 seconds, including diagnostic queue waits.
 
+Standalone Analyzer and Memory model calls recover transient connection failures with at most three launches and 15/30-second backoff within the original overall timeout. Authentication/configuration failures are not retried. Analyzer reconnects keep the same task/workspace and diagnostic budget and retain per-launch logs; they do not resume an ephemeral conversation. Researcher/Engineer recovery continues to use AgentManager's existing Session resume and circuit breaker, without another launch-retry layer.
+
 ## Engineering completion
 
 A claim permits at most two distinct formal Engineering candidates. Same-SHA infrastructure retries are counted separately under the existing retry policy. The second candidate does not retire the Engineer: it must still author and submit the final summary.

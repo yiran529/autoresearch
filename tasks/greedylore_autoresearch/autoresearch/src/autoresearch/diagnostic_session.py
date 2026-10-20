@@ -35,6 +35,25 @@ def analyzer_timeout(coral_dir: Path) -> float:
 
 
 def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
+    """Retry transient connections with the same task, workspace and budget."""
+    from coral.agent.model_retry import retry_model_connection
+
+    previous = [int(path.name.split('.')[0].removeprefix('session-attempt-'))
+                for path in task.private.glob('session-attempt-*.stderr.log')]
+    offset = max(previous, default=0)
+
+    def invoke(remaining, attempt):
+        if (task.coral_dir / 'private/workflow_stopping').exists():
+            raise PermissionError('workflow is stopping')
+        return _run_diagnostic_codex_once(
+            prompt, read_roots, output_schema, scratch, task,
+            timeout=remaining, attempt=offset + attempt,
+        )
+
+    return retry_model_connection(invoke, timeout=analyzer_timeout(task.coral_dir))
+
+
+def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task, *, timeout, attempt):
     """Only explicit runtime inputs and the trusted socket cross the namespace."""
     if not shutil.which('bwrap'):
         raise RuntimeError('bubblewrap is required for diagnostic-enabled Analyzer sessions')
@@ -42,7 +61,7 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
     if not binary:
         raise RuntimeError('Codex executable is unavailable')
     config = settings(task.coral_dir)
-    deadline = time.monotonic() + analyzer_timeout(task.coral_dir)
+    deadline = time.monotonic() + timeout
 
     def remaining():
         return max(0, deadline - time.monotonic())
@@ -147,7 +166,13 @@ def run_diagnostic_codex(prompt, read_roots, output_schema, scratch, task):
                                                   timeout=remaining())
             atomic_write_text(task.private / 'session.stdout.log', _stdout)
             atomic_write_text(task.private / 'session.stderr.log', stderr)
+            atomic_write_text(task.private / f'session-attempt-{attempt}.stdout.log', _stdout)
+            atomic_write_text(task.private / f'session-attempt-{attempt}.stderr.log', stderr)
             if process.returncode:
+                from coral.agent.model_retry import check_connection_failure
+
+                check_connection_failure(subprocess.CompletedProcess(
+                    command, process.returncode, _stdout, stderr))
                 raise RuntimeError(stderr.strip()[-2000:] or 'diagnostic Analyzer session failed')
             if not output.is_file():
                 raise RuntimeError('Analyzer did not produce its output document')
