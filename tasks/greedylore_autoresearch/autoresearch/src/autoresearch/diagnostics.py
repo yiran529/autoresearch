@@ -26,7 +26,7 @@ def remaining_budget(state: dict) -> tuple[int, int]:
     """Return total and successful runs remaining, including persisted retries."""
     completed = sum(item['result'].get('status') == 'completed'
                     for item in state['requests'].values())
-    return max(0, 10 - state['executions']), max(0, 3 - completed)
+    return max(0, 15 - state['executions']), max(0, 5 - completed)
 
 
 def _live_descendant(peer: int, root: dict | None) -> bool:

@@ -77,16 +77,17 @@ def test_engineer_diagnostic_rejects_invalid_owner_stage_or_inputs(engineer, cha
             {'coral_dir': str(coral), 'peer_pid': os.getpid()}, executor=lambda *_: pytest.fail('ran'))
 
 
-def test_engineer_diagnostic_requires_own_scripts_and_does_not_reset_on_resume(engineer):
+@pytest.mark.parametrize('result_status,limit', [('completed', 5), ('failed', 15)])
+def test_engineer_diagnostic_requires_own_scripts_and_does_not_reset_on_resume(engineer, result_status, limit):
     coral, _, _, _, scripts = engineer
     context = {'coral_dir': str(coral), 'peer_pid': os.getpid()}
     with pytest.raises((ValueError, PermissionError), match='scripts'):
         diagnostics.handle_diagnostic(request(), context)
-    for n in range(3):
+    for n in range(limit):
         diagnostics.handle_diagnostic(request(str(n), scripts_dir=str(scripts)), context,
-            executor=lambda *_: {'status': 'completed', 'started': True})
+            executor=lambda *_: {'status': result_status, 'started': True})
     with pytest.raises(ValueError, match='budget'):
-        diagnostics.handle_diagnostic(request('fourth', scripts_dir=str(scripts)), context,
+        diagnostics.handle_diagnostic(request('beyond-limit', scripts_dir=str(scripts)), context,
             executor=lambda *_: pytest.fail('ran'))
 
 

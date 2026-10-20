@@ -31,12 +31,12 @@ def execute(task, payload, cancelled):
     return {'status': 'completed', 'started': True, 'exit_code': 0}
 
 
-def test_three_runs_share_persistent_budget(task):
-    for number in range(3):
+def test_five_runs_share_persistent_budget(task):
+    for number in range(5):
         assert task.run(request(f'run-{number}'), os.getpid(), execute)['status'] == 'completed'
     reopened = diagnostics.DiagnosticTask(task.coral_dir, task.task_id)
     with pytest.raises(ValueError, match='budget'):
-        reopened.run(request('fourth'), os.getpid(), execute)
+        reopened.run(request('sixth'), os.getpid(), execute)
     record = json.loads((task.records / 'run-0' / 'record.json').read_text())
     assert record['research_sha'] == 'a' * 40
     assert record['argv'] == ['python', 'experiments/probe.py']
@@ -57,34 +57,34 @@ def test_duplicate_requests_execute_once(task):
 
 
 @pytest.mark.parametrize('failure_status', ['failed', 'timed_out', 'interrupted'])
-def test_failed_diagnostics_allow_debug_retries_but_stop_after_ten(task, failure_status):
+def test_failed_diagnostics_allow_debug_retries_but_stop_after_fifteen(task, failure_status):
     def fail(*_args):
         return {'status': failure_status, 'started': True, 'exit_code': 1}
 
-    for number in range(10):
+    for number in range(15):
         result = task.run(request(f'failed-{number}'), os.getpid(), fail)
         assert result['status'] == failure_status
     reopened = diagnostics.DiagnosticTask(task.coral_dir, task.task_id)
     with pytest.raises(ValueError, match='budget'):
-        reopened.run(request('eleventh'), os.getpid(), execute)
-    assert len(list(task.records.glob('*/record.json'))) == 10
-    assert reopened.run(request('failed-9'), os.getpid(), execute) == result
+        reopened.run(request('sixteenth'), os.getpid(), execute)
+    assert len(list(task.records.glob('*/record.json'))) == 15
+    assert reopened.run(request('failed-14'), os.getpid(), execute) == result
 
 
-def test_debug_retries_still_limit_successful_diagnostics_to_three(task):
+def test_debug_retries_still_limit_successful_diagnostics_to_five(task):
     def fail(*_args):
         raise RuntimeError('fix the script before retrying')
 
-    for number in range(7):
+    for number in range(10):
         assert task.run(request(f'bug-{number}'), os.getpid(), fail)['status'] == 'failed'
     task.close()
     resumed = diagnostics.create_task(task.coral_dir, 'N001', 'research', 1, 'a' * 40)
     resumed.bind(os.getpid())
-    for number in range(3):
+    for number in range(5):
         assert resumed.run(request(f'fixed-{number}'), os.getpid(), execute)['status'] == 'completed'
     with pytest.raises(ValueError, match='budget'):
         resumed.run(request('extra'), os.getpid(), execute)
-    assert resumed.read()['executions'] == 10
+    assert resumed.read()['executions'] == 15
 
 
 @pytest.mark.parametrize('changes', [

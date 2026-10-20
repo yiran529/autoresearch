@@ -46,7 +46,7 @@ Use the controlled diagnostic entrypoint described in `references/engineer_runti
 
 **Budget, failures and evidence:**
 
-- Diagnostics have a separate persistent budget of at most 3 successful and 10 total executions, 1–4 GPUs, at most 600 seconds per execution and 3600 seconds per queue wait.
+- Diagnostics have a separate persistent budget of at most 5 successful and 15 total executions, 1–4 GPUs, at most 600 seconds per execution and 3600 seconds per queue wait.
 - They produce evidence, not formal scores, and do not consume the formal Engineering run budget.
 - Inspect returned records/stdout/stderr on failure, fix the cause, then use a new request ID; reuse an ID only to retrieve the same request's result.
 - Cite diagnostic IDs, candidate SHAs and archived results, including failed records.
