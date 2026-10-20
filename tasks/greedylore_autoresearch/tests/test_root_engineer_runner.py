@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,16 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/run_root_engineer.py"
 spec = importlib.util.spec_from_file_location("root_engineer_runner", SCRIPT)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
+
+
+def test_worktree_installs_coral_before_importing_sandbox_helper(tmp_path):
+    source = tmp_path / '.coral'
+    source.mkdir()
+    (source / 'config.yaml').write_text((runner.TASK / 'task.yaml').read_text())
+    config = runner.build_config(source, tmp_path / 'experiment', 'gpt-6.1-sol', 'medium')
+    setup = config.workspace.setup
+    helper = next(i for i, command in enumerate(setup) if '--prepare-sandbox-worktree' in command)
+    assert any(str(runner.SOURCE) in shlex.split(command) for command in setup[:helper])
 
 
 def test_preflight_requires_actual_quality_gate_not_improved_label(root_run):

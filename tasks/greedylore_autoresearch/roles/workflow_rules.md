@@ -35,7 +35,8 @@
 - A completed evaluation with a valid score counts as successful even when performance regresses.
 - Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions/retries reserve capacity.
 - Stop evaluating when either limit is reached, even if infrastructure retries remain.
-- After a terminal run, the Engineer authors a final summary covering all claim Attempts and calls `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`.
+- Within the formal-run limits, Engineering continues until no clear, substantial semantics-preserving end-to-end improvement opportunity remains; one improved candidate is not sufficient to stop.
+- After a terminal run and once the stopping condition or a formal-run limit is reached, the Engineer authors a final summary covering all claim Attempts and briefly explaining why it stopped, then calls `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`.
 - See the Engineer role and `references/engineer_runtime.md` for the JSON fields.
 - The host seals and publishes the versioned Analysis before completing the claim.
 - No independent Engineering Analyzer is launched.

@@ -131,6 +131,8 @@ def _check_delivered_prompts(root, scenario):
             assert f'`{node}`' in capture['startup_prompt']
             assert 'at most 3 successful formal Engineering runs and 10 total formal Engineering runs' in capture['startup_prompt']
             assert 'do not wait for Research Analysis' in capture['startup_prompt']
+            assert 'continue while evidence supports a clear, substantial end-to-end improvement opportunity' in capture['startup_prompt']
+            assert 'Do not stop merely because one candidate improved' in capture['role_text']
             assert '--analysis-file /absolute/scratch/final.json' in capture['instructions']
             assert 'author the final engineering analysis yourself' in capture['role_text'].lower()
     assert {state['nodes'][p['agent_id'].removeprefix('research-')]['research']['research_mode']

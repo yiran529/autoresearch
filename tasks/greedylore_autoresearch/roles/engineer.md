@@ -69,12 +69,14 @@ Use the controlled diagnostic entrypoint described in `references/engineer_runti
 
 **Stopping and reporting:**
 
-- You may stop after a terminal run. Stop evaluating when either limit is reached, even if the per-SHA infrastructure retry allowance remains; proceed to final analysis and submission.
+- Within the formal-run limits, continue optimizing until no clear, substantial semantics-preserving end-to-end improvement opportunity remains. Do not stop merely because one candidate improved.
+- Stop formal evaluation when either formal-run limit is reached, even if headroom or per-SHA infrastructure retries remain; proceed to final analysis and submission. The separate diagnostic budget limits diagnostics only.
 - Report all results, not only the best; CORAL owns the raw results.
 
 ### 5. Author the final Engineering Analysis yourself
 
-- Once at least one formal Engineering Attempt has reached a terminal state and you decide to stop (mandatory when either run limit is reached), use all actual Engineering Attempts, fixed SHAs, formal end-to-end evaluation, semantic self-checks and available profiling. Summarize improvements, failures and regressions.
+- Once at least one formal Engineering Attempt has reached a terminal state and the stopping conditions above are met, use all actual Engineering Attempts, fixed SHAs, formal end-to-end evaluation, semantic self-checks and available profiling. Summarize improvements, failures and regressions.
+- Briefly explain the stopping reason and any remaining headroom in the final Analysis.
 - Wait for every diagnostic to finish before submitting the final Analysis. Diagnostic records are retained separately and sealed as supporting evidence; do not edit them or treat diagnostic output as a formal score or fresh quality measurement.
 - Clearly distinguish:
   - **Implementation headroom:** measured overhead that may be improved while preserving algorithm semantics;

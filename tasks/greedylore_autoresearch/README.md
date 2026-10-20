@@ -22,6 +22,8 @@ New Research and Engineering Analyses are published as an immutable full `.json`
 
 An assignment permits at most 3 successful formal Engineering runs and 10 total formal runs, counted across resumes. Success means a completed evaluation with a valid score, including a performance regression. Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions and retries reserve capacity. Reaching either limit ends evaluation, including any remaining per-SHA retry allowance, but does not retire the Engineer: it must still author and submit the final summary.
 
+Within those limits, Engineer continues until no clear, substantial semantics-preserving end-to-end improvement opportunity remains; one improved candidate is not sufficient to stop. The final Analysis briefly explains the stopping reason and any remaining headroom.
+
 Write JSON in authorized scratch outside the tracked Worktree, containing exactly:
 
 - `summary`: non-empty text.

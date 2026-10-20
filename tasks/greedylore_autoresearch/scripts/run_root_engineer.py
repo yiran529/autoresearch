@@ -95,7 +95,7 @@ def build_config(source_coral, output, model, effort):
                             results_dir=str(output), run_dir=str(output / "run"),
                             setup=["uv sync --frozen", shlex.join([
                                 "uv", "pip", "install", "--python", ".venv/bin/python",
-                                "-e", str(TASK / "autoresearch")]), shlex.join([
+                                "-e", str(SOURCE), "-e", str(TASK / "autoresearch")]), shlex.join([
                                 ".venv/bin/python", str(Path(__file__).resolve()),
                                 "--prepare-sandbox-worktree"])])
     raw["grader"]["private"] = [str(source_coral / "private/eval_contract.yaml"),
