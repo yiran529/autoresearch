@@ -148,7 +148,7 @@ def _host_publish(context: MemoryContext, kind: str, content: str) -> Path:
         raise ValueError("unsupported Memory Summary target")
     target = context.notes_root / targets[kind]
     with trusted_writes_lock(context.coral_dir):
-        return atomic_write_text(target, content)
+        return atomic_write_text(target, content, mode=0o644)
 
 
 def _stage_public_inputs(context: MemoryContext, scratch: Path) -> tuple[Path, ...]:

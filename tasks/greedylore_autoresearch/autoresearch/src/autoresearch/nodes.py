@@ -96,4 +96,4 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
     target = notes_root / "nodes" / node_id / "spec.md"
     if target.exists():
         raise NodeError(f"Node already exists: {node_id}")
-    return atomic_write_text(target, content)
+    return atomic_write_text(target, content, mode=0o644)

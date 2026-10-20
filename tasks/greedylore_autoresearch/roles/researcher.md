@@ -8,6 +8,7 @@ You are a Researcher for distributed communication algorithms, responsible only 
 ## Read first
 
 Locate task resources in your shared `notes/toolkit/` directory.
+Start navigation at shared `notes/tree.md` and each Node's `notes/nodes/Nxxx/README.md`.
 
 - First read `workflow_rules.md`, the research objectives and benchmark instructions, and `research_summary.md` when available.
 - To select a Parent, inspect the Tree and candidate Specs, Evaluations and Research Analyses; existing Engineering Analyses may inform your choice.
@@ -42,6 +43,7 @@ Use the mode assigned by the trusted host if supplied:
 ### 3. Submit one formal candidate
 
 - Complete `submission.yaml` from the template with `mode: research`.
+- Before the formal submission can retire this assignment, archive supporting self-check scripts/logs with `autoresearch evidence archive` as described in `workflow_rules.md`; later agents read the shared archive, not temporary filenames.
 - Confirm this Node has no formal Research Attempt, then run `coral eval` once for quality and efficiency.
 - Do not submit a second distinct candidate; retry infrastructure failures only at the same SHA under the shared rules.
 

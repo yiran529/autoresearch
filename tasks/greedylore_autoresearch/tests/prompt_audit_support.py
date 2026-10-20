@@ -109,8 +109,14 @@ def main() -> None:
         gate('analyzer-failed').touch()
         event('analyzer_failure', node=node)
         raise RuntimeError('injected first Analyzer failure')
+    attachments = sorted(evidence_root.glob('diagnostics/*/attachments/*/check.log'))
+    supporting = []
+    for attachment in attachments:
+        if 'SIMULATED self-check attachment' not in attachment.read_text():
+            raise RuntimeError('supporting attachment was not frozen into Analyzer evidence')
+        supporting.append(f'Agent-provided fixture: evidence/{attachment.relative_to(evidence_root)}; not a scientific measurement.')
     output.write_text(json.dumps({
         'summary': f'SIMULATED research result for {node}; no scientific measurement.',
-        'findings': ['Only workflow behavior was exercised.'],
+        'findings': ['Only workflow behavior was exercised.', *supporting],
         'limitations': ['No model reasoning, training, correctness, or efficiency validation.'],
     }))

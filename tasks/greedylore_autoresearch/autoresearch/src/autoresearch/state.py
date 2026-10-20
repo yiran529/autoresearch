@@ -180,8 +180,12 @@ class WorkflowStore:
         self._rebuild_tree_unlocked(state)
 
     def _rebuild_tree_unlocked(self, state: dict[str, Any]) -> None:
-        rows = ["# Research Tree", "", "| Node | Research | Analysis | Engineering | Node status |",
-                "| --- | --- | --- | --- | --- |"]
+        from .navigation import node_relationship, rebuild_node_indexes
+
+        rebuild_node_indexes(self, state)
+        rows = ["# Research Tree", "", "Open a Node's index for its code SHAs, reports and persistent evidence.", "",
+                "| Node | Parent | Research mode | Research | Analysis | Engineering | Node status |",
+                "| --- | --- | --- | --- | --- | --- | --- |"]
         for node_id, record in sorted(state["nodes"].items()):
             analysis = (record.get("analysis") or {}).get("status", "—")
             claims = record.get("engineering_claims", [])
@@ -189,8 +193,11 @@ class WorkflowStore:
             status = "completed" if self._node_completed(record) else "in_progress"
             if record.get("error"):
                 status = "error"
-            rows.append(f"| {node_id} | {record['research']['status']} | {analysis} | {engineering} | {status} |")
-        atomic_write_text(self.tree_path, "\n".join(rows) + "\n")
+            parent, research_mode = node_relationship(self.notes_root, node_id, record)
+            if parent in state['nodes']:
+                parent = f'[{parent}](nodes/{parent}/README.md)'
+            rows.append(f"| [{node_id}](nodes/{node_id}/README.md) | {parent} | {research_mode} | {record['research']['status']} | {analysis} | {engineering} | {status} |")
+        atomic_write_text(self.tree_path, "\n".join(rows) + "\n", mode=0o644)
 
     @staticmethod
     def _node_completed(record: dict) -> bool:
@@ -283,7 +290,7 @@ class WorkflowStore:
             raise WorkflowError(f"Node {node_id} has missing or invalid quality evidence")
         context = self._context()
         content = refresh_node_evaluation(node_id, context.attempts, context.log_root)
-        atomic_write_text(self.notes_root / "nodes" / node_id / "evaluation.md", content)
+        atomic_write_text(self.notes_root / "nodes" / node_id / "evaluation.md", content, mode=0o644)
         evidence = resolve_evidence(node_id, "research", context=context)
         record["research"].update(status="completed", finish_requested=True)
         record["ready_seq"] = state["next_ready_seq"]
@@ -536,7 +543,7 @@ class WorkflowStore:
                     if target.read_text(encoding="utf-8") != content:
                         raise WorkflowError("immutable Node Spec conflicts with reservation")
                 else:
-                    atomic_write_text(target, content)
+                    atomic_write_text(target, content, mode=0o644)
                 return {"path": f"nodes/{node_id}/spec.md"}
 
             evidence = {
@@ -817,6 +824,10 @@ def handle_workflow(
         return store.initialize_research(owner, node_id, request)
     if operation == "claim_engineering":
         return store.claim_engineering(owner, payload["node_id"])
+    if operation == "archive_evidence":
+        from .attachments import archive
+
+        return archive(store, owner, payload)
     if operation == "complete_assignment":
         return store.complete_assignment(owner, payload["mode"])
     if operation == "finish_assignment":

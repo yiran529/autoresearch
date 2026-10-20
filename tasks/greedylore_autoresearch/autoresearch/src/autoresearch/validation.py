@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 
 class ArtifactValidationError(ValueError):
     pass
+
+
+def validate_authored_references(document: dict[str, Any]) -> None:
+    """Apply to new author submissions, never retroactively to frozen records."""
+    for field in ('summary', 'findings', 'limitations'):
+        values = document.get(field, [])
+        for value in ([values] if isinstance(values, str) else values if isinstance(values, list) else []):
+            if isinstance(value, str) and re.search(r'(?<![\w/])/(?:tmp|var/tmp)/\S+', value):
+                raise ArtifactValidationError(
+                    'Analysis cites a temporary file: archive supporting files with '
+                    '`autoresearch evidence archive`, or cite managed diagnostic records. '
+                    'Describe unavailable checks as limitations without temporary file references.'
+                )
 
 
 _COMMON_FIELDS = {

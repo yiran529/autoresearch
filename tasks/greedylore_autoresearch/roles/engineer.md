@@ -10,6 +10,7 @@ You are an Engineer for distributed communication compression algorithms. Comple
 
 Locate task resources in your shared `notes/toolkit/` directory:
 
+- Open shared `notes/tree.md` and your Node's `notes/nodes/Nxxx/README.md` for direct report, candidate-code and evidence links.
 - First read `workflow_rules.md` and `engineering_summary.md` when available.
 - Inspect your assigned Node using its Spec/Evaluation, quality evidence for its fixed Research SHA, and published Research/Engineering Analyses when available.
 - Consult profiling, `system_ref.md`, `engineer_runtime.md` when available, and `semantic_criteria.md` as needed.
@@ -74,6 +75,8 @@ Use the controlled diagnostic entrypoint described in `references/engineer_runti
 - Report all results, not only the best; CORAL owns the raw results.
 
 ### 5. Author the final Engineering Analysis yourself
+
+- Before finishing, archive any supporting CPU self-check scripts/logs outside managed diagnostic records with `autoresearch evidence archive` (see `workflow_rules.md`). Cite the returned persistent paths; do not cite temporary paths. This archives agent-provided material, without certifying execution.
 
 - Once at least one formal Engineering Attempt has reached a terminal state and the stopping conditions above are met, use all actual Engineering Attempts, fixed SHAs, formal end-to-end evaluation, semantic self-checks and available profiling. Summarize improvements, failures and regressions.
 - Briefly explain the stopping reason and any remaining headroom in the final Analysis.

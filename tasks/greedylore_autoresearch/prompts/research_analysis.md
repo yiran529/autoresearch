@@ -81,6 +81,7 @@ You are an **independent Research Analyzer**, not a Researcher. Diagnose this fr
   - nonempty `limitations` string array.
 - Use concise evidence-bounded finding strings with tags `[OBSERVED]`, `[SUPPORTED]`, `[REFUTED]`, `[REPLICATION]`, `[INCONCLUSIVE]`, or `[NO_SUPPORTED_GAP]`; tags do not introduce new JSON keys.
 - Cite the actual unique Research SHA, formal evidence paths and any real diagnostic IDs.
+- Supporting `diagnostics/.../attachments/...` files in the fixed evidence are agent-provided self-check materials, not host-verified executions. Cite their supplied evidence-relative paths and preserve this distinction. Never cite temporary `/tmp` files; use the managed diagnostic records for new supporting experiments, or report unavailable evidence as a limitation.
 - The host attaches the evidence envelope and publishes the versioned Analysis.
 
 ## Subagents

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -58,24 +58,20 @@ def _submission_identity(attempt: Attempt) -> str:
     return f"{mode}:{node_id}"
 
 
-def _raw_result_paths(log_root: Path, attempt: Attempt) -> list[str]:
-    paths: set[str] = set()
+def _result_links(log_root: Path, attempt: Attempt) -> str:
+    """Small reading view; the Attempt retains the complete evidence inventory."""
+    public = log_root.parent
+    references = [f"attempts/{attempt.commit_hash}.json"]
     for run in attempt.metadata.get("grader_runs", []):
         run_id = run.get("run_id")
         if isinstance(run_id, str):
             candidate = log_root / attempt.commit_hash / run_id
-            if candidate.is_dir():
-                for path in candidate.rglob("*.json"):
-                    try:
-                        payload = json.loads(path.read_text(encoding="utf-8"))
-                    except (OSError, json.JSONDecodeError):
-                        continue
-                    if isinstance(payload, dict):
-                        paths.add(str(path.relative_to(log_root)))
-    for value in attempt.metadata.get("evidence_paths", []):
-        if isinstance(value, str):
-            paths.add(value)
-    return sorted(paths)
+            if candidate.is_dir() and candidate.resolve().is_relative_to(log_root.resolve()):
+                references.append(candidate.relative_to(public).as_posix())
+    return "; ".join(
+        f"[{reference}](../../../{quote(reference, safe='/')})"
+        for reference in dict.fromkeys(references) if (public / reference).exists()
+    ) or "—"
 
 
 def refresh_node_evaluation(
@@ -116,7 +112,7 @@ def refresh_node_evaluation(
             suffix = f"/{failure}" if failure else ""
             run_summaries.append(f"{run_id}:{status}{suffix}")
         run_ids = ", ".join(run_summaries) or "—"
-        evidence = ", ".join(_raw_result_paths(root, attempt)) or "—"
+        evidence = _result_links(root, attempt)
         comparable = attempt.metadata.get("comparability", attempt.metadata.get("comparable"))
         lines.append(
             "| "
@@ -138,4 +134,7 @@ def refresh_node_evaluation(
         rendered += 1
     if rendered == 0:
         lines.extend(("", "No formal evaluations recorded."))
+    lines.extend(("", "Evidence labels are relative to the public state directory; links resolve from this Node. "
+                  "Open the Attempt JSON for the complete evidence inventory and the run directory for raw results. "
+                  "Analysis JSON records preserve their frozen evidence manifests."))
     return "\n".join(lines) + "\n"

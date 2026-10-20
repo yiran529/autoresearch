@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -249,6 +250,20 @@ def declaration(coral_dir, node, mode, base, round_number):
     Path("simulation_marker.txt").write_text(f"SIMULATED {mode} {node} {round_number}\n")
 
 
+def archive_self_check(node):
+    """Exercise real CLI upload, then discard the scratch source immediately."""
+    with tempfile.TemporaryDirectory(prefix='coral-sim-self-check-') as directory:
+        script, log = Path(directory) / 'check.py', Path(directory) / 'check.log'
+        script.write_text("print('SIMULATED self-check attachment; no scientific measurement.')\n")
+        log.write_bytes(subprocess.check_output([sys.executable, str(script)]))
+        result = cli('autoresearch.cli', 'evidence', 'archive', '--node', node,
+                     '--request-id', 'self-check-1', '--files', str(script), str(log))
+        reference = json.loads(result.stdout)['path']
+    event('supporting_evidence_archived', node=node, reference=reference,
+          scratch_removed=not script.exists())
+    return reference
+
+
 def agent(coral_dir: Path, aid: str):
     event("agent_ready", agent=aid)
     if aid.startswith("research-"):
@@ -330,6 +345,7 @@ def agent(coral_dir: Path, aid: str):
             event("agent_crash", agent=aid)
             raise SystemExit(17)
         wait_for(lambda: gate("research").exists(), "parallel Research release")
+        archive_self_check(node)
         base = yaml.safe_load(spec_path.read_text())["base_commit"]
         declaration(coral_dir, node, "research", base, 1)
         cli("coral.cli", "eval", "-m", f"SIMULATED research {node}", "--no-wait")
@@ -377,12 +393,13 @@ def agent(coral_dir: Path, aid: str):
                 round=number,
             )
         from coral.hub.attempts import read_attempts
+        attachment = archive_self_check(node)
         summary = root() / f"{aid}-final.json"
         shas = [a.commit_hash for a in read_attempts(coral_dir)
                 if a.agent_id == aid and a.metadata.get("mode") == "engineering"]
         summary.write_text(json.dumps({
             "summary": "SIMULATED Engineer-authored result; no scientific measurement.",
-            "findings": ["All three scripted candidate results are recorded."],
+            "findings": [f"All three scripted candidate results are recorded. Agent-provided self-check: {attachment}/check.log."],
             "limitations": ["No training, real profiling or speedup validation."],
             "attempt_shas": shas,
         }))

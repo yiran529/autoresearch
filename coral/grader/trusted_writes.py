@@ -30,7 +30,7 @@ PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 64 * 1024
 WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
-    "complete_assignment", "cancel_assignment", "finish_assignment",
+    "complete_assignment", "cancel_assignment", "finish_assignment", "archive_evidence",
 })
 OPERATIONS = frozenset({
     "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due", "run_diagnostic",
@@ -42,6 +42,7 @@ _WORKFLOW_FIELDS = {
     "complete_assignment": frozenset({"mode"}),
     "finish_assignment": frozenset({"mode"}),
     "cancel_assignment": frozenset(),
+    "archive_evidence": frozenset({"node_id", "request_id", "commit_sha", "files"}),
 }
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _NODE_ARTIFACT = re.compile(

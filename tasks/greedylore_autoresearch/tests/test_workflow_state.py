@@ -205,7 +205,7 @@ def test_missing_state_in_existing_run_refuses_allocation(root_run):
     store = _store(root_run)
     store.reconcile(1, 0)
     existing_node = root_run / "public/notes/nodes/N001"
-    existing_node.mkdir(parents=True)
+    existing_node.mkdir(parents=True, exist_ok=True)
     (existing_node / "spec.md").write_text("node_id: N001\n", encoding="utf-8")
     store.state_path.unlink()
 
@@ -919,10 +919,10 @@ def test_engineer_publication_failure_is_recoverable_without_reauthoring(enginee
     store.submit_engineering_analysis('engineer-E0001', body)
     from coral.grader import analysis_artifacts
     writer = analysis_artifacts._atomic_text
-    def unavailable(path, content):
+    def unavailable(path, content, **kwargs):
         if path.name == 'engineering_analysis_v1.md':
             raise OSError('publication temporarily unavailable')
-        return writer(path, content)
+        return writer(path, content, **kwargs)
     monkeypatch.setattr(analysis_artifacts, '_atomic_text', unavailable)
     store.reconcile(0, 1)
     assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'active'

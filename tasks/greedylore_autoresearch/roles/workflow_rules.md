@@ -44,11 +44,19 @@
 
 ## Evaluation and Analysis records
 
+- Start at shared `notes/tree.md`, then open the assigned/selected Node's `README.md` index for Spec, Evaluation, latest Analyses, candidate SHAs and evidence. Read code at its fixed SHA with `git show <SHA>:<file>`; the current HEAD and historical `source_worktree` are not recovery anchors.
 - For diagnostics, `autoresearch refresh-evaluation --node Nxxx` rebuilds Evaluation.
 - Read versioned Analysis `.md` files for conclusions and limitations.
 - New versions link a same-name `.json` containing the complete fixed evidence record; inspect it only when needed.
 - Diagnostic IDs locate immutable records/results under the public diagnostics directory.
 - Legacy Analysis `.md` files may still contain JSON.
+
+## Supporting self-check files
+
+- Before Research submission (which can retire the Researcher) or Engineering finish, archive any uncommitted self-check script/log that later Analysis must cite: `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log`.
+- This copies small regular files (unique basenames, 32 KiB total per bundle, at most 64 bundles per assignment) into immutable public diagnostics attachments. Use managed diagnostics for larger execution records. Keep the returned public-relative paths; do not cite `/tmp` paths in final Analysis.
+- Attachments record the authenticated uploading Agent, an uploader-declared code-context SHA and content hashes. The host checks that the SHA exists, but does not certify that those bytes were executed. These are agent-provided evidence, not host-verified executions or formal scores. Document commands, inputs and limitations in the attached log.
+- Research attachments must be archived while the Research assignment is active; Engineering attachments before finish. The host includes them in the role-appropriate frozen evidence manifest. Unneeded scratch need not be preserved.
 
 ## Subagents
 

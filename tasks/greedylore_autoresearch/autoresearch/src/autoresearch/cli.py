@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -141,6 +142,14 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autoresearch")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    evidence = commands.add_parser('evidence', help='archive small supporting scripts and logs')
+    evidence_commands = evidence.add_subparsers(dest='evidence_command', required=True)
+    archive = evidence_commands.add_parser('archive')
+    archive.add_argument('--node', required=True)
+    archive.add_argument('--request-id', default=None, help='reuse this ID after a channel timeout')
+    archive.add_argument('--files', type=Path, nargs='+', required=True,
+                         help='regular files, unique basenames; at most 32 KiB total')
+
     diagnostic = commands.add_parser("diagnostic", help="run a bounded Analyzer or Engineer diagnostic")
     diagnostic_commands = diagnostic.add_subparsers(dest="diagnostic_command", required=True)
     diagnostic_run = diagnostic_commands.add_parser("run")
@@ -202,7 +211,24 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
-    if args.command == "diagnostic":
+    if args.command == 'evidence':
+        from autoresearch.attachments import MAX_ATTACHMENT_BYTES
+
+        files, total = [], 0
+        for path in args.files:
+            if path.is_symlink() or not path.is_file():
+                raise SystemExit('evidence files must be regular files, not symlinks')
+            with path.open('rb') as stream:
+                content = stream.read(MAX_ATTACHMENT_BYTES + 1)
+            total += len(content)
+            if total > MAX_ATTACHMENT_BYTES:
+                raise SystemExit('archive exceeds 32 KiB; use managed diagnostics for larger outputs')
+            files.append({'name': path.name, 'content': base64.b64encode(content).decode('ascii')})
+        result = request_trusted(_coral_dir(), 'archive_evidence', {
+            'node_id': args.node, 'request_id': args.request_id or uuid.uuid4().hex,
+            'commit_sha': _git('rev-parse', 'HEAD'), 'files': files,
+        })
+    elif args.command == "diagnostic":
         from autoresearch.diagnostics import _validate_request
 
         run = os.environ.get("CORAL_DIAGNOSTIC_RUN")

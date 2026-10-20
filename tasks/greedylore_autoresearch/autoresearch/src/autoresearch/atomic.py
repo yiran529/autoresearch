@@ -7,13 +7,14 @@ import tempfile
 from pathlib import Path
 
 
-def atomic_write_text(path: str | Path, content: str) -> Path:
+def atomic_write_text(path: str | Path, content: str, *, mode: int = 0o600) -> Path:
     """Replace one text file atomically and fsync the file and directory."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), mode)
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())

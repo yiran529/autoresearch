@@ -220,7 +220,7 @@ def bootstrap_root_analysis(
         ):
             raise BootstrapError("existing Root Spec conflicts with fixed policy")
     else:
-        atomic_write_text(spec_path, yaml.safe_dump(expected_spec, sort_keys=False))
+        atomic_write_text(spec_path, yaml.safe_dump(expected_spec, sort_keys=False), mode=0o644)
 
     store = WorkflowStore(coral_dir, repo_path=root_worktree)
     try:

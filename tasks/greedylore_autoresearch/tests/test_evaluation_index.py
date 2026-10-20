@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from urllib.parse import unquote
 
 import pytest
 from autoresearch.evaluation import EvaluationConsistencyError, refresh_node_evaluation
@@ -117,3 +119,27 @@ def test_evaluation_survives_retired_source_worktree(tmp_path, canonical):
     assert "| research |" in rebuilt
     if canonical:
         assert "research:N001" in rebuilt
+
+
+def test_evaluation_links_resolve_without_enumerating_every_result(tmp_path):
+    public = tmp_path / 'public'
+    node = public / 'notes/nodes/N001'
+    node.mkdir(parents=True)
+    attempt = _attempt('a' * 40, 'engineering', '2026-01-01T00:00:00+00:00')
+    run = public / 'eval_logs' / attempt.commit_hash / 'run-a'
+    run.mkdir(parents=True)
+    for number in range(40):
+        (run / f'result-{number}.json').write_text('{}')
+    records = public / 'attempts'
+    records.mkdir()
+    (records / f'{attempt.commit_hash}.json').write_text('{}')
+    attempt.metadata['evidence_paths'] = [str(p.relative_to(public)) for p in run.iterdir()]
+
+    report = refresh_node_evaluation('N001', [attempt], public / 'eval_logs')
+    links = re.findall(r'\]\(([^)]+)\)', report)
+    targets = [(node / unquote(link)).resolve() for link in links]
+    assert (records / f'{attempt.commit_hash}.json').resolve() in targets
+    assert run.resolve() in targets
+    assert all(p.exists() for p in targets)
+    assert len(links) <= 4
+    assert 'result-39.json' not in report

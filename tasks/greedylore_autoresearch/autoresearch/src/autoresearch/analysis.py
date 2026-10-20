@@ -293,6 +293,9 @@ def resolve_evidence(
                 raw_references.add(f"notes/{sidecar.relative_to(ctx.notes_root).as_posix()}")
     for item in engineering_evidence:
         raw_references.update(item.eval_refs)
+    from .attachments import evidence_references as attachment_references
+
+    raw_references.update(attachment_references(ctx.coral_dir, node_id, mode))
     if mode == 'engineering' and (ctx.coral_dir / 'private/autoresearch_state.json').exists():
         from .engineer_diagnostics import evidence_references
 
@@ -687,9 +690,11 @@ def analyze(
                     analyzer_scratch,
                     **({"timeout": timeout} if runner is run_fresh_codex else {}),
                 )
-            analysis_document = validate_analysis(
-                seal_document(load_document(output), evidence), evidence
-            )
+            from .validation import validate_authored_references
+
+            authored = load_document(output)
+            validate_authored_references(authored)
+            analysis_document = validate_analysis(seal_document(authored, evidence), evidence)
             content = json.dumps(analysis_document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             analysis_path = _publish(publish, ctx, "analysis", mode, version, content)
 

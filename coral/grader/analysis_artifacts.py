@@ -15,7 +15,7 @@ from pathlib import Path
 _NAME = re.compile(r'(research|engineering)_analysis_v([1-9][0-9]*)\.md')
 
 
-def render_analysis(document: dict, filename: str) -> str:
+def render_analysis(document: dict, filename: str, *, legacy_navigation: bool = False) -> str:
     match = _NAME.fullmatch(filename)
     if not isinstance(document, dict) or match is None or document.get('mode') != match[1]:
         raise ValueError('invalid Analysis identity')
@@ -37,7 +37,7 @@ def render_analysis(document: dict, filename: str) -> str:
         lines.extend(['', f'## {key.title()}', ''])
         for item in items:
             lines.append('- ' + item.replace('\n', '\n  '))
-    if match[1] == 'research':
+    if match[1] == 'research' and legacy_navigation:
         root = f'../../../diagnostics/{node}-research-v{match[2]}'
         lines.extend(['', '## Evidence navigation', '',
                       f'- [Diagnostic records (when enabled)]({root}/records/)',
@@ -45,6 +45,19 @@ def render_analysis(document: dict, filename: str) -> str:
                       '- Paths beginning `code/`, `evidence/` or `results/` in the text refer to '
                       f'the [Analyzer workspace]({root}/workspace/). For diagnostic results, '
                       'use the cited request ID under records/ for the immutable copy.'])
+    elif match[1] == 'research':
+        root = f'diagnostics/{node}-research-v{match[2]}'
+        lines.extend(['', '## Evidence navigation', '',
+                      '- The full JSON record preserves the frozen evaluation and evidence manifest.',
+                      '- This Node\'s README.md lists the available diagnostic directories. '
+                      'A session without managed diagnostics has no persistent Analyzer workspace.',
+                      f'- When enabled, managed diagnostic inputs live at `{root}/workspace/` '
+                      f'and immutable execution records at `{root}/records/`, relative to public state.',
+                      '- References beginning `evidence/diagnostics/` map to `diagnostics/` '
+                      'under public state; supporting attachment manifests identify their provenance. '
+                      'For `code/<SHA>/...`, read the fixed commit from run/repo. '
+                      'Other evidence/results references describe the supplied Analyzer session inputs '
+                      'and outputs; prefer the cited request record for a persistent diagnostic result.'])
     return '\n'.join(lines) + '\n'
 
 
@@ -66,18 +79,20 @@ def load_analysis(path: Path) -> dict:
         record = path.with_suffix('.json')
         _safe(record)
         document = json.loads(record.read_text(encoding='utf-8'))
-        if text != render_analysis(document, path.name):
+        if text not in {render_analysis(document, path.name),
+                        render_analysis(document, path.name, legacy_navigation=True)}:
             raise ValueError('Analysis view does not match its JSON record')
     if not isinstance(document, dict):
         raise ValueError('Artifact must be a JSON object')
     return document
 
 
-def _atomic_text(path: Path, text: str) -> None:
+def _atomic_text(path: Path, text: str, *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f'.{path.name}.', dir=path.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            os.fchmod(stream.fileno(), mode)
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
@@ -104,9 +119,9 @@ def publish_analysis(path: Path, document: dict) -> Path:
         if target.exists() and load_analysis(target) != document:
             raise ValueError('immutable Analysis already exists')
     if not record.exists():
-        _atomic_text(record, json.dumps(document, sort_keys=True, ensure_ascii=False, indent=2) + '\n')
+        _atomic_text(record, json.dumps(document, sort_keys=True, ensure_ascii=False, indent=2) + '\n', mode=0o644)
     if not path.exists():
-        _atomic_text(path, text)
+        _atomic_text(path, text, mode=0o644)
     return path
 
 
@@ -127,5 +142,5 @@ def convert_legacy_analysis(path: Path, backup: Path) -> Path:
     else:
         _atomic_text(backup, original)
     publish_analysis(path, document)
-    _atomic_text(path, rendered)
+    _atomic_text(path, rendered, mode=0o644)
     return path

@@ -68,7 +68,7 @@ def _publisher(store, node_id, generation):
             if kind == "analysis":
                 publish_analysis(path, document)
             else:
-                atomic_write_text(path, content)
+                atomic_write_text(path, content, mode=0o644)
         return {"path": target}
 
     return publish
@@ -95,7 +95,7 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
                 if (store.notes_root / "nodes" / node_id / "spec.md").exists():
                     atomic_write_text(store.notes_root / "nodes" / node_id / "evaluation.md",
                                       refresh_node_evaluation(node_id, read_attempts(store.coral_dir),
-                                                              store.island_root / "eval_logs"))
+                                                              store.island_root / "eval_logs"), mode=0o644)
         errors = {}
         for node_id in nodes:
             if only_node is not None and node_id != only_node:

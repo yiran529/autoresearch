@@ -11,7 +11,7 @@ from coral.hub.attempts import read_attempts
 from .analysis import AnalysisContext, resolve_evidence
 from .atomic import atomic_write_text
 from .evaluation import refresh_node_evaluation
-from .validation import seal_document, validate_analysis
+from .validation import seal_document, validate_analysis, validate_authored_references
 
 
 def submit(store, agent_id: str, body: dict) -> dict:
@@ -47,6 +47,7 @@ def _submit(store, agent_id: str, body: dict) -> dict:
                     'analysis_ref': f"nodes/{node_id}/engineering_analysis_v{previous['version']}.md"}
         if worker['status'] != 'active':
             raise WorkflowError('Engineering summary owner is not active')
+        validate_authored_references(body)
         store._terminal_engineering_unlocked(agent_id, node_id)
         attempts = tuple(
             a for a in read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True)
@@ -59,7 +60,7 @@ def _submit(store, agent_id: str, body: dict) -> dict:
             raise WorkflowError('Engineering summary must cover all claim Attempts')
         node = store.notes_root / 'nodes' / node_id
         evaluation = refresh_node_evaluation(node_id, attempts, store.island_root / 'eval_logs')
-        atomic_write_text(node / 'evaluation.md', evaluation)
+        atomic_write_text(node / 'evaluation.md', evaluation, mode=0o644)
         context = AnalysisContext(store.coral_dir, store.notes_root, store.island_id,
                                   attempts, store.island_root / 'eval_logs', store.repo_path or Path.cwd())
         evidence = resolve_evidence(node_id, 'engineering', context=context)

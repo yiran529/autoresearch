@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
@@ -22,8 +23,9 @@ import pytest
 def test_complete_workflow_without_models_or_training(tmp_path, scenario):
     import simulation_support
 
-    root = tmp_path / scenario
-    root.mkdir()
+    output = os.environ.get('CORAL_ARTIFACT_REVIEW_DIR')
+    root = (Path(output) if output else tmp_path) / scenario
+    root.mkdir(parents=True)
     env = os.environ.copy()
     task = Path(__file__).resolve().parents[1]
     repo = task.parents[1]
@@ -80,7 +82,59 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
         assert report["host_binding_verified"] is True
         assert report["infra_retry_same_sha_verified"] is True
     _check_delivered_prompts(root, scenario)
+    _check_artifact_handoff(root, report, timeline)
     print(f"\nSimulation report: {root / 'report.json'}")
+
+
+def _check_artifact_handoff(root, report, timeline):
+    import yaml
+
+    public = root / 'run/.coral/public'
+    tree = (public / 'notes/tree.md').read_text()
+    state = json.loads((root / 'run/.coral/private/autoresearch_state.json').read_text())
+    assert '| Node | Parent | Research mode |' in tree
+    for node_id, record in state['nodes'].items():
+        row = next(line for line in tree.splitlines() if line.startswith(f'| [{node_id}]'))
+        index = public / f'notes/nodes/{node_id}/README.md'
+        if node_id == 'N000':
+            assert '| Root | — |' in row
+            continue
+        spec = index.parent / 'spec.md'
+        if not spec.exists():
+            assert '| Not selected |' in row
+            assert 'Parent: Not selected' in index.read_text()
+            continue
+        parent = yaml.safe_load(spec.read_text())['parent_node']
+        assert f'| [{parent}](nodes/{parent}/README.md) | {record["research"]["research_mode"]} |' in row
+        assert f'Parent: [{parent}](../{parent}/README.md)' in index.read_text()
+    archived = [e for e in timeline if e.get('event') == 'supporting_evidence_archived']
+    assert len(archived) == 6  # Three Researchers and three Engineers.
+    assert all(e['scratch_removed'] for e in archived)
+    for entry in archived:
+        bundle = public / entry['reference']
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        assert manifest['execution_verified'] is False
+        for file in manifest['files']:
+            assert hashlib.sha256((bundle / file['name']).read_bytes()).hexdigest() == file['sha256']
+    for node in ('N000', 'N001', 'N002', 'N003'):
+        index = public / f'notes/nodes/{node}/README.md'
+        links = re.findall(r'\]\(([^)]+)\)', index.read_text())
+        assert links
+        assert all((index.parent / unquote(link)).resolve().exists() for link in links)
+        assert all((index.parent / unquote(link)).resolve().is_relative_to(public.resolve()) for link in links)
+        assert f'(nodes/{node}/README.md)' in (public / 'notes/tree.md').read_text()
+        for report_path in index.parent.glob('*.md'):
+            for link in re.findall(r'\]\(([^)]+)\)', report_path.read_text()):
+                assert (report_path.parent / unquote(link)).resolve().exists(), (report_path, link)
+    for entry in report['attempts']:
+        subprocess.run(['git', '-C', str(root / 'run/repo'), 'cat-file', '-e',
+                        entry['commit'] + '^{commit}'], check=True)
+    for analysis in public.glob('notes/nodes/*/*_analysis_v*.json'):
+        document = json.loads(analysis.read_text())
+        if document['node_id'] == 'N000' and document['mode'] == 'research':
+            continue
+        assert any('/attachments/' in record['path']
+                   for record in document['evidence_manifest']['evidence_records'])
 
 
 def test_cleanup_tracks_spawned_worker_before_its_first_event(tmp_path):
