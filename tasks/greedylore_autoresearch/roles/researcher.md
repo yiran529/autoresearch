@@ -15,6 +15,7 @@ Start navigation at shared `notes/tree.md` and each Node's `notes/nodes/Nxxx/REA
 - Before implementation, read `engineering_summary.md` and the selected Parent's Engineering Analysis when available.
 - In `research_intent.engineering_review`, record applicable findings, reuse/defer decisions and implementation confounds; explain unavailable reports (including skipped Engineering). This does not imply automatic code inheritance.
 - Consult relevant algorithm references in `references/` as needed. When interpreting diagnostic findings, use `common.md` for comparison rules and `initial_diagnostics.md` for diagnostic methods.
+- When developing a new algorithm, optionally consult `references/algorithm_construction.md` for ways to turn an observed limitation or desired property into a concrete mechanism and testable prediction.
 - Check the specific algorithm's closest prior papers before claiming novelty.
 
 ## Research mode

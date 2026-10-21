@@ -80,7 +80,7 @@ This classification often reveals the next construction step. A proposal dependi
 
 Start from \(H=P+(H-P)\), with a reference \(P\) that sender and receiver can reconstruct consistently. Encode the innovation \(H-P\), then add \(P\) at reconstruction. Specify how \(P\) is produced and updated; “use a predictor” is not an algorithm.
 
-**Investigate:** whether the innovation has a useful spectrum, dynamic range, or support; whether local heterogeneity makes a shared predictor ineffective; whether a linear compressor cancels the proposed change. Account for the predictor's memory and for stale predicted components. Example A develops this pattern.
+**Investigate:** whether the innovation has a useful spectrum, dynamic range, or support; whether local heterogeneity makes a shared predictor ineffective; whether a linear compressor cancels the proposed change. Account for the predictor's memory and for stale predicted components. Use this pattern when prediction and its state costs are justified; it is not limited to any one codec.
 
 ### C2 — Replace an expensive decision with the statistics it needs
 
@@ -88,7 +88,7 @@ Start from \(H=P+(H-P)\), with a reference \(P\) that sender and receiver can re
 
 Write the exact decision first. Identify the smallest exact or approximate statistic sufficient to make it. Consider a sketch, sample, cached estimate, or a two-stage decision. Derive the statistic's target under the actual worker aggregation.
 
-**Investigate:** bias, variance, selection dependence, and the gap between estimating a statistic and making a good nonlinear decision from it. Shared random projections can estimate global quantities; averaging nonlinear local statistics may estimate a different object. Example B uses this distinction.
+**Investigate:** bias, variance, selection dependence, and the gap between estimating a statistic and making a good nonlinear decision from it. Shared random projections can estimate global quantities; averaging nonlinear local statistics may estimate a different object. Example B in Section 5 uses a two-stage global selection; the same principle applies to sketches and low-rank scores.
 
 ### C3 — Relax one representation constraint
 
@@ -96,7 +96,7 @@ Write the exact decision first. Identify the smallest exact or approximate stati
 
 Identify the restriction: fixed coordinate support, selection of existing basis columns, a single scale, or a prescribed factorization. Relax one restriction through a small solvable subproblem. Examples include mixing a few basis directions or choosing an equivalent factor scaling before quantization.
 
-**Investigate:** which degrees of freedom the decoder must know and how to communicate or reproduce them. A real-arithmetic equivalence can disappear after quantization. Example B relaxes discrete column selection through a two-dimensional rotation.
+**Investigate:** which degrees of freedom the decoder must know and how to communicate or reproduce them. A real-arithmetic equivalence can disappear after quantization. The representation may be relaxed in quantization as well: Example A separates outliers from bulk quantization under an explicit bit budget.
 
 ### C4 — Introduce state to maintain a useful quantity
 
@@ -119,7 +119,7 @@ where the conditioning and each term must be derived for the proposed method. Th
 
 Define the omission: an unvisited coordinate, an unseen subspace, or information delayed across a window. Construct random exploration, a residual correction channel, or a coordinated schedule that addresses it. Derive a conditional coverage or window property where possible.
 
-**Investigate:** what exploitation capacity is sacrificed, how long omitted information can wait, and whether the guarantee concerns coefficients, cumulative updates, or training. Example C allocates a fixed rank budget to coverage.
+**Investigate:** what exploitation capacity is sacrificed, how long omitted information can wait, and whether the guarantee concerns coefficients, cumulative updates, or training. Coverage can be coordinate-wise, direction-wise, or temporal; its conditional assumptions must be re-derived for each mechanism.
 
 ### C6 — Reallocate a fixed budget or change the proxy objective
 
@@ -174,254 +174,180 @@ $$
 
 **Construction:** give omitted information or an approximation error an explicit state and derive its recurrence. Classical EF stores a residual; other designs maintain and correct a gradient estimate. These are different state programs, not interchangeable names [P3, P4].
 
-**Transferable operation:** decide what the state represents before choosing its update. Compressing differences, as in MARINA, and the broader state-dependent construction in 3PC offer neighboring design ideas [P5, P6]. Example A below is a separate teaching construction, not a restatement of one of these algorithms.
+**Transferable operation:** decide what the state represents before choosing its update. Compressing differences, as in MARINA, and the broader state-dependent construction in 3PC offer neighboring design ideas [P5, P6]. The constructions below demonstrate different routes rather than restating those established tracking algorithms.
 
-## 5. Worked constructions
+## 5. Worked constructions across three different routes
 
-**Status of Examples A–C:** constructed teaching candidates. Their displayed algebra is conditional on the stated definitions. They are not executed experiments, established improvements, or claims of literature novelty. Use their construction operations to generate other candidates.
+**Status of Examples A–C:** these are *constructed teaching candidates*, not claims of literature novelty, executed results, or proven training improvements. Each example starts from a different edit point: **quantization changes the representation and bit allocation**, **sparsification changes who decides a shared support**, and **temporal communication changes when workers synchronize**. Low-rank examples remain in Section 4 and `low_rank.md`; hybrids are constructed by combining operations only after specifying their interactions (see `hybrid.md`).
 
-In the matrix examples, \(H_i\in\mathbb R^{m\times n}\); \(\|\cdot\|_F\) denotes the Frobenius norm.
+The examples use weights \(w_i\geq0\) with \(\sum_iw_i=1\); where an ordinary gradient average is intended, the weighted aggregate is \(\bar H=\sum_iw_iH_i\). Do not infer an AllReduce-compatible encoding from an abstract codec.
 
-### Example A — Shared prediction and innovation compression
+### Example A — Quantization: separate outliers from low-bit bulk values
 
-#### A1. Desired property and construction
+#### A1. Desired property and obstacle
 
-Suppose part of the communicated input is predictable from a common historical state. Can the receiver reconstruct that part while the message describes only a correction?
+Suppose a small number of unusually large coordinates determines a per-block quantizer's dynamic range. The bulk coordinates then receive a coarse grid even if their magnitudes are small. The construction goal is **lower rounding variance under a fixed real message budget**, not merely a lower nominal bitwidth.
 
-For one synchronization event, let
-
-$$
-H_{i,t}=g_{i,t}+e_{i,t},
-\qquad
-v_{i,t}=H_{i,t}-p_t,
-$$
-
-where \(p_t\) is identical on every worker. Define a decoded innovation \(q_{i,t}=C_{i,t}(v_{i,t})\), and
+For a local block \(h_i\in\mathbb R^d\), a uniform \(b\)-bit stochastic quantizer using the range \([-M_i,M_i]\) has \(L=2^b\) evenly spaced levels and step
 
 $$
-c_{i,t}=p_t+q_{i,t},\qquad
-c_t=p_t+\sum_i w_iq_{i,t},
+\Delta_i=\frac{2M_i}{L-1}.
 $$
 
-$$
-e_{i,t+1}=H_{i,t}-c_{i,t},\qquad
-p_{t+1}=c_t.
-$$
-
-For a fresh start, initialize \(p_0=0\) and \(e_{i,0}=0\); a switch from another method requires an explicit state conversion. Every worker applies its defined optimizer to the same \(c_t\). The predictor is the reconstructed communication object, not the optimizer's parameter update.
-
-#### A2. Online protocol
-
-The codec must implement the weighted sum of decoded innovations. A generic nonlinear codec cannot be assumed to support an ordinary AllReduce over its codes.
-
-A concrete special case uses a common column-orthonormal basis \(P_t\in\mathbb R^{m\times r}\), with \(P_t^\top P_t=I_r\):
+For a scalar between adjacent levels \(a\) and \(a+\Delta_i\), round to the upper level with probability \((x-a)/\Delta_i\), otherwise to the lower level. Conditional on the fixed input and the computed range, the decoded scalar \(Q(x)\) obeys
 
 $$
-q_{i,t}=P_t a_{i,t},\qquad
-a_{i,t}=P_t^\top(H_{i,t}-p_t).
+\mathbb E[Q(x)\mid x,M_i]=x,\qquad
+\mathbb E[(Q(x)-x)^2\mid x,M_i]\leq \frac{\Delta_i^2}{4}.
 $$
 
-Reduce the coefficients \(a_{i,t}\), reconstruct \(c_t=p_t+P_t\bar a_t\), and compute each residual using the local coefficients. A local residual must not accidentally use another worker's or the globally averaged coefficients.
+These formulas assume a representable finite range, correct random rounding, and no clipping. An actual implementation may introduce cast or packing error. If \(M_i=0\), encode the all-zero block as a special case.
 
-Here the rank-r correction has the usual coefficient shape. The reconstructed output can have rank greater than r because it also includes the predictor. A rank-r oracle for the complete output is therefore not the matched representation comparator.
+#### A2. Relax one representation restriction
 
-#### A3. What follows, and what remains a hypothesis
-
-The bookkeeping identity is
+Instead of forcing all values to use one low-bit grid, choose a set of \(k\) exceptional coordinates \(T_i\) (for example, the \(k\) largest absolute values of **the actual compressor input**). Encode those entries with a declared high-precision format, and quantize only the remaining entries with a new range
 
 $$
-c_{i,t}-g_{i,t}=e_{i,t}-e_{i,t+1}.
+M_i'=\max_{j\notin T_i}|h_{i,j}|,\qquad
+\Delta_i'=\frac{2M_i'}{2^b-1}.
 $$
 
-This follows by substitution. It does not establish that the residual is bounded or that the predictor improves training. If the innovation compressor is contractive, its direct error bound concerns \(\|H_{i,t}-p_t\|\), so predictor mismatch enters the residual analysis.
-
-The construction hypothesis is that the innovation is easier to encode under the real budget. Local heterogeneity or a rapidly changing target can make that hypothesis false.
-
-**A stability stress case:** a contractive component is insufficient to certify the joint state program. For one worker and the scalar compressor \(C(z)=\tfrac32z\), the compression error satisfies \(|C(z)-z|^2=\tfrac14|z|^2\). Once the input gradient becomes zero, the proposed recurrence is
+Take high-precision exception entries to be exact in the *mathematical idealization*; if the implementation transmits FP16/BF16 or another rounded format, its error must be measured separately. Conditional on \(h_i,T_i\), the bulk's expected squared reconstruction error satisfies
 
 $$
-\begin{pmatrix}e_{t+1}\\p_{t+1}\end{pmatrix}
-=
-\begin{pmatrix}-1/2&1/2\\3/2&-1/2\end{pmatrix}
-\begin{pmatrix}e_t\\p_t\end{pmatrix}.
+\mathbb E\|Q_{T_i}(h_i)-h_i\|_2^2
+\leq\frac{d-k}{4}(\Delta_i')^2
 $$
 
-Its eigenvalues are \((-1\pm\sqrt3)/2\); one has magnitude greater than one. Thus state excited by a preceding nonzero gradient can grow even with this contractive compressor. This is a constructed counterexample, not evidence that all practical innovation codecs fail. It identifies a repair question: which predictor update, correction, or forgetting rule controls the coupled state?
+when exceptions are transmitted exactly. This bound exposes the possible benefit of narrowing the bulk range. It **does not** prove that this particular mixed codec beats a different quantizer under equal bytes, or that its compression noise improves training.
 
-#### A4. A degeneracy that the candidate must pass
+A useful extension is to choose \(T_i\) based on **expected reduction in actual bulk distortion per extra exception bit**, not solely magnitude. That extension requires a specific estimator and cost model.
 
-For a fixed linear compressor \(A\),
+#### A3. Make the message and merge legal
 
-$$
-p+A(H-p)=AH+(I-A)p.
-$$
+One straightforward executable protocol is:
 
-If \(A\) is a projection and \(p\) lies in its range, the proposed change exactly reduces to \(AH\). A fixed shared projection with \(p_0=0\) and the predictor update above stays in this degenerate case.
+1. At the same communication event, each worker selects \(T_i\), computes \(M_i'\), and quantizes the \(d-k\) bulk coordinates with fresh local random bits.
+2. Pack the low-bit bulk codes in a deterministic order that skips the transmitted exception indices. Send the scale/range, exception indices, and exception values as metadata/payload.
+3. **AllGather the encoded messages**; every worker decodes every message and forms \(\sum_iw_i\hat h_i\). A backend that only supports integer AllReduce is *not* automatically compatible with per-worker scales, variable exception supports, or bit-packed codes.
+4. If using EF, write the next residual from the **actual local decoded reconstruction**, using the recurrence defined by the algorithm. Do not substitute the globally aggregated reconstruction.
 
-With a changing projection, the predictor can contribute outside the current range. That creates a real behavioral difference, but can also retain stale directions. A different name or extra state is not evidence of a different useful mechanism.
-
-#### A5. Costs, boundary events, and first discriminator
-
-- Account for the dense predictor state, additional memory traffic, and checkpoint state. Reusing a buffer requires a valid lifetime.
-- Specify predictor and residual transitions on dense refresh, skipped updates, and any outer synchronization.
-- First check for algebraic degeneracy. Then compare real innovations and absolute inputs under the same state and wire budget.
-- Separate gains from easier innovations from gains due to additional historical representation. Either may be useful, but attribute the mechanism and charge its state costs. If neither helps under the intended constraint, revise the predictor or stop this branch.
-
-**Reusable lesson:** change the object using shared information, then test whether the resulting state program changes behavior usefully and whether its correction is easier to communicate.
-
-### Example B — Relax column selection through a small basis rotation
-
-#### B1. Identify the restriction
-
-Let \(U\in\mathbb R^{m\times m}\) be a full common orthonormal basis. Selecting r columns does not exhaust all r-dimensional subspaces: the full span is available, but the permitted choices are restricted to coordinate subspaces.
-
-This motivates a different design variable: allow a few existing directions to combine while keeping the final rank fixed.
-
-Consider an ordinary compression step with \(1\leq r<m\). Choose a common pair \(J=(a,b)\), where a is selected and b is unselected. Keep the other r-1 selected columns fixed. Pair selection must use information available to every worker; choosing a pair near a score boundary is only a heuristic.
-
-#### B2. Solve a two-dimensional oracle problem
-
-For the fixed global input \(\bar H=\sum_i w_iH_i\), define
+An idealized per-worker payload estimate (excluding alignment, headers, and framing) is
 
 $$
-A=U_J^\top\bar H=
-\begin{pmatrix}x^\top\\y^\top\end{pmatrix},
-\qquad
-K=AA^\top=
-\begin{pmatrix}
-\|x\|^2&\langle x,y\rangle\\
-\langle x,y\rangle&\|y\|^2
-\end{pmatrix}.
+B_i\approx b(d-k)+k\,b_{\mathrm{exc}}+k\lceil\log_2 d\rceil+b_{\mathrm{scale}}\quad\text{bits}.
 $$
 
-Selecting one original column retains at most \(\max(K_{11},K_{22})\) of this pair's energy. Allowing a unit combination \(u'=U_Jv\) retains \(v^\top Kv\). Its optimum is
+The cost of supporting variable exception counts, index coding, packing, and the **collective topology** must be added. AllGather can scale differently from a compressed AllReduce as worker count grows. Compare against the actual baseline's *network bytes and critical path*, not only \(B_i\).
+
+An alternative with shared scales/supports may permit another merge rule, but obtaining that shared information requires its own protocol and usually additional communication.
+
+#### A4. First discriminator, failure, and repair
+
+- **Oracle question:** on real saved compressor inputs, how much does \(M_i'\) decrease, and how much rounding error is removed by the exact-exception idealization?
+- **Equal-budget question:** compare reconstructed MSE, conditional bias, realized message bytes, and actual aggregate error against a tuned baseline at the same wire budget. Repeat rounding RNG on *fixed* inputs.
+- **Failure:** the exception indices and high-precision values consume more bits than they save, or different worker supports make AllGather expensive.
+- **Possible repairs:** share support through a genuinely shared statistic, choose exceptions per larger block, or abandon exception coding when the measured outlier structure is weak. Each repair changes the cost and possibly the estimator's target.
+
+**Reusable construction operation:** identify where a representation's shared precision resource is wasted; separate hard-to-represent values; derive both the distortion bound and the actual encoded/merged message.
+
+### Example B — Sparsification: nominate locally, choose support globally
+
+#### B1. Desired property and obstacle
+
+Suppose each worker performs local Top-\(k\) sparsification, but the desired quality target concerns the **global mean** \(\bar h=\sum_i w_ih_i\), not each \(h_i\). Large local entries can cancel across workers. Separate local Top-\(k\) supports need not include coordinates that are important in \(\bar h\).
+
+The offline fixed-\(k\) global L2 oracle keeps \(\operatorname{TopK}(|\bar h|)\), but computing \(\bar h\) densely would defeat communication sparsification. Ask instead: *which small candidate set is sufficient to approximate that oracle?*
+
+#### B2. Construct a two-stage decision
+
+For worker \(i\), form a local nomination set \(S_i\) of size \(q\) from the actual input. Make the common candidate set
 
 $$
-\lambda_{\max}(K)
-=\frac{K_{11}+K_{22}
-+\sqrt{(K_{11}-K_{22})^2+4K_{12}^2}}{2}
-\geq\max(K_{11},K_{22})\geq K_{11}.
+T=\bigcup_{i=1}^N S_i.
 $$
 
-If \(x=y\neq0\), the direction \((u_a+u_b)/\sqrt2\) retains all the pair's energy, while either original column retains half. This is a constructed fixed-input example, not a claim about real training gradients.
+Use **two different kinds of message**:
 
-The off-diagonal term identifies a potentially useful structure: correlation between projection rows. Marginal direction energies alone do not reveal it.
+1. **Support stage:** AllGather nominated indices \(S_i\); sort and deduplicate to construct identical \(T\) on every worker.
+2. **Value stage:** every worker extracts its **actual input values** \(h_i[T]\), including coordinates it did not nominate, and AllReduces the weighted values to obtain \(\bar h[T]\).
+3. **Selection stage:** every worker deterministically selects \(K=\operatorname{TopK}_k(|\bar h[T]|)\) with a defined tie rule, and reconstructs \(\hat h_j=\bar h_j\) on \(K\) and zero elsewhere.
 
-#### B3. Replace unavailable global information
+A complete and identical candidate set is essential before the second collective. Only reducing values contributed by nominating workers would give biased global values for \(T\), even before Top-\(k\) selection.
 
-Treat exact K as an oracle for the low-message candidate: obtaining it online requires an explicitly costed protocol, such as reducing both full projection rows. To estimate it with a smaller message, draw a new common
-
-$$
-R\in\mathbb R^{n\times s},\qquad
-R_{jk}\sim\mathcal N(0,1/s).
-$$
-
-Use fresh randomness independent of the input and pair-selection randomness, conditional on the already selected pair and state. Every worker computes
+The result is exactly the best \(k\)-sparse approximation **restricted to \(T\)**:
 
 $$
-Z_i=U_J^\top H_iR.
+\hat h=\arg\min_{\operatorname{supp}(z)\subseteq T,\,\|z\|_0\leq k}
+\|\bar h-z\|_2^2.
 $$
 
-AllReduce the weighted sketches:
+If \(T\) contains the global oracle support, it matches the full global Top-\(k\) oracle; otherwise it does not. Local nomination has no general guarantee of containing that support. For example, local cancellation can cause large nominated coordinates to be irrelevant globally, while smaller but aligned coordinates fail to be nominated.
+
+#### B3. Make the cost and EF semantics explicit
+
+An idealized *logical* support payload consists of up to \(Nq\) indices before deduplication. The value stage communicates \(|T|\) dense values per worker, not merely \(k\), with \(|T|\leq\min(d,Nq)\). The final reconstructed result has support at most \(k\), but **final sparsity is not the wire budget**. Include index format, deduplication, collective latency, and actual AllReduce/AllGather wire traffic.
+
+This design applies one **global** nonlinear selection after aggregating values. It is not equivalent to applying independent local sparse compressors and averaging their outputs. If EF is added, the location of the single global decision changes the meaning of local residual writeback; derive an actual state recurrence rather than blindly applying \(e_{i,t+1}=h_{i,t}-\hat h\). In particular, there may be no locally decoded sparse message corresponding to the global selector unless the algorithm explicitly defines one.
+
+#### B4. First discriminator, failure, and repair
+
+- **Oracle question:** how much true global Top-\(k\) energy lies in the nomination union \(T\) on real synchronized multi-worker inputs?
+- **Protocol question:** does the resulting global sparse reconstruction improve matched global error over the current method at comparable true communication and collective costs?
+- **Failure:** \(T\) becomes large, the second collective approaches dense communication, or useful global coordinates rarely appear in any local nomination.
+- **Possible repairs:** replace magnitude nomination with a cheaper global candidate estimator, coordinate a shared random exploration subset, or allocate a fixed candidate budget across workers. Changing how \(T\) is formed requires new approximation analysis.
+
+**Reusable construction operation:** move a nonlinear selection decision to the place where its target statistic is available, using a cheap preliminary stage and a more accurate restricted second stage.
+
+### Example C — Temporal communication: synchronize when shared-anchor drift is large
+
+#### C1. Desired property and unavailable information
+
+For Local SGD or DiLoCo-style windows, reducing synchronization frequency saves communication but can let local models diverge. A tempting trigger is worker dispersion
 
 $$
-Z=\sum_i w_iZ_i=AR,\qquad
-\hat K=ZZ^\top.
+D_t=\sum_iw_i\|x_{i,t}-\bar x_t\|_2^2,
+\qquad \bar x_t=\sum_iw_ix_{i,t}.
 $$
 
-Since \(\mathbb E[RR^\top]=I\),
+But \(D_t\) is not available locally without communication. Triggering a collective independently when one worker crosses a local threshold would also lead to inconsistent collective order and possible deadlock.
+
+Instead, use a **common anchor** \(a\) from the last synchronization and a fixed heartbeat schedule, so every worker knows when to communicate.
+
+#### C2. Derive a cheap common decision statistic
+
+At every \(J\) completed local optimizer updates (as defined by the algorithm), worker \(i\) computes
 
 $$
-\mathbb E[\hat K\mid H_1,\ldots,H_N,U,J]=K.
+r_i=\|x_i-a\|_2.
 $$
 
-Two protocol decisions are essential:
-
-1. Reduce \(Z_i\) before forming the Gram matrix. Averaging local Gram matrices estimates a different target.
-2. Use the same R for both directions. Independent direction-specific random vectors do not supply the required cross-correlation through their product.
-
-Reusing the randomness that selected J requires a new selection-dependent analysis; the displayed conditional expectation does not justify it.
-
-#### B4. An executable ordinary-step candidate
-
-1. Construct J using the existing common selection result.
-2. Obtain \(\hat K\) with the additional sketch reduction.
-3. Choose a unit leading eigenvector v of \(\hat K\), with a specified tie rule.
-4. Form \(u'=U_Jv\) and let P contain u' plus the unchanged r-1 columns.
-5. Compute local \(a_i=P^\top H_i\), reduce \(\bar a=\sum_iw_ia_i\), and reconstruct \(c=P\bar a\).
-6. If using ambient-space local EF with \(H_i=g_i+e_i\), write \(e_i'=H_i-Pa_i\). Apply the specified full-space optimizer to c.
-
-Preserve the local \(a_i\), or finish the local residual update, before an in-place reduction overwrites the coefficient buffer.
-
-The first version uses a temporary P and leaves the stored U unchanged. Since u' is a unit vector in the pair's plane, it is orthogonal to the unchanged columns. A later variant may persist a full two-column rotation, but that introduces a separate cross-step state change.
-
-Keep the baseline's explicitly defined refresh branch for this minimal candidate. Low-dimensional optimizer states would require their own coordinate-transport rule and are outside this example.
-
-All workers must use the same P. Use consistent eigenvector/tie handling or a designated worker and a small broadcast when local computations do not reliably agree.
-
-#### B5. Cost and first discriminator
-
-One pair adds a 2-by-s sketch reduction, local projection work, and a dependent decision before coefficient communication. The 2s elements describe the collective input payload, not total network traffic; wire bytes depend on dtype, worker count, and the collective implementation. Any required broadcast also counts. Final rank-r coefficients retain their shape, but total communication and latency are not automatically unchanged.
-
-First distinguish two exact gains:
+AllReduce a scalar maximum to obtain \(R=\max_i r_i\), then all workers use the same decision. Weighted variance decomposition gives
 
 $$
-\Delta_{\mathrm{baseline}}=\lambda_{\max}(K)-K_{11},\qquad
-\Delta_{\mathrm{mixing}}=\lambda_{\max}(K)-\max(K_{11},K_{22}).
+D=\sum_i w_i\|x_i-a\|_2^2-\|\bar x-a\|_2^2
+\leq\sum_iw_i\|x_i-a\|_2^2\leq R^2.
 $$
 
-The first measures improvement over the currently selected column a; the second isolates the benefit of mixing over choosing the better of a and b. Measure these on realistically selectable pairs from saved inputs. If the mixing gain is negligible, better column selection may suffice. If it is substantial, test whether the small sketch preserves it.
+Thus at the **heartbeat event only**, \(R\leq\tau\) certifies \(D\leq\tau^2\) in this parameter-space metric. The inequality does not certify training loss, optimizer stability, or drift between heartbeats. It may be loose: identical movement by all workers gives \(D=0\) while \(R\) is large.
 
-An unbiased \(\hat K\) does not guarantee that its eigenvector increases true retained energy. If the approximation loses the oracle benefit, change the estimator or reject the branch before expensive training.
+#### C3. An executable synchronization protocol
 
-**Reusable lesson:** relax a discrete representation restriction through a small continuous subproblem, then estimate only the information needed to solve that subproblem.
+1. Begin with an agreed anchor \(a\) and fully specified local optimizer/outer state. All workers perform the same number \(J\) of inner updates before each heartbeat; specify behavior when updates are skipped or microbatch accumulation is used.
+2. At the heartbeat, all workers AllReduce the scalar maximum \(R\). They make the *same* decision: synchronize if \(R>\tau\), or if the maximum window length \(H_{\max}\) has been reached; otherwise continue another \(J\) updates.
+3. On synchronization, compute the prescribed weighted model average (or **the separately defined outer-delta/outer-optimizer transition**, if using a DiLoCo-style method). Only then reset the common anchor and window counter according to that method's semantics.
+4. Keep data/token and scheduler accounting explicit. Resume must restore anchor, heartbeat phase, counters, inner state, and any outer state. Any worker or numerical exception must preserve collective order.
 
-### Example C — Derive a coverage mechanism from a desired bound
+The scheme pays a scalar collective every \(J\) inner updates plus occasional full synchronization. The scalar heartbeat may dominate in a latency-sensitive network; counting only full synchronization messages would overstate savings. Setting \(H_{\max}\) to a multiple of \(J\) avoids an off-grid final event; other choices need a specified boundary rule.
 
-#### C1. Desired property
+#### C4. First discriminator, failure, and repair
 
-Suppose a candidate should retain some information regardless of errors in its greedy scoring. This is a design target, not a claim that original GreedyLoRE lacks a contraction result; that paper already analyzes its own mechanism [P2].
+- **Oracle question:** on short real windows, how does the observable bound \(R^2\) track actual model dispersion \(D\), and how often would it trigger?
+- **Quality/cost question:** compare completed-window local/outer states, fixed-token quality, total communication, heartbeat latency, and eventual time-to-target with a matched fixed-window baseline.
+- **Failure:** common-mode movement causes excessive synchronizations; divergence grows sharply between heartbeats; or heartbeat latency cancels the expected benefit.
+- **Possible repairs:** use a tighter shared statistic (with its extra messages), change the heartbeat cadence, or construct a predictive bound from locally maintained state. A new trigger needs a new validity argument; changing \(J\) alone is a parameter change, not a new mechanism.
 
-Assume a full common orthonormal basis with m columns and a total rank budget r. Choose \(k\geq0\) greedy columns and \(s\geq1\) exploration columns, with \(r=k+s\leq m\). For a mixed example use \(0<k<r\).
-
-#### C2. Construct the selection rule
-
-Let G be any common set of k columns. Independently sample a size-s subset S uniformly without replacement from the remaining m-k columns, using shared fresh randomness. Let \(P_G=U_G\) and \(P=[U_G,U_S]\). Define
-
-$$
-C(H)=PP^\top H.
-$$
-
-Keep the selected coefficients unscaled: this is an orthogonal projection, not an inverse-probability-scaled unbiased estimator.
-
-Condition on H, U, and G before the exploration draw. Each remaining basis direction is included with probability \(s/(m-k)\). Orthogonality gives
-
-$$
-\mathbb E_S\|H-C(H)\|_F^2
-=\left(1-\frac{s}{m-k}\right)
-\|H-P_GP_G^\top H\|_F^2
-\leq\left(1-\frac{s}{m-k}\right)\|H\|_F^2.
-$$
-
-This is a conditional compressor property independent of the quality of the greedy scores. It relies on the complete basis and the specified sampling law. A thin basis cannot provide the same whole-space conclusion. Reusing an exploration subset across events can couple it to the current input; the displayed conditional result then needs a new argument.
-
-#### C3. Online protocol and trade-off
-
-All workers derive the same G and S, send \(P^\top H_i\), and reconstruct \(P\sum_iw_iP^\top H_i\). The final coefficient payload still has r directions. Include the cost of obtaining G, shared randomness, selection, and basis state.
-
-The exploration slots replace some greedy slots. Consequently, the rule may retain less instantaneous energy than pure greedy selection at the same total r. Its appeal is the stated robustness property; whether that property improves the actual task remains a research question.
-
-For r=1 there is no mixed allocation with both k and s positive. Randomly switching between rank-one greedy and exploratory steps is a different construction requiring its own derivation.
-
-With a fixed basis and fresh draws, a particular direction not already selected by G has a per-step exploration opportunity. If the basis changes, a column index no longer identifies a persistent physical direction; do not turn this into an unqualified coordinate-age guarantee.
-
-#### C4. First discriminator and further construction
-
-Compare the fixed-budget loss of greedy energy with coverage of directions the intended application repeatedly omits. If omitted directions do not matter to updates, the guarantee may not justify the trade-off.
-
-Potential next constructions include residual-informed coverage or coordinated coverage over windows. They change the sampling law or dependence structure and therefore require new bounds; the displayed result cannot simply be reused.
-
-**Reusable lesson:** start from a desired property, identify a mechanism that supplies it, and allocate resources to that mechanism while exposing what it displaces.
+**Reusable construction operation:** start from an unavailable global condition, derive a cheap common sufficient signal, and make both the trigger and its communication schedule consistent across workers.
 
 ## 6. Convert failures into repair opportunities
 
@@ -430,10 +356,10 @@ Preserve the failed assumption and what still works. Distinguish a constructed c
 | Failure or limiting case | What it reveals | Possible structural repairs |
 | --- | --- | --- |
 | Independent factor averages reconstruct the wrong object | Missing common coordinates or an illegal merge | Share a factor, align coordinates, or aggregate a different intermediate statistic |
-| Predictor construction reduces algebraically to the baseline | New state does not change observable behavior | Change the represented quantity or abandon the redundant state |
-| Full-basis column selection leaves a large oracle gap | Discrete subspace choices are restrictive | Small rotations, different basis maintenance, or another representation |
-| Exact oracle helps but its sketch does not | The useful decision information is not recovered | Change sketch coupling, estimation target, or decision rule |
-| A correction works locally but fails after aggregation | Local and global objectives differ | Reconstruct the global target statistic and redesign its protocol |
+| A predictor construction reduces algebraically to its baseline | New state does not change observable behavior | Change the represented quantity or abandon the redundant state |
+| Outlier exceptions cost more than they save | Representation error improves but on-wire budget does not | Co-design group size, exception selection, coding and legal aggregation |
+| Local sparse nominations omit useful global support | Local selection does not match the global decision | Change nomination statistic, share candidates, or introduce exploration |
+| Local synchronization triggers disagree across ranks | The global control decision is not common | Use a fixed heartbeat/collective and common trigger |
 | Added state helps a proxy but not updates | The proxy or stored information may be misaligned | Derive a different objective or reconsider what the state tracks |
 
 Record a failed attempt as:
@@ -504,7 +430,7 @@ Use results to revise the mechanism, change its supporting hypothesis, or stop t
 
 ## 8. Sources and further construction examples
 
-The family references remain the broader literature index. These sources are selected for the construction operations they illustrate.
+The family references remain the broader literature index. The citations below are precedents for construction *operations*, not originality claims for the Section 5 teaching candidates. See also `quantization.md`, `sparsification.md`, and `temporal.md` for route-specific closest prior art.
 
 - **[P1] [PowerSGD, arXiv v3](https://arxiv.org/html/1905.13727v3)** — Algorithm 1 and Appendix A.3: shared intermediate state, linear aggregation, low-rank reconstruction.
 - **[P2] [GreedyLoRE, arXiv v4](https://arxiv.org/html/2507.08784v4)** — Sections V-B/V-C and Algorithms 2/3: basis maintenance, global direction scoring, random statistics, and phase-dependent state. Check the exact implementation and theorem rather than importing a generic guarantee.
