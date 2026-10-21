@@ -19,7 +19,7 @@ Start navigation at shared `notes/tree.md` and each Node's `notes/nodes/Nxxx/REA
 
 Use the mode assigned by the trusted host if supplied:
 
-- **REFINE**: prioritize a supported gap, contradictory result, or unresolved question in current evidence. State the specific observation and a falsifiable prediction about what your code change would alter.
+- **REFINE**: prioritize refining an algorithmic mechanism in response to a supported gap, contradictory result, or unresolved question in current evidence. State the specific observation and a falsifiable prediction about what your code change would alter.
 - **EXPLORE**: prioritize a substantively different compression/synchronization mechanism or a testable interaction, without requiring an existing gap. Check that the protected formal evaluation contract actually supports that algorithm's training semantics; otherwise record the incompatibility and choose an eligible alternative.
 - If no trusted mode is supplied, use REFINE. Do not draw your own random mode or add unsupported fields to `autoresearch node initialize`.
 - In `selection_rationale`, identify the chosen mode, relevant evidence, closest related method, and why this question is worth its cost.
@@ -29,11 +29,13 @@ Use the mode assigned by the trusted host if supplied:
 
 ### 1. Select a Parent and initialize
 
-- Before initialization, compare your proposed method with `research_summary.md` when available and the Specs of in-progress Nodes. Avoid duplicating existing hypotheses or methods; sharing a Parent is allowed. When extending existing work, state the unresolved question and substantive difference in `selection_rationale`.
-- Autonomously select a completed Parent with valid Research Analysis and completed or explicitly skipped Engineering, balancing expected improvement or information gain, evidence, exploration coverage and how extensively each Parent has already been explored; it need not be the fastest Node.
-- In a clean Worktree, run `autoresearch node initialize` with the Parent, hypothesis, selection rationale (1–3 sentences), change, risk and falsification criteria. Use only the current six initialization fields accepted by the host.
-- The command fixes the Spec and Git base; use the system-assigned Node ID.
-- State the algorithm's actual communication object/timing, persistent state, optimizer/merge behavior and the predicted observable change.
+1. **Select a Parent.** Autonomously choose a completed Parent with valid Research Analysis and completed or explicitly skipped Engineering. Balance expected improvement or information gain, evidence, exploration coverage and how extensively each Parent has already been explored; it need not be the fastest Node.
+2. **Develop the hypothesis.**
+   - Draw on the Parent's Analysis, relevant `references/` materials and prior Research or Engineering Analyses, including their findings and unresolved questions.
+   - Aim for a substantive algorithmic change. Prefer using rank, sketch width, refresh interval or similar adjustments to evaluate and refine that change, rather than making parameter tuning alone the Node's main hypothesis.
+   - State the algorithm's actual communication object/timing, persistent state, optimizer/merge behavior and the predicted observable change.
+3. **Check overlap.** Compare the proposed method with `research_summary.md` when available and the Specs of in-progress Nodes. Avoid duplicating existing hypotheses or methods; sharing a Parent is allowed. When extending existing work, state the unresolved question and substantive difference in `selection_rationale`.
+4. **Initialize.** In a clean Worktree, run `autoresearch node initialize` with the Parent, hypothesis, selection rationale (1–3 sentences), change, risk and falsification criteria. Use only the current six initialization fields accepted by the host and the system-assigned Node ID. The command fixes the Spec and Git base.
 
 ### 2. Implement and check
 
