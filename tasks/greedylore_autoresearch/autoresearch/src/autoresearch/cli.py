@@ -108,6 +108,8 @@ def _initialize_node(args: argparse.Namespace) -> dict:
             "delta": args.delta,
             "risk": args.risk,
             "falsification_criteria": args.falsification_criteria,
+            **({"research_intent": json.loads(Path(args.intent_file).read_text())}
+               if args.intent_file else {}),
         },
     )
     _checkout_base(result["base_commit"])
@@ -182,6 +184,7 @@ def _parser() -> argparse.ArgumentParser:
     initialize.add_argument("--delta", required=True)
     initialize.add_argument("--risk", required=True)
     initialize.add_argument("--falsification-criteria", required=True)
+    initialize.add_argument("--intent-file", help="JSON research question, predictions and handover/engineering response")
     complete = node_commands.add_parser("complete", help="complete this Node assignment")
     complete.add_argument("--mode", choices=("research", "engineering"), required=True)
     node_commands.add_parser("cancel", help="cancel an unstarted assignment")

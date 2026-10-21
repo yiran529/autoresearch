@@ -37,6 +37,17 @@ def render_analysis(document: dict, filename: str, *, legacy_navigation: bool = 
         lines.extend(['', f'## {key.title()}', ''])
         for item in items:
             lines.append('- ' + item.replace('\n', '\n  '))
+    handover = document.get('handover')
+    if isinstance(handover, dict):
+        lines.extend(['', '## Research handover', '',
+                      f"- Mechanism: {handover['mechanism_verdict']}",
+                      f"- Practical outcome: {handover['practical_verdict']}"])
+        for item in handover['new_information']:
+            lines.append('- New information: ' + item.replace('\n', '\n  '))
+        for question in handover['follow_up_questions']:
+            lines.append(f"- {question['id']}: {question['question']} "
+                         f"Importance: {question['importance']} "
+                         f"Discriminator: {question['discriminator']}".replace('\n', '\n  '))
     if match[1] == 'research' and legacy_navigation:
         root = f'../../../diagnostics/{node}-research-v{match[2]}'
         lines.extend(['', '## Evidence navigation', '',

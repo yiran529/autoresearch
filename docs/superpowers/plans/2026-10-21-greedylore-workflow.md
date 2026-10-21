@@ -53,13 +53,13 @@ template; seed timing telemetry plus source manifest; timing tests.
 Files: autoresearch nodes/state/analysis/validation/navigation plus new handover
 module/schema; CLI; focused lifecycle and evidence tests.
 
-- [ ] Add failing tests for REFINE problem links, independent EXPLORE, frozen
+- [x] Add failing tests for REFINE problem links, independent EXPLORE, frozen
   expectations, independent mechanism/practical verdicts and two follow-up limit.
-- [ ] Add optional backward-compatible research intent, required when parent has
+- [x] Add optional backward-compatible research intent, required when parent has
   a new handover; freeze parent handover and engineering references in the Spec.
-- [ ] Publish host-derived handover from sealed Analysis and engineering refs;
+- [x] Publish host-derived handover from sealed Analysis and engineering refs;
   support retries, historical reports, safe paths and deterministic regeneration.
-- [ ] Verify lifecycle, legacy recovery, and evidence bindings; commit.
+- [x] Verify lifecycle, legacy recovery, and evidence bindings; commit.
 
 ## Part 4 — Concise prompts and process simulation
 

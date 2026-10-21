@@ -86,11 +86,31 @@ def _common(document: dict[str, Any], evidence: Any) -> None:
 
 
 def validate_analysis(document: dict[str, Any], evidence: Any) -> dict[str, Any]:
-    if set(document) != _ANALYSIS_FIELDS:
+    if set(document) not in (_ANALYSIS_FIELDS, _ANALYSIS_FIELDS | {"handover"}):
         raise ArtifactValidationError("Analysis has an invalid schema")
     _common(document, evidence)
     if not isinstance(document["summary"], str) or not document["summary"].strip():
         raise ArtifactValidationError("summary must be non-empty text")
     _string_list(document["findings"], "findings")
     _string_list(document["limitations"], "limitations")
+    if "handover" in document:
+        from .handover import validate_body
+
+        if document["mode"] != "research":
+            raise ArtifactValidationError("structured handover belongs to Research Analysis")
+        try:
+            validate_body(document["handover"])
+        except ValueError as exc:
+            raise ArtifactValidationError(str(exc)) from exc
+        allowed = {"spec.md", "evaluation.md", *evidence.evidence_paths,
+                   *(record.path for record in evidence.evidence_records if record.status == "present")}
+        for ref in document["handover"]["evidence_refs"]:
+            if ref not in allowed:
+                raise ArtifactValidationError("handover evidence_ref is not in the frozen evidence")
+    if document["mode"] == "research":
+        import yaml
+
+        spec = yaml.safe_load(Path(evidence.spec_path).read_text())
+        if isinstance(spec, dict) and spec.get("research_intent") and "handover" not in document:
+            raise ArtifactValidationError("Research Analysis must answer the frozen research_intent in handover")
     return document

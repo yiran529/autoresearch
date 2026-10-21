@@ -81,6 +81,11 @@ You are an **independent Research Analyzer**, not a Researcher. Diagnose this fr
   - nonempty `summary`;
   - nonempty `findings` string array;
   - nonempty `limitations` string array.
+  - `handover`: a structured answer to the frozen Spec question (use the hypothesis for legacy Specs).
+- In `handover`, separate `mechanism_verdict` from `practical_verdict`: `solved`, `partially_solved`, `not_solved`, or `inconclusive`. A mechanism can work while quality or total cost fails.
+- Give persistent `evidence_refs` from the supplied evidence inventory (`spec.md` and `evaluation.md` are valid). Do not rewrite the original prediction after observing results.
+- Record only incremental `new_information`; an empty list is valid. Reuse sufficient historical evidence instead of repeating the same probe without a new discriminator.
+- Provide at most two `follow_up_questions`, each with a unique `Q1`/`Q2` ID, question, importance and smallest distinguishing experiment (`discriminator`). Do not invent a gap or prescribe a new algorithm.
 - Use concise evidence-bounded finding strings with tags `[OBSERVED]`, `[SUPPORTED]`, `[REFUTED]`, `[REPLICATION]`, `[INCONCLUSIVE]`, or `[NO_SUPPORTED_GAP]`; tags do not introduce new JSON keys.
 - Cite the selected Research SHA and relevant candidate SHAs, formal evidence paths and any real diagnostic IDs.
 - Supporting `diagnostics/.../attachments/...` files in the fixed evidence are agent-provided self-check materials, not host-verified executions. Cite their supplied evidence-relative paths and preserve this distinction. Never cite temporary `/tmp` files; use the managed diagnostic records for new supporting experiments, or report unavailable evidence as a limitation.

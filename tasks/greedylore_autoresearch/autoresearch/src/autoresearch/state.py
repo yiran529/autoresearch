@@ -187,8 +187,10 @@ class WorkflowStore:
         self._rebuild_tree_unlocked(state)
 
     def _rebuild_tree_unlocked(self, state: dict[str, Any]) -> None:
+        from .handover import publish_handovers
         from .navigation import node_relationship, rebuild_node_indexes
 
+        publish_handovers(self, state)
         rebuild_node_indexes(self, state)
         rows = ["# Research Tree", "", "Open a Node's index for its code SHAs, reports and persistent evidence.", "",
                 "| Node | Parent | Research mode | Research | Analysis | Engineering | Node status |",
@@ -553,10 +555,11 @@ class WorkflowStore:
     def initialize_research(
         self, agent_id: str, node_id: str, request: Mapping[str, Any]
     ) -> dict[str, Any]:
-        if not isinstance(request, Mapping) or set(request) != {
+        required = {
             "parent_node", "hypothesis", "selection_rationale",
             "delta", "risk", "falsification_criteria",
-        }:
+        }
+        if not isinstance(request, Mapping) or set(request) not in (required, required | {"research_intent"}):
             raise WorkflowError("Research initialization has invalid fields")
         with trusted_writes_lock(self.coral_dir):
             state = self._load_unlocked()
@@ -566,11 +569,28 @@ class WorkflowStore:
             research = record["research"]
             if research["status"] not in {"reserved", "active"}:
                 raise WorkflowError("Research reservation is not active")
+            from .handover import _safe_file
+
+            target = _safe_file(self.notes_root, f"nodes/{node_id}/spec.md")
+            if target.exists():
+                fixed = yaml.safe_load(target.read_text())
+                if (not isinstance(fixed, dict) or fixed.get("node_id") != node_id
+                        or any(fixed.get(key) != value for key, value in request.items())):
+                    raise WorkflowError("immutable Node Spec conflicts with reservation")
+                if research["status"] == "reserved":
+                    research.update(status="active", spec_ref=f"nodes/{node_id}/spec.md")
+                    self._save_unlocked(state)
+                return {"agent_id": agent_id, "node_id": node_id, "status": "active",
+                        "spec_ref": f"nodes/{node_id}/spec.md", "base_commit": fixed["base_commit"],
+                        "research_mode": research.get("research_mode", "REFINE")}
             parent_node = request["parent_node"]
             parent = state["nodes"].get(parent_node)
             if not isinstance(parent, dict) or not self._node_completed_unlocked(state, parent_node):
                 raise WorkflowError("selected Parent Node is not completed")
             parent_attempt = self._terminal_research_unlocked(parent_node)
+            from .handover import publish_handovers
+
+            publish_handovers(self, state)
             analysis_ref = self._validated_analysis_ref_unlocked(parent_node, "research")
             target = self.notes_root / "nodes" / node_id / "spec.md"
 
@@ -590,7 +610,9 @@ class WorkflowStore:
                 "parent_commit": parent_attempt.commit_hash,
                 "base_commit": parent_attempt.commit_hash,
                 "analysis_ref": analysis_ref,
-                "engineering_analysis_ref": None,
+                "engineering_analysis_ref": (
+                    self._validated_analysis_ref_unlocked(parent_node, "engineering")
+                    if parent.get("engineering_status") == "completed" else None),
                 "publish": publish,
             }
             # Do not rewrite an immutable pre-upgrade Spec just to add mode metadata.

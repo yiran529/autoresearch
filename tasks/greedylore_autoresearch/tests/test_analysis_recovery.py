@@ -641,6 +641,6 @@ def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, m
     assert command[command.index('--cd') + 1].endswith('/workspace/results')
     assert command[command.index('--add-dir') + 1].endswith('/workspace/experiments')
     schema = json.loads(Path(command[command.index('--output-schema') + 1]).read_text())
-    assert set(schema['required']) == {'summary', 'findings', 'limitations'}
+    assert set(schema['required']) == {'summary', 'findings', 'limitations', 'handover'}
     assert result.analysis_path.is_file()
     (tmp_path / 'controlled-analyzer-input.json').write_text(json.dumps(captured, indent=2))

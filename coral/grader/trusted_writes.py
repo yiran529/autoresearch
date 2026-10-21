@@ -514,6 +514,8 @@ class TrustedWriteService:
         binding: AgentBinding | None,
     ) -> dict[str, Any]:
         expected = _WORKFLOW_FIELDS[operation]
+        if operation == "initialize_research" and "research_intent" in payload:
+            expected = expected | {"research_intent"}
         if operation == "finish_assignment" and payload.get("mode") == "engineering" and "analysis" in payload:
             expected = expected | {"analysis"}
         if set(payload) != expected:

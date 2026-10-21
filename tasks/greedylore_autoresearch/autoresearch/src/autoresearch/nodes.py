@@ -83,6 +83,14 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
         if mode not in {"REFINE", "EXPLORE"}:
             raise NodeError("invalid host research mode")
         spec["research_mode"] = mode
+    from .handover import freeze_parent
+
+    intent = request.get("research_intent")
+    parent_handover = freeze_parent(notes_root, parent_node, intent, spec.get("research_mode", "REFINE"))
+    if intent is not None:
+        spec["research_intent"] = intent
+    if parent_handover is not None:
+        spec["parent_handover"] = parent_handover
     content = yaml.safe_dump(spec, sort_keys=False)
     publisher = evidence.get("publish")
     if publisher is not None:

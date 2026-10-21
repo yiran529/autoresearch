@@ -48,7 +48,7 @@ def rebuild_node_indexes(store, state: dict) -> None:
         selected_sha = record['research'].get('selected_sha')
         if selected_sha:
             lines.extend([f'Selected Research SHA: `{selected_sha}`', ''])
-        for name in ('spec.md', 'evaluation.md'):
+        for name in ('spec.md', 'evaluation.md', 'handover.json'):
             if (node / name).is_file():
                 lines.append(f'- [{name}]({name})')
         for mode in ('research', 'engineering'):

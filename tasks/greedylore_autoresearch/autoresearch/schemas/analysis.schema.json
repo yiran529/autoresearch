@@ -5,7 +5,8 @@
   "required": [
     "summary",
     "findings",
-    "limitations"
+    "limitations",
+    "handover"
   ],
   "properties": {
     "summary": {
@@ -27,6 +28,86 @@
         "minLength": 1
       },
       "minItems": 1
+    },
+    "handover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mechanism_verdict",
+        "practical_verdict",
+        "evidence_refs",
+        "new_information",
+        "follow_up_questions"
+      ],
+      "properties": {
+        "mechanism_verdict": {
+          "type": "string",
+          "enum": [
+            "solved",
+            "partially_solved",
+            "not_solved",
+            "inconclusive"
+          ]
+        },
+        "practical_verdict": {
+          "type": "string",
+          "enum": [
+            "solved",
+            "partially_solved",
+            "not_solved",
+            "inconclusive"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "new_information": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "follow_up_questions": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "question",
+              "importance",
+              "discriminator"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "Q1",
+                  "Q2"
+                ]
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1
+              },
+              "importance": {
+                "type": "string",
+                "minLength": 1
+              },
+              "discriminator": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
