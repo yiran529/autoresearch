@@ -66,10 +66,27 @@ module/schema; CLI; focused lifecycle and evidence tests.
 Files: researcher/engineer/workflow roles, Analyzer prompt/schema, templates,
 task README, simulation_support and workflow simulation assertions.
 
-- [ ] Strengthen mechanism-first research instructions and engineering pre-read;
+- [x] Strengthen mechanism-first research instructions and engineering pre-read;
   specify REFINE/EXPLORE intent, verdicts, information gain and advisory-only U.
-- [ ] Extend scripted agents to consume handovers and author linked hypotheses;
+- [x] Extend scripted agents to consume handovers and author linked hypotheses;
   exercise the real host pipeline with synthetic measurements.
-- [ ] Run normal/fault simulations, prompt-delivery audit, task and framework
+- [x] Run normal/fault simulations, prompt-delivery audit, task and framework
   regressions, lint, and independent code review; resolve material findings.
-- [ ] Commit and report hashes, verification coverage and remaining limits.
+- [x] Commit and report hashes, verification coverage and remaining limits.
+
+## Final verification (2026-10-21)
+
+- Task regression excluding process simulations: 501 passed, 2 skipped.
+- Process simulations: 5 passed; normal and fault runs exercise real CLI,
+  trusted submission, host transitions, prompt publication and frozen handovers.
+- Framework regression: 896 passed, 2 skipped (8 existing deprecation warnings).
+- Real CPU/Gloo refresh telemetry: 1 passed; existing seed timing unit tests:
+  14 passed. Focused lint and git diff whitespace checks passed.
+- Independent review findings resolved, including trusted intent ingress,
+  frozen legacy retries, canonical Analysis binding, and toolkit resource delivery.
+- Reviewable simulation artifacts:
+  `/home/wyr/coral-experiments/workflow-v2-validation-20261021/verified/`
+  (`normal/` and `faults/`: coverage.md, report.json, handover_audit.json).
+- Measurements and agent decisions in process simulations are scripted. These
+  checks establish workflow behavior, not live model compliance or scientific
+  GPU performance. The paused historical experiment was not resumed or rewritten.

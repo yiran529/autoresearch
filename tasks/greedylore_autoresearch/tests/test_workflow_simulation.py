@@ -83,7 +83,65 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
         assert report["infra_retry_same_sha_verified"] is True
     _check_delivered_prompts(root, scenario)
     _check_artifact_handoff(root, report, timeline)
+    _check_problem_handover(root, report)
     print(f"\nSimulation report: {root / 'report.json'}")
+
+
+def _check_problem_handover(root, report):
+    import yaml
+
+    public = root / "run/.coral/public"
+    notes = public / "notes"
+    for node in ("N000", "N001", "N002", "N003"):
+        value = json.loads((notes / f"nodes/{node}/handover.json").read_text())
+        assert value["legacy"] is False
+        assert value["sources"]["research_analysis"]["document_sha256"]
+        assert len(value["follow_up_questions"]) <= 2
+        assert value["mechanism_verdict"] in {"solved", "not_solved", "partially_solved", "inconclusive"}
+        if node != "N000":
+            spec = yaml.safe_load((notes / f"nodes/{node}/spec.md").read_text())
+            intent = spec["research_intent"]
+            snapshot = spec["parent_handover"]["snapshot"]
+            assert snapshot["node_id"] == "N000"
+            assert intent["engineering_review"]
+            assert spec["analysis_refs"]["parent_engineering"].startswith("nodes/N000/engineering_analysis_")
+            if spec["research_mode"] == "EXPLORE":
+                assert intent["problem_ref"] is None
+            else:
+                assert intent["problem_ref"] == "N000:Q1"
+            assert value["question"] == intent["question"]
+            assert value["problem_ref"] == intent["problem_ref"]
+    attempts = [json.loads(p.read_text()) for p in (public / "attempts").glob("*.json")]
+    for attempt in attempts:
+        metadata = attempt["metadata"]
+        assert metadata["utility"]["advisory_only"] is True
+        assert metadata["evaluation_policy"]["max_relative_eval_loss"] == 1.05
+        assert metadata["timing_protocol"]["measured_iterations"] <= 800
+        if metadata["node_id"] != "N000":
+            assert metadata["timing_declaration"]["period_steps"] == 200
+    passing_low_u = [a for a in attempts if a["metadata"]["node_id"] == "N001"
+                     and a["metadata"]["mode"] == "research"]
+    assert len(passing_low_u) == 1
+    assert passing_low_u[0]["metadata"]["utility"]["value"] < 1
+    assert passing_low_u[0]["metadata"]["scores"]["quality_gate"]["value"] == 1
+    assert any(a["metadata"]["node_id"] == "N001" and a["metadata"]["mode"] == "engineering"
+               for a in attempts)
+    timeline = [json.loads(line) for line in (root / "timeline.jsonl").read_text().splitlines()]
+    reads = [e for e in timeline if e["event"] == "handover_read"]
+    assert {e["node"] for e in reads} == {"N001", "N002", "N003"}
+    assert all(type(e["engineering_summary_read"]) is bool for e in reads)
+    checks = ["structured handover publication and frozen parent snapshots",
+              "linked REFINE and independent EXPLORE through actual CLI/trusted service",
+              "parent Engineering report pre-read and available Summary pre-read",
+              "timing declaration transported from committed submission to grader",
+              "real advisory scoring; low-U candidate still receives Engineering",
+              "complete Analysis document hashes and separate mechanism/practical verdicts"]
+    (root / "handover_audit.json").write_text(json.dumps({
+        "simulated": True, "checks_passed": checks,
+        "live_model_compliance_verified": False, "scientific_performance_verified": False,
+    }, indent=2) + "\n")
+    with (root / "coverage.md").open("a") as stream:
+        stream.write("\n## New workflow policy coverage\n\n" + "\n".join("- " + c for c in checks) + "\n")
 
 
 def _check_artifact_handoff(root, report, timeline):
@@ -209,6 +267,9 @@ def _check_delivered_prompts(root, scenario):
         assert 'inspect the existing Spec, Evaluation/Attempts and Worktree first' in capture['startup_prompt']
         assert capture['argv'][0] == 'exec'
         assert capture['resources']['workflow_rules.md'] == (task / 'roles/workflow_rules.md').read_text()
+        assert capture['resources']['README.md'] == (task / 'README.md').read_text()
+        for template in ('research_intent.json', 'submission.yaml'):
+            assert capture['resources'][f'templates/{template}'] == (task / 'templates' / template).read_text()
         for ref in ('common', 'initial_diagnostics', 'low_rank', 'quantization', 'sparsification', 'temporal', 'hybrid', 'engineer_runtime', 'semantic_criteria', 'system_ref'):
             assert capture['resources'][f'references/{ref}.md'] == (task / f'references/{ref}.md').read_text()
         if expected_role == 'researcher':
@@ -239,7 +300,7 @@ def _check_delivered_prompts(root, scenario):
         assert 'no new algorithms' in capture['stdin']
         assert '--ephemeral' in capture['argv'] and 'resume' not in capture['argv']
         assert capture['argv'][capture['argv'].index('--sandbox') + 1] == 'read-only'
-        assert set(capture['schema']['required']) == {'summary', 'findings', 'limitations'}
+        assert set(capture['schema']['required']) == {'summary', 'findings', 'limitations', 'handover'}
         assert all(r['exists'] and '/private/' not in r['path'] for r in capture['read_roots'])
         assert set(capture['code_shas']) == {capture['research_sha']}
         archive_bytes = subprocess.check_output(

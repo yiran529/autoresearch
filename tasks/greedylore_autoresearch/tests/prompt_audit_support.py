@@ -59,6 +59,8 @@ def main() -> None:
         toolkit = Path('.codex/notes/toolkit')
         resources = {'workflow_rules.md': (toolkit / 'workflow_rules.md').read_text()}
         resources.update({f'references/{p.name}': p.read_text() for p in (toolkit / 'references').glob('*.md')})
+        resources['README.md'] = (toolkit / 'README.md').read_text()
+        resources.update({f'templates/{p.name}': p.read_text() for p in (toolkit / 'templates').iterdir() if p.is_file()})
         _capture({'role': 'researcher' if aid.startswith('research-') else 'engineer',
                   'agent_id': aid, 'session_id': sid, 'resumed': resumed, 'argv': argv,
                   'cwd': str(Path.cwd()), 'startup_prompt': prompt,
@@ -119,4 +121,14 @@ def main() -> None:
         'summary': f'SIMULATED research result for {node}; no scientific measurement.',
         'findings': ['Only workflow behavior was exercised.', *supporting],
         'limitations': ['No model reasoning, training, correctness, or efficiency validation.'],
+        'handover': {
+            'mechanism_verdict': 'inconclusive', 'practical_verdict': 'inconclusive',
+            'evidence_refs': ['spec.md', 'evaluation.md'],
+            'new_information': [],
+            'follow_up_questions': [{
+                'id': 'Q1', 'question': 'SIMULATED open mechanism question; no scientific finding.',
+                'importance': 'Exercises a persistent parent-to-child problem link.',
+                'discriminator': 'SIMULATED matched mechanism comparison; not executed scientifically.',
+            }],
+        },
     }))

@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Cycle coverage is host-selected, bounded, and checked against actual events."""
 
 import pytest

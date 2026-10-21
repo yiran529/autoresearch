@@ -1,5 +1,52 @@
 # Gap-driven GreedyLoRE AutoResearch
 
+## Evaluation and handover policy
+
+- New contracts require each workload's final loss / Dense final loss <= **1.05**.
+  Historical contracts, Attempts and verdicts retain their original versions.
+- Attempts retain optional advisory `utility`: `U = S * exp(-d)`, where `S` is
+  the geometric mean BF16/FP32 speedup over a fixed, stage-matched N000 reference,
+  and `d = max(0, candidate minus baseline loss over the two quality workloads)`.
+  This discounts speedup by the worst PPL degradation; it does not reward quality
+  improvement or estimate time to quality. It never gates exploration, Parent
+  eligibility or candidate selection. Missing/incompatible evidence produces null
+  U with a reason. Engineering quality remains inherited and provisional.
+- Commit optional `timing: {period_steps: 800, requested_steps: 800}` in
+  `submission.yaml`. Period means the effective full cycle, including interacting
+  schedules; null declares a nonperiodic method. The host aligns the window,
+  normally 400 and at most 800 steps, retaining two repetitions. Only the trusted
+  `grader.args.timing_measured_iterations` may override the request, within bounds
+  and complete-cycle alignment.
+- The timing harness records `timing_cycle.period_steps` and per-rank
+  `rank_event_steps` (1-based update numbers). The default hook records actual
+  refresh execution into `state.timing_refresh_steps` when timing enables it.
+  New mechanisms must maintain this telemetry and set `state.timing_period_steps`
+  if their cycle differs from `update_proj_gap` (null for nonperiodic methods).
+  Reporting a configured period without actual event coverage is insufficient.
+- Longer-than-cap cycles, missing/disagreeing event evidence or absent matching
+  reference windows retain raw timing but are not eligible performance claims.
+  Dense timing caches may supply `efficiency.json.timing_windows["800"]` with
+  `measured_iterations: 800` and actually measured `cells` under the same contract
+  and hardware environment. Never extrapolate a cached window or relabel old
+  measurements. Root U references must also match the measured window.
+- Before implementation, Researcher reads available Engineering Summary and
+  parent Engineering Analysis. It supplies `--intent-file` using
+  `templates/research_intent.json`: a question, parent response, mechanism and
+  practical criteria, and engineering applicability/reuse decisions. New Nodes
+  prioritize mechanisms; rank/width/gap sweeps refine a mechanism within its budget.
+- REFINE references `Nxxx:Q1`, `Nxxx:Q2` or `Nxxx:current`; EXPLORE may use null
+  and ask an independent question. The host freezes the parent handover snapshot
+  and pins available Engineering Analysis alongside Research Analysis.
+- Analyzer returns separate mechanism/practical verdicts, persistent evidence
+  references, incremental information (possibly empty) and at most two follow-up
+  questions with discriminating experiments. Host-derived `handover.json` binds
+  complete Analysis document hashes and is recoverable without another model.
+  Old reports remain readable and are explicitly marked as legacy handovers;
+  unavailable evidence is not replaced by invented conclusions.
+
+Use this policy for new runs with the updated seed, contract and role snapshots.
+Paused historical runs are not automatically migrated or restarted.
+
 Task resources are host-published under the run's public `notes/toolkit/`. Each Agent's generated instructions locate that directory under its runtime shared directory (for Codex, `.codex/notes/toolkit/`). It contains workflow rules and route-specific references. It does not contain private evaluation inputs. Research Analysis receives a fixed code/evidence snapshot and only the parent analyses actually referenced by its Spec.
 
 Research Analysis remains an independent session. Choose applicable initial diagnostics, investigate a principal unexplained observation, and report evidence, counterevidence and unknowns without proposing algorithms. Each Analysis has at most five successful diagnostic executions and fifteen total executions including failures, each up to 600 seconds, with a separate GPU queue budget of one hour per request. Failed diagnostics may be debugged and retried with new request IDs; all retries retain records and count toward the total budget. See `GPU_COORDINATION.md` for host/client wait budgets.

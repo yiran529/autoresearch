@@ -11,7 +11,8 @@ Locate task resources in your shared `notes/toolkit/` directory.
 Start navigation at shared `notes/tree.md` and each Node's `notes/nodes/Nxxx/README.md`.
 
 - First read `workflow_rules.md`, the research objectives and benchmark instructions, and `research_summary.md` when available.
-- To select a Parent, inspect the Tree and candidate Specs, Evaluations and Research Analyses; existing Engineering Analyses may inform your choice.
+- To select a Parent, inspect candidate Specs, Evaluations, Research Analyses and `handover.json` when present.
+- Before implementation, read `engineering_summary.md` when available and the selected Parent's Engineering Analysis. Record applicable findings, reuse/defer decisions and implementation confounds in `research_intent.engineering_review`. No automatic code inheritance is implied.
 - Consult relevant algorithm references in `references/` as needed. When interpreting diagnostic findings, use `common.md` for comparison rules and `initial_diagnostics.md` for diagnostic methods.
 - Check the specific algorithm's closest prior papers before claiming novelty.
 
@@ -25,17 +26,27 @@ Use the mode assigned by the trusted host if supplied:
 - In `selection_rationale`, identify the chosen mode, relevant evidence, closest related method, and why this question is worth its cost.
 - Researcher may use multiple *knowledge references* but must choose **one code Parent**.
 
+## Mechanism-first research
+
+- Aim to discover a better communication algorithm: change representation, state/feedback updates, synchronization dependencies, adaptation rules or a justified interaction between mechanisms.
+- A new Node should test a substantive mechanism, not merely sweep rank, sketch width, refresh gap, learning rate or similar knobs. Use those knobs within a mechanism's candidate budget, with matched controls.
+- A parameter-only study needs a specific mechanism-discriminating prediction and evidence that the question remains unresolved; “it may improve the score” is insufficient.
+- Existing algorithms are useful comparators or exploration starting points. Identify the actual extension or unanswered question; do not present a known method or a favorable configuration as a novel algorithm.
+- Separate algorithmic effects, parameter-budget effects and engineering changes in the proposed comparison.
+
 ## Workflow
 
 ### 1. Select a Parent and initialize
 
-1. **Select a Parent.** Autonomously choose a completed Parent with valid Research Analysis and completed or explicitly skipped Engineering. Balance expected improvement or information gain, evidence, exploration coverage and how extensively each Parent has already been explored; it need not be the fastest Node.
+1. **Select a Parent.** Autonomously choose a completed Parent with valid Research Analysis and completed or explicitly skipped Engineering. Balance expected improvement or information gain, evidence, exploration coverage and how extensively each Parent has already been explored; it need not be the fastest Node. U is optional advisory evidence, never a threshold or a requirement to choose the highest-scoring Parent.
 2. **Develop the hypothesis.**
    - Draw on the Parent's Analysis, relevant `references/` materials and prior Research or Engineering Analyses, including their findings and unresolved questions.
-   - Aim for a substantive algorithmic change. Prefer using rank, sketch width, refresh interval or similar adjustments to evaluate and refine that change, rather than making parameter tuning alone the Node's main hypothesis.
+   - REFINE: cite a parent question (`Nxxx:Q1`, `Nxxx:Q2`, or `Nxxx:current`) and state whether you continue, challenge or narrow it.
+   - EXPLORE: an independent question is allowed; use a null problem reference instead of inventing a parent defect.
+   - Freeze separate mechanism and practical success/failure criteria before results. A mechanism can work while quality or full-cycle cost fails.
    - State the algorithm's actual communication object/timing, persistent state, optimizer/merge behavior and the predicted observable change.
 3. **Check overlap.** Compare the proposed method with `research_summary.md` when available and the Specs of in-progress Nodes. Avoid duplicating existing hypotheses or methods; sharing a Parent is allowed. When extending existing work, state the unresolved question and substantive difference in `selection_rationale`.
-4. **Initialize.** In a clean Worktree, run `autoresearch node initialize` with the Parent, hypothesis, selection rationale (1–3 sentences), change, risk and falsification criteria. Use only the current six initialization fields accepted by the host and the system-assigned Node ID. The command fixes the Spec and Git base.
+4. **Initialize.** In a clean Worktree, run `autoresearch node initialize` with the Parent, hypothesis, selection rationale (1–3 sentences), change, risk and falsification criteria. Supply the six existing text arguments and `--intent-file /absolute/path/intent.json` using the shared `notes/toolkit/templates/research_intent.json`. The intent records the question, parent response, separate criteria and engineering review; the host freezes it and the parent handover snapshot in the Spec. Legacy parents without structured handover remain readable.
 
 ### 2. Implement and check
 
@@ -45,10 +56,10 @@ Use the mode assigned by the trusted host if supplied:
 
 ### 3. Evaluate and refine the same method
 
-- Complete `submission.yaml` from the template with `mode: research`; use `change_summary` and `selection_rationale` to record each candidate's change and rationale.
+- Complete `submission.yaml` with `mode: research`; record the mechanism/refinement rationale. Declare effective `timing.period_steps` (null only for nonperiodic methods); an optional step request cannot override host bounds. Provide actual periodic-event telemetry as described in shared `notes/toolkit/README.md`.
 - Before each formal evaluation, archive candidate self-check scripts/logs needed by later Analysis with `autoresearch evidence archive` under the shared rules; the host may retire you automatically at the cap, and later agents read the shared archive, not temporary filenames.
 - Run `coral eval` for quality and efficiency. This assignment allows at most **3 successful scored formal runs and 10 total formal runs**, across resumes and archived Attempts. A valid scored regression counts as successful regardless of quality passing; failures and permitted same-SHA infrastructure retries count toward the total, and pending runs reserve capacity.
-- Inspect each Evaluation and necessary logs. The first terminal result does not retire you: within budget, continue when evidence justifies refining this method or adjusting meaningful parameters such as refresh period or rank. Do not stop merely because one candidate produced a result.
+- Inspect raw quality, cycle coverage, comparability and end-to-end timing, not just the status or U. Missing cycle/reference evidence is unconfirmed performance, not a speedup. The first terminal result does not retire you: within budget, continue when evidence justifies refining this method or adjusting meaningful parameters such as refresh period or rank. Do not stop merely because one candidate produced a result.
 - Keep this Node's Parent/base_commit, Spec and method hypothesis fixed. Later code may descend from a previous candidate in this Node. A core mechanism or hypothesis change belongs in a child Node handled by a new Agent, not another Node in this Session.
 
 ### 4. Finish and wait for the host

@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Advisory utility must never become a quality or selection gate."""
 
 import json

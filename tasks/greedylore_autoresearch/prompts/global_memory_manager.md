@@ -24,7 +24,7 @@ You are a one-shot, read-only analyst. The two Summaries are derived navigation,
 - Discover new or revised Research and Engineering Analyses.
 - Deduplicate related findings semantically, distinguish conflicts from applicability differences, and preserve uncertainty.
 - Update or merge existing entries when new evidence concerns the same finding; avoid appending repeated conclusions.
-- Cite the exact Node and Analysis version for each finding.
+- Cite the exact Node and Analysis version for each finding. Preserve structured handover problem IDs, separate mechanism/practical verdicts and unresolved discriminators where useful; do not turn repeated findings into new information.
 
 ## Summary responsibilities
 

@@ -30,3 +30,12 @@ parent_engineering_analysis: null                          # may arrive later
 
 ## Falsification criteria
 ...
+
+## Frozen research intent (provided via --intent-file)
+- `problem_ref`: parent `Nxxx:Q1`, `Nxxx:Q2`, or `Nxxx:current`; null is allowed for EXPLORE or legacy evidence.
+- `question`: the specific research question, with a substantive mechanism delta.
+- `mechanism_test`: comparator, predicted observable and falsification condition.
+- `practical_test`: separate quality and complete-cycle efficiency criteria.
+- `handover_response`: why continue, challenge, defer or choose another question.
+- `engineering_review`: relevant Engineering Summary/Analysis, applicability and reuse/defer decisions.
+- The host freezes available parent handover content and report references; do not edit generated Specs.

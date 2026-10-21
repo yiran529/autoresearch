@@ -407,6 +407,8 @@ class WorkflowStore:
             task_root = Path(__file__).resolve().parents[3]
             shutil.copyfile(task_root / "roles/workflow_rules.md", toolkit / "workflow_rules.md")
             shutil.copytree(task_root / "references", toolkit / "references", dirs_exist_ok=True)
+            shutil.copytree(task_root / "templates", toolkit / "templates", dirs_exist_ok=True)
+            shutil.copyfile(task_root / "README.md", toolkit / "README.md")
             state = self._load_unlocked()
             self._advance_unlocked(state)
             live_research = sum(

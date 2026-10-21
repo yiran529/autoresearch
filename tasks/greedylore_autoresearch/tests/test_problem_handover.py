@@ -1,3 +1,4 @@
+# ruff: noqa: S101
 """Problem chains carry frozen expectations without constraining exploration."""
 
 import hashlib
@@ -203,3 +204,16 @@ def test_initialize_retry_keeps_a_preupgrade_spec_byte_for_byte(root_run):
     before = path.read_bytes()
     store.initialize_research(assignment.agent_id, assignment.node_id, request)
     assert path.read_bytes() == before
+
+
+def test_researcher_receives_intent_template_and_timing_contract_in_shared_toolkit(root_run):
+    from autoresearch.state import WorkflowStore
+
+    store = WorkflowStore(root_run)
+    store.reconcile(1, 0)
+    toolkit = store.notes_root / "toolkit"
+    template = json.loads((toolkit / "templates/research_intent.json").read_text())
+    template.update(intent("N000:current"))
+    assert validate_intent(template, {"node_id": "N000", "legacy": True}, "REFINE")
+    assert (toolkit / "templates/submission.yaml").is_file()
+    assert (toolkit / "README.md").is_file()

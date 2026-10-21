@@ -123,9 +123,9 @@ class ScriptRuntime(CodexRuntime):
 class SyntheticGrader(TaskGrader):
     def evaluate(self):
         metadata = self.tasks[0].metadata
+        coral_dir = Path(self.private_dir).parent
         node, mode = metadata["node_id"], metadata["mode"]
         quality = 0.0 if node == "N002" else 1.0
-        score = quality if mode == "research" else 0.2
         marker = Path(self.codebase_path) / "simulation_marker.txt"
         if node != "N000" and not marker.is_file():
             raise RuntimeError("Grader did not receive committed simulation code")
@@ -158,16 +158,44 @@ class SyntheticGrader(TaskGrader):
             checkout=str(self.codebase_path),
             run_id=metadata["grader_run_id"],
         )
-        return ScoreBundle(
-            scores={"quality_gate": Score(quality, "quality_gate")},
-            aggregated=score,
-            feedback="SIMULATED: no training or timing.",
-            metadata={
-                "simulated": True,
-                "failure_class": None,
-                "contract_hash": metadata["contract_hash"],
-            },
+        from greedylore_autoresearch_grader.grader import score_results
+        from greedylore_autoresearch_grader.timing_policy import plan_timing
+        from greedylore_autoresearch_grader.utility import losses_from_attempt, root_reference
+
+        from coral.hub.attempts import read_attempts
+
+        if node != "N000" and "timing_declaration" not in metadata:
+            raise RuntimeError("trusted submission/daemon dropped the timing declaration")
+        protocol = plan_timing(metadata.get("timing_declaration", {"period_steps": 200}),
+                               minimum=400, maximum=800)
+        protocol.update(reference_window_matches=True, simulated=True)
+        seconds = {"N000": 0.10, "N001": 0.12, "N002": 0.08, "N003": 0.09}[node]
+        loss_delta = {"N000": 0.0, "N001": 0.04, "N002": 0.3, "N003": 0.03}[node]
+        baseline_losses = {"llama60m_adamw": 3.0, "llama130m_muon": 4.0}
+        reference = {"quality": {"workloads": {
+            name: {"final_eval_loss": loss} for name, loss in baseline_losses.items()
+        }}, "efficiency": {"cells": {
+            name: {"mean_iteration_seconds": 0.1}
+            for name in ("130m_adamw_bf16", "130m_adamw_fp32")
+        }}}
+        inherited = None
+        if mode == "engineering":
+            anchors = [a for a in read_attempts(coral_dir)
+                       if a.commit_hash == metadata["quality_anchor"]]
+            inherited = losses_from_attempt(anchors[0]) if anchors else None
+        bundle = score_results(
+            mode,
+            {name: {"final_eval_loss": loss + loss_delta} for name, loss in baseline_losses.items()}
+            if mode == "research" else {},
+            {name: {"mean": seconds, "relative_spread": 0.01}
+             for name in reference["efficiency"]["cells"]},
+            reference, contract_hash=metadata["contract_hash"], comparable=True,
+            evidence_paths=[], utility_reference=root_reference(coral_dir, mode, metadata["contract_hash"]),
+            inherited_quality=inherited, timing_protocol=protocol,
         )
+        bundle.feedback = "SIMULATED: synthetic inputs to the real scoring code; no training or timing."
+        bundle.metadata["simulated"] = True
+        return bundle
 
 
 
@@ -254,6 +282,7 @@ def declaration(coral_dir, node, mode, base, round_number):
             "commands": [],
             "limitations": "Simulation; no scientific self-check.",
         },
+        "timing": {"period_steps": 200, "requested_steps": 400},
     }
     Path("submission.yaml").write_text(yaml.safe_dump(body, sort_keys=False))
     Path("simulation_marker.txt").write_text(f"SIMULATED {mode} {node} {round_number}\n")
@@ -282,6 +311,32 @@ def agent(coral_dir: Path, aid: str):
             return
         spec_path = coral_dir / f"public/notes/nodes/{node}/spec.md"
         if not spec_path.exists():
+            handover = json.loads((coral_dir / "public/notes/nodes/N000/handover.json").read_text())
+            parent_engineering = handover['sources']['engineering_analysis']['path']
+            engineering_text = (coral_dir / 'public/notes' / parent_engineering).read_text()
+            if not engineering_text:
+                raise RuntimeError('parent Engineering report was not delivered')
+            engineering_summary = coral_dir / 'public/notes/engineering_summary.md'
+            summary_available = engineering_summary.is_file()
+            if summary_available and not engineering_summary.read_text():
+                raise RuntimeError('available Engineering Summary is empty')
+            state = read_state(coral_dir)
+            mode = state['nodes'][node]['research']['research_mode']
+            intent_path = root() / f'{aid}-intent.json'
+            template = json.loads(Path('.codex/notes/toolkit/templates/research_intent.json').read_text())
+            if not Path('.codex/notes/toolkit/README.md').read_text():
+                raise RuntimeError('timing/telemetry instructions were not delivered')
+            template.update({
+                'problem_ref': None if mode == 'EXPLORE' else 'N000:Q1',
+                'question': 'SIMULATED mechanism question; no algorithm discovery claim.',
+                'mechanism_test': 'SIMULATED matched comparison of a communication state transition.',
+                'practical_test': 'SIMULATED quality gate and complete-cycle runtime comparison.',
+                'handover_response': 'Exercise independent EXPLORE or linked REFINE without score gating.',
+                'engineering_review': f'Inspected {parent_engineering}; synthetic report, no optimization conclusion.',
+            })
+            intent_path.write_text(json.dumps(template))
+            event('handover_read', node=node, engineering_ref=parent_engineering, mode=mode,
+                  engineering_summary_read=summary_available)
             cli(
                 "autoresearch.cli",
                 "node",
@@ -298,6 +353,8 @@ def agent(coral_dir: Path, aid: str):
                 "No scientific test",
                 "--falsification-criteria",
                 "Workflow assertion fails",
+                "--intent-file",
+                str(intent_path),
             )
         event("initialized", node=node, agent=aid, head=git(Path.cwd(), "rev-parse", "HEAD"))
         if node == "N001":

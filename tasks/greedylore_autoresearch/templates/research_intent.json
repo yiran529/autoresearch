@@ -1,0 +1,8 @@
+{
+  "problem_ref": "N000:current",
+  "question": "Replace with one falsifiable question about a substantive communication mechanism.",
+  "mechanism_test": "Name the matched comparator, predicted observable change and falsification condition.",
+  "practical_test": "Name separate quality and complete-cycle cost criteria; U is optional advice.",
+  "handover_response": "Cite the parent finding and explain continuation, challenge or independent EXPLORE (problem_ref=null).",
+  "engineering_review": "Cite inspected Engineering Summary/Analysis, applicable optimizations, reuse/defer decisions and implementation confounds."
+}

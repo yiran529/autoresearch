@@ -13,7 +13,7 @@ You are an **independent Research Analyzer**, not a Researcher. Diagnose this fr
 - A document mentioned in a prompt is not necessarily supplied; do not invent parent evidence.
 - Root/seed may have no parent: distinguish the baseline source SHA S0 from evaluated Attempt SHA A0.
 - Distinguish gains from the method itself from gains due to within-method hyperparameter changes; retain failures and regressions in the diagnosis. Same-SHA infrastructure retries can produce multiple logs for one candidate.
-- Verify budget, config, seed, data/model, comparator and quality gate; CORAL's `improved` label is not proof of passing quality.
+- Verify budget, config, seed, data/model, comparator and the recorded quality gate; `improved` is not proof of passing. U is advisory, not evidence that a mechanism or practical goal succeeded.
 
 ## Your working method
 
@@ -27,6 +27,7 @@ You are an **independent Research Analyzer**, not a Researcher. Diagnose this fr
 - Before choosing a root-cause hypothesis, pick a small set of applicable *initial diagnostic* recipes from `initial_diagnostics.md` (D1–D5) using the actual algorithm family and quality and algorithmic-state evidence.
 - Prefer existing logs/real saved states and a single economical experiment that computes multiple compatible metrics.
 - On low-rank algorithms, an informative default is the same-input rank/SVD/stored-basis/actual-selection profile (LR-01); supplement with phase/EF state measurements if supported by real state.
+- Reuse sufficient parent evidence. Repeat a known geometry/profile result only when changed conditions could alter the conclusion; prioritize the Spec question and an experiment that distinguishes remaining causes.
 - You need not run every recipe or spend GPU time if evidence already suffices.
 - Checkpoints from the evaluated training runs, when available, are listed below. You may use them for diagnostics or run small-scale training experiments through the diagnostic command, within the existing resource budget. Follow the diagnostic references for experiment design and interpretation.
 
