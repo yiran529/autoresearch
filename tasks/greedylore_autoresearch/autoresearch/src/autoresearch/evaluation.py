@@ -158,6 +158,17 @@ def refresh_node_evaluation(
         lines.extend(("", "Hardware comparison warnings (cross_topology / 跨拓扑比较):", "", *warnings))
     if rendered == 0:
         lines.extend(("", "No formal evaluations recorded."))
+    utilities = [(a.commit_hash, a.metadata["utility"]) for a in ordered
+                 if isinstance(a.metadata.get("utility"), dict)]
+    if utilities:
+        lines.extend(("", "Advisory utility (optional; never a selection or exploration gate):", "",
+                      "| commit | U | S | worst loss increase | reference | quality source | unavailable reason |",
+                      "| --- | ---: | ---: | ---: | --- | --- | --- |"))
+        for sha, value in utilities:
+            ref = value.get("reference") or {}
+            fields = (sha, value.get("value"), value.get("speedup"), value.get("loss_penalty"),
+                      ref.get("commit_hash"), value.get("quality_source"), value.get("reason"))
+            lines.append("| " + " | ".join(_display(item) for item in fields) + " |")
     lines.extend(("", "Evidence labels are relative to the public state directory; links resolve from this Node. "
                   "Open the Attempt JSON for the complete evidence inventory and the run directory for raw results. "
                   "Analysis JSON records preserve their frozen evidence manifests."))

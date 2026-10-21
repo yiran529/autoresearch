@@ -17,7 +17,7 @@ def test_grader_records_actual_contract_and_dense_without_private_paths(contract
     path = publish_context(contract, references, tmp_path / 'logs', 'research')
     value = json.loads(path.read_text())
     assert value['contract_hash'] == contract.contract_hash
-    assert value['quality']['max_relative_eval_loss'] == 1.06
+    assert value['quality']['max_relative_eval_loss'] == 1.05
     assert value['quality']['workloads']['llama60m_adamw']['stop_after_steps'] == 4000
     assert value['dense_quality']['llama60m_adamw']['final_eval_loss'] == 3.5
     assert 'environment' not in value

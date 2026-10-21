@@ -15,7 +15,8 @@ from .results import geometric_mean_speedup, quality_gate
 
 def score_results(
     mode, quality, timing, reference, *, contract_hash, comparable, evidence_paths,
-    max_relative_eval_loss=1.06, hardware_comparison=None,
+    max_relative_eval_loss=1.05, hardware_comparison=None,
+    utility_reference=None, inherited_quality=None,
 ):
     scores = {}
     quality_ok = True
@@ -63,11 +64,24 @@ def score_results(
     else:
         aggregated = efficiency
         failure_class = None
+    from .utility import advisory_utility
+
+    utility = advisory_utility(
+        {name: payload["final_eval_loss"] for name, payload in quality.items()}
+        if mode == "research" else (inherited_quality or {}),
+        {name: cell["mean"] for name, cell in timing.items()}, utility_reference,
+        unavailable_reason=None if comparable else "incomparable_hardware",
+    )
+    utility["quality_source"] = "measured" if mode == "research" else "inherited (provisional)"
+    scores["advisory_utility"] = Score(utility["value"], "advisory_utility", "optional reference; never a gate")
     return ScoreBundle(
         scores=scores, aggregated=aggregated,
         feedback=("Warning [cross_topology]: " + " ".join(hardware_comparison["warnings"])
                   if hardware_comparison and hardware_comparison["warnings"] else ""),
         metadata={
+            "evaluation_policy": {"version": "quality-gated-efficiency-v2",
+                                  "max_relative_eval_loss": max_relative_eval_loss},
+            "utility": utility,
             "failure_class": failure_class, "contract_hash": contract_hash,
             "comparability": (hardware_comparison["status"] if hardware_comparison
                               else "comparable" if comparable else "incomparable_hardware"),
@@ -374,12 +388,26 @@ class Grader(TaskGrader):
             summary = aggregate_timing_cell(repetitions)
             timing[name] = {"mean": summary.mean, "relative_spread": summary.relative_spread}
         comparable = comparison.valid
+        from .utility import losses_from_attempt, root_reference
+
+        utility_reference = root_reference(Path(self.private_dir).parent, mode, contract.contract_hash)
+        inherited_quality = None
+        if mode == "engineering":
+            from coral.hub.attempts import read_attempts
+
+            anchor = self.tasks[0].metadata.get("quality_anchor")
+            matches = [a for a in read_attempts(Path(self.private_dir).parent, include_archived=True)
+                       if a.commit_hash == anchor and a.metadata.get("mode") == "research"
+                       and a.metadata.get("contract_hash") == contract.contract_hash]
+            if len(matches) == 1:
+                inherited_quality = losses_from_attempt(matches[0])
         return score_results(
             mode, quality_results, timing, reference,
             contract_hash=contract.contract_hash, comparable=comparable,
             evidence_paths=evidence_paths + self._resource_paths(),
             hardware_comparison=hardware_comparison,
             max_relative_eval_loss=contract.raw["quality"]["max_relative_eval_loss"],
+            utility_reference=utility_reference, inherited_quality=inherited_quality,
         )
 
     def evaluate(self) -> ScoreBundle:

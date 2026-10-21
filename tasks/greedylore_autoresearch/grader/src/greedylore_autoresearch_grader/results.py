@@ -25,7 +25,7 @@ class TimingRepetition:
     hardware_fingerprint: str
 
 
-def quality_gate(candidate_loss: float, dense_loss: float, *, max_relative: float = 1.06) -> bool:
+def quality_gate(candidate_loss: float, dense_loss: float, *, max_relative: float = 1.05) -> bool:
     return (
         all(math.isfinite(x) and x > 0 for x in (candidate_loss, dense_loss))
         and candidate_loss <= max_relative * dense_loss

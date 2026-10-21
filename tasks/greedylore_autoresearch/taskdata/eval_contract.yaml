@@ -41,7 +41,7 @@ compressor:
   quality_start_step: 1000
 
 quality:
-  max_relative_eval_loss: 1.06
+  max_relative_eval_loss: 1.05
   require_all_workloads: true
   reference_kind: same_contract_dense
   workloads:

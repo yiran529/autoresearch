@@ -19,6 +19,8 @@ def publish_context(contract, reference, root: Path, mode: str) -> Path:
     path = root / 'evaluation_context.json'
     value = {
         'version': 1, 'contract_hash': contract.contract_hash, 'mode': mode,
+        'evaluation_policy': {'version': 'quality-gated-efficiency-v2',
+                              'utility_is_advisory': True},
         'quality': {
             'metric': 'final_eval_loss',
             'comparison': 'candidate final_eval_loss / dense final_eval_loss <= max_relative_eval_loss',
