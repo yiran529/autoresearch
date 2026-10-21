@@ -1,4 +1,4 @@
-"""Host-owned, crash-recoverable tensor retention for active research nodes.
+"""Host-owned, crash-recoverable tensor retention and completed-Node cleanup.
 
 The private ledger authorizes removal before unlinking payloads. Public manifests
 and all evaluation logs remain immutable evidence, including after a crash.
@@ -157,6 +157,29 @@ def prune_research_checkpoints(coral_dir, node_id, attempts, selected_sha=None, 
     retained = selected.commit_hash if selected else None
     if node_id == 'N000':
         return retained
+    _prune_attempt_checkpoints(coral_dir, node_id, candidates, selected, island_id=island_id)
+    return retained
+
+
+def prune_completed_node_checkpoints(coral_dir, node_id, attempts, *, island_id=None):
+    """Remove all of a completed Node's tensors; return False while graders drain.
+
+    The caller validates completion and excludes diagnostics while holding
+    trusted_writes_lock. Include archived Attempts and all grader retries.
+    Root N000 retains its existing exemption.
+    """
+    if node_id == 'N000':
+        return False
+    candidates = [a for a in attempts if a.metadata.get('node_id') == node_id]
+    if any(a.status in {'pending', 'running'} or any(
+            run.get('status') in {'pending', 'running'}
+            for run in a.metadata.get('grader_runs') or []) for a in candidates):
+        return False
+    _prune_attempt_checkpoints(Path(coral_dir), node_id, candidates, island_id=island_id)
+    return True
+
+
+def _prune_attempt_checkpoints(coral_dir, node_id, candidates, selected=None, *, island_id=None):
     logs = island_root(coral_dir, island_id) / 'eval_logs'
     ledger_path, ledger = _ledger(coral_dir)
     for attempt in candidates:
@@ -196,4 +219,3 @@ def prune_research_checkpoints(coral_dir, node_id, attempts, selected_sha=None, 
                     _prune_manifest(coral_dir, manifest, ledger_path, ledger, node_id)
                 else:
                     _prune_incomplete_checkpoint(coral_dir, checkpoint, ledger_path, ledger, node_id)
-    return retained

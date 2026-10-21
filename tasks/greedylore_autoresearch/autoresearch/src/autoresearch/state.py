@@ -364,6 +364,10 @@ class WorkflowStore:
                 worker["last_error"] = str(exc)
         if state != before or not self.state_path.exists():
             self._save_unlocked(state)
+        from .node_cleanup import cleanup_completed_nodes
+
+        if cleanup_completed_nodes(self, state):
+            self._save_unlocked(state)
         return completed
 
     def _adopt_analysis_unlocked(self, node_id, job):

@@ -30,7 +30,7 @@ def discover_checkpoints(evidence, context):
             if not isinstance(value, dict) or value.get('version') != 1:
                 raise ValueError('unsupported manifest')
             if checkpoint_is_pruned(context.coral_dir, path):
-                descriptions.append(f'{root.name}: tensor payload pruned by research retention; '
+                descriptions.append(f'{root.name}: tensor payload pruned by checkpoint retention; '
                                     'original manifest and logs retained.')
                 continue
             if value.get('status') != 'complete':

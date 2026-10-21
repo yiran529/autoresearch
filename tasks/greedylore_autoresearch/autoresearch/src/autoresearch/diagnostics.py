@@ -113,6 +113,7 @@ class DiagnosticTask:
             except BlockingIOError as exc:
                 raise PermissionError('analysis session is already running') from exc
             with self.locked(timeout=5):
+                self._require_open_node()
                 root = self.read().get('process')
                 if root and _live_descendant(root['pid'], root):
                     raise PermissionError('analysis session is already active')
@@ -123,6 +124,7 @@ class DiagnosticTask:
 
     def bind(self, pid: int, timeout=None) -> None:
         with self.locked(timeout=timeout):
+            self._require_open_node()
             if (self.coral_dir / 'private/workflow_stopping').exists():
                 raise PermissionError('workflow is stopping')
             state = self.read()
@@ -138,10 +140,23 @@ class DiagnosticTask:
             state['process'] = None
             _atomic_json(self.path, state)
 
+    def _require_open_node(self):
+        # Read the atomically published workflow without acquiring its lock.
+        # Both this check and cleanup hold task.lock, so queued diagnostics
+        # cannot start after cleanup releases it. Standalone tasks have no store.
+        from .state import WorkflowStore
+
+        store = WorkflowStore(self.coral_dir)
+        if store.state_path.exists():
+            node = store._load_unlocked()['nodes'].get(self.read()['node_id'])
+            if node and store._node_completed(node):
+                raise PermissionError('diagnostics are unavailable for a completed Node')
+
     def run(self, payload: dict, peer_pid: int, executor, *, prepare=None, authorize=None) -> dict:
         _validate_request(payload)
         # This task-local lock covers one bounded command, never the workflow lock.
         with self.locked():
+            self._require_open_node()
             state = self.read()
             if authorize:
                 authorize()

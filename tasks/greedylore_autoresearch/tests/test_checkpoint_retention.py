@@ -241,3 +241,47 @@ def test_partial_cleanup_crash_retries_from_durable_ledger(tmp_path, monkeypatch
     monkeypatch.setattr(Path, 'unlink', original_unlink)
     prune_research_checkpoints(tmp_path, 'N001', [best, failed], best.commit_hash)
     assert not list(root.iterdir())
+
+
+def test_completed_cleanup_removes_selected_and_engineering_but_not_other_nodes(tmp_path):
+    from autoresearch.checkpoint_retention import prune_completed_node_checkpoints
+
+    research, engineering, other = attempt('a'), attempt('b'), attempt('c')
+    engineering.metadata['mode'] = 'engineering'
+    engineering.metadata['archived'] = True
+    other.metadata['node_id'] = 'N002'
+    roots = [checkpoint(tmp_path, a) for a in (research, engineering, other)]
+    originals = [(root / 'manifest.json').read_bytes() for root in roots]
+    assert prune_completed_node_checkpoints(tmp_path, 'N001', [research, engineering, other])
+    assert not (roots[0] / 'model.pt').exists()
+    assert not (roots[1] / 'rank-0.pt').exists()
+    assert (roots[2] / 'model.pt').exists()
+    assert [(root / 'manifest.json').read_bytes() for root in roots] == originals
+    assert all((root.parent.parent / 'stdout.log').is_file() for root in roots)
+    assert discover(tmp_path, roots)[0] == [roots[2]]
+    assert prune_completed_node_checkpoints(tmp_path, 'N001', [research, engineering, other])
+
+
+@pytest.mark.parametrize('busy', ['pending', 'running', 'pending_run'])
+def test_completed_cleanup_defers_all_deletion_while_any_grader_is_busy(tmp_path, busy):
+    from autoresearch.checkpoint_retention import prune_completed_node_checkpoints
+
+    selected, active = attempt('a'), attempt('b')
+    if busy == 'pending':
+        active.status = 'pending'
+    else:
+        active.metadata['grader_runs'] = [run('active', 'running' if busy == 'running' else 'pending')]
+    roots = [checkpoint(tmp_path, selected), checkpoint(tmp_path, active)]
+    assert not prune_completed_node_checkpoints(tmp_path, 'N001', [selected, active])
+    assert all((root / 'model.pt').exists() for root in roots)
+    assert not (tmp_path / 'private/checkpoint_retention.json').exists()
+
+
+def test_completed_cleanup_keeps_root_policy(tmp_path):
+    from autoresearch.checkpoint_retention import prune_completed_node_checkpoints
+
+    root_attempt = attempt('a')
+    root_attempt.metadata['node_id'] = 'N000'
+    root = checkpoint(tmp_path, root_attempt)
+    assert not prune_completed_node_checkpoints(tmp_path, 'N000', [root_attempt])
+    assert (root / 'model.pt').exists()

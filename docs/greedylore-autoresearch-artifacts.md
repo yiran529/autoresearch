@@ -147,7 +147,9 @@ Engineering 没有这里的 `quality/` 阶段。当前 timing 顺序为第一轮
 
 Quality 默认没有像 timing 一样单独写出的 `config.json`；完整命令可从兄弟目录 `llama60m_adamw.process/process.json` 查看。训练日志保存在 stdout/stderr 中，结果 JSON 不是逐步训练曲线。
 
-新评测在 run 根目录记录 `evaluation_context.json`，保存当时的配置、门槛和匹配 Dense 数值，供 Analyzer 的英文模板使用。支持新接口的候选在每个 quality workload 结束时保存一个最终 checkpoint：`model.pt` 为模型，`rank-N.pt` 为该 rank 的 optimizer/scheduler、compressor、RNG 和最后一批训练数据；`manifest.json` 记录配置、步数、world size、文件大小及 SHA256。只有 `status: complete` 才可用于诊断；`unavailable` 或没有 manifest 表示不能恢复，不影响已计算的质量指标。Checkpoint 不在 timing 中生成，也不保存周期性序列，目前不会自动删除。Analysis 记录小型 manifest，tensor 文件只读挂载，不重复拷贝进分析快照。
+新评测在 run 根目录记录 `evaluation_context.json`，保存当时的配置、门槛和匹配 Dense 数值，供 Analyzer 的英文模板使用。支持新接口的候选在每个 quality workload 结束时保存一个最终 checkpoint：`model.pt` 为模型，`rank-N.pt` 为该 rank 的 optimizer/scheduler、compressor、RNG 和最后一批训练数据；`manifest.json` 记录配置、步数、world size、文件大小及 SHA256。只有 `status: complete` 才可用于诊断；`unavailable` 或没有 manifest 表示不能恢复，不影响已计算的质量指标。Checkpoint 不在 timing 中生成，也不保存周期性序列。Analysis 记录小型 manifest，tensor 文件只读挂载，不重复拷贝进分析快照。
+
+普通 Node 的 Research、Research Analysis 和 Engineering 全部完成且分析产物校验通过后（Engineering 可有明确原因地跳过），host 在 reconcile/advance 中自动清理本 Node 的 checkpoint tensor，包括选中的 Research checkpoint 和历史重试产物。存在 pending/running grader、正在执行的 diagnostic 或未退出的 Analyzer session 时，清理延后；已完成的 Node 不能再启动诊断。N000 保留原有 baseline checkpoint。清理保留原始 manifest、配置、指标、日志和报告，只删除权重/状态及中断写入的 tensor 临时文件；后续子 Node 仍可继承代码 SHA 和分析引用，但不能再使用被删除的权重恢复训练。删除前先持久化 Node 完成状态和私有 retention ledger；删除失败记录在 `private/autoresearch_state.json` 的该 Node 的 `cleanup.last_error`，下轮自动重试，成功后 `cleanup.status` 为 `done`。升级后已有的 completed Node 也会按相同规则补做清理。
 
 ### 4.2 Efficiency：端到端测速
 
