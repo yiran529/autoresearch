@@ -206,9 +206,8 @@ def test_host_publisher_writes_fixed_summaries_and_partial_failure_remains_due(t
 
 def test_fake_consolidation_does_not_modify_static_reference_toolkit(tmp_path):
     task_root = Path(__file__).resolve().parents[1]
-    reference_paths = [task_root / "references" / name for name in (
-        "algorithm_ref.md", "system_ref.md", "semantic_criteria.md",
-    )]
+    reference_paths = sorted((task_root / "references").glob("*.md"))
+    assert reference_paths
     before = {path: path.read_bytes() for path in reference_paths}
     coral_dir = tmp_path / ".coral"
     notes = coral_dir / "public" / "notes"

@@ -2,7 +2,7 @@
 
 **Primary reader:** Engineer. This document owns **measured execution time and performance attribution**: step/wall-clock time, collective latency, encode/decode cost, critical path, communication–computation overlap, memory movement and performance regressions. It is separate from Research Analyzer's study of information loss, optimization updates and **algorithmic state evolution across training steps**.
 
-**Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the repository's trusted `workflow_rules.md`, `roles/engineer.md`, current `system_ref.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **3 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
+**Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the repository's trusted `workflow_rules.md`, `roles/engineer.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **3 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
 
 ### Controlled GPU diagnostics
 
@@ -135,7 +135,6 @@ Document each recipe as: `observed bottleneck + evidence → proposed implementa
 - [NVIDIA NCCL User Guide](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/) — collective semantics and tuning/environment behavior; topology and backend version matter.
 - [PowerSGD](https://arxiv.org/abs/1905.13727) — low-rank factor and aggregation structure; use for identifying algorithm-imposed communication dependencies.
 - [DiLoCo](https://arxiv.org/abs/2311.08105) and [Streaming DiLoCo](https://arxiv.org/abs/2501.18512) — outer-step communication bursts, fragmentation/overlap as adjacent systems prior art; optimization semantics may differ.
-- Repository `references/system_ref.md` — existing roofline/critical-path, collective cost, QR/GEMM/SVD, overlap, and memory analysis. Consult selectively alongside this diagnostic decision guide.
 
 
 ## 8. Engineer-authored final Analysis

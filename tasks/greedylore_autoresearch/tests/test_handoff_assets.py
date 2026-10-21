@@ -34,8 +34,8 @@ def test_required_handoff_assets_exist_and_are_nonempty():
         "roles/researcher.md",
         "roles/engineer.md",
         "prompts/research_analysis.md",
-        "references/algorithm_ref.md",
-        "references/system_ref.md",
+        "references/algorithm_construction.md",
+        "references/engineer_runtime.md",
         "references/semantic_criteria.md",
         "templates/node_spec.md",
         "templates/evaluation.md",
@@ -68,13 +68,7 @@ def test_prompts_expose_workflow_not_transport():
     assert "--focus-attempt" not in combined
 
 
-def test_reference_toolkit_and_semantic_criteria_are_preserved():
-    algorithm = (TASK_ROOT / "references/algorithm_ref.md").read_text()
-    system = (TASK_ROOT / "references/system_ref.md").read_text()
+def test_semantic_criteria_are_preserved():
     semantic = (TASK_ROOT / "references/semantic_criteria.md").read_text()
-    for term in ("Eckart", "Davis", "Error Feedback"):
-        assert term in algorithm
-    for term in ("Roofline", "Collective", "Overlap"):
-        assert term in system
     assert "Prompt 软约束" in semantic
     assert "Researcher" in semantic and "Engineer" in semantic
