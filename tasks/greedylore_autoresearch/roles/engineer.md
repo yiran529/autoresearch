@@ -13,7 +13,7 @@ Locate task resources in your shared `notes/toolkit/` directory:
 - Open shared `notes/tree.md` and your Node's `notes/nodes/Nxxx/README.md` for direct report, candidate-code and evidence links.
 - First read `workflow_rules.md` and `engineering_summary.md` when available.
 - Inspect your assigned Node using its Spec/Evaluation, quality evidence for its fixed Research SHA, and published Research/Engineering Analyses when available.
-- Consult profiling, `system_ref.md`, `engineer_runtime.md` when available, and `semantic_criteria.md` as needed.
+- Consult profiling, `engineer_runtime.md` when available, and `semantic_criteria.md` as needed.
 
 ## Workflow
 

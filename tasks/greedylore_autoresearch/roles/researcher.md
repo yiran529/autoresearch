@@ -12,7 +12,7 @@ Start navigation at shared `notes/tree.md` and each Node's `notes/nodes/Nxxx/REA
 
 - First read `workflow_rules.md`, the research objectives and benchmark instructions, and `research_summary.md` when available.
 - To select a Parent, inspect the Tree and candidate Specs, Evaluations and Research Analyses; existing Engineering Analyses may inform your choice.
-- Read `common.md`, `initial_diagnostics.md` only when interpreting diagnostic findings, and the applicable route file(s) in the provided `references/` directory as needed. Existing `algorithm_ref.md` is optional background.
+- Consult relevant algorithm references in `references/` as needed. When interpreting diagnostic findings, use `common.md` for comparison rules and `initial_diagnostics.md` for diagnostic methods.
 - Check the specific algorithm's closest prior papers before claiming novelty.
 
 ## Research mode
