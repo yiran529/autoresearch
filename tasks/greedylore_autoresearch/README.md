@@ -11,9 +11,10 @@
   improvement or estimate time to quality. It never gates exploration, Parent
   eligibility or candidate selection. Missing/incompatible evidence produces null
   U with a reason. Engineering quality remains inherited and provisional.
-- Commit optional `timing: {period_steps: 800, requested_steps: 800}` in
-  `submission.yaml`. Period means the effective full cycle, including interacting
-  schedules; null declares a nonperiodic method. The host aligns the window,
+- New methods must commit `timing.period_steps` in `submission.yaml`; only
+  `requested_steps` is optional. Legacy submissions may omit `timing`. Period
+  means the effective full cycle, including interacting schedules; use null
+  when there is no fixed cycle (including adaptive or uniform per-step methods). The host aligns the window,
   normally 400 and at most 800 steps, retaining two repetitions. Only the trusted
   `grader.args.timing_measured_iterations` may override the request, within bounds
   and complete-cycle alignment.

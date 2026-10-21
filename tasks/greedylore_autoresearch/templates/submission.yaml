@@ -21,7 +21,8 @@ semantic_self_check:
   commands: []                # commands actually executed / log paths
   limitations: ""            # uncovered behavior and numerical uncertainties
 
-# Optional request; the host owns the window (normally 400, at most 800).
-# timing:
-#   period_steps: 200  # effective full cycle; null for nonperiodic methods
-#   requested_steps: 400
+# New methods must declare their cycle; legacy submissions may omit timing.
+# The host owns the window (normally 400, at most 800 steps).
+timing:
+  period_steps: 200  # seed example; use null if there is no fixed cycle
+  # requested_steps: 400  # optional request, never a host override
