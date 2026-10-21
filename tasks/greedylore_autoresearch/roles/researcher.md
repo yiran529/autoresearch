@@ -12,7 +12,8 @@ Start navigation at shared `notes/tree.md` and each Node's `notes/nodes/Nxxx/REA
 
 - First read `workflow_rules.md`, the research objectives and benchmark instructions, and `research_summary.md` when available.
 - To select a Parent, inspect candidate Specs, Evaluations, Research Analyses and `handover.json` when present.
-- Before implementation, read `engineering_summary.md` when available and the selected Parent's Engineering Analysis. Record applicable findings, reuse/defer decisions and implementation confounds in `research_intent.engineering_review`. No automatic code inheritance is implied.
+- Before implementation, read `engineering_summary.md` and the selected Parent's Engineering Analysis when available.
+- In `research_intent.engineering_review`, record applicable findings, reuse/defer decisions and implementation confounds; explain unavailable reports (including skipped Engineering). This does not imply automatic code inheritance.
 - Consult relevant algorithm references in `references/` as needed. When interpreting diagnostic findings, use `common.md` for comparison rules and `initial_diagnostics.md` for diagnostic methods.
 - Check the specific algorithm's closest prior papers before claiming novelty.
 

@@ -74,6 +74,6 @@
 
 - New contracts use a 5% dense-relative final-loss gate on both workloads; read the recorded contract for historical runs. U is optional advice, never a gate for exploration, Parent choice or candidate selection.
 - Declare the effective timing cycle in committed `submission.yaml`. The host selects a complete-cycle window, normally 400 and at most 800 measured steps, and records actual event coverage. Unconfirmed cycles or unmatched reference windows cannot establish comparable performance.
-- Before implementation, Researcher reads available Engineering Summary and parent Engineering Analysis, then records the applicability/reuse decision in the research intent.
+- Before implementation, Researcher reads available Engineering Summary and parent Engineering Analysis, then records applicability/reuse decisions or report-unavailability reasons in the research intent.
 - REFINE links a parent problem; EXPLORE may ask an independent question. Freeze mechanism/practical criteria and the response to parent evidence with `node initialize --intent-file`.
 - Independent Research Analysis answers those criteria and supplies bounded incremental findings/follow-up questions. The host derives `handover.json`; its source reports remain authoritative, and child Specs retain the original snapshot.

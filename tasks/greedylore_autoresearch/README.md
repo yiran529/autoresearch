@@ -37,7 +37,8 @@
   and hardware environment. Never extrapolate a cached window or relabel old
   measurements. Root U references must also match the measured window.
 - Before implementation, Researcher reads available Engineering Summary and
-  parent Engineering Analysis. It supplies `--intent-file` using
+  parent Engineering Analysis; record why either report is unavailable. Supply
+  `--intent-file` using
   `templates/research_intent.json`: a question, parent response, mechanism and
   practical criteria, and engineering applicability/reuse decisions. New Nodes
   prioritize mechanisms; rank/width/gap sweeps refine a mechanism within its budget.
