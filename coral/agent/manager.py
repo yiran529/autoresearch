@@ -1817,6 +1817,16 @@ class AgentManager:
         feedback = attempt.get("feedback", "")
         title = attempt.get("title", "")
 
+        if attempt.get("status") == "pending":
+            return "\n".join(
+                [
+                    f"Eval pending (commit {commit}): queued or running; no result yet.",
+                    f"What you did: {title}",
+                    "Wait for this evaluation to finish using the task's wait command. "
+                    "This is not a failure; do not retry or submit another candidate while it is pending.",
+                ]
+            )
+
         lines = [
             f"Eval #{eval_count}: score={score_str} (commit {commit})",
             f"What you did: {title}",
@@ -2637,6 +2647,21 @@ class AgentManager:
 
                     exit_code = handle.process.returncode if handle.process else None
                     log_path = handle.log_path
+
+                    # A successful CLI exit while its evaluation is pending is
+                    # not a reason to call the model again on every monitor tick.
+                    # Include short zero exits that the uptime classifier would
+                    # call no_result; keep crash and stale/dead-grader recovery.
+                    if exit_code == 0 and self._grader_alive():
+                        pending = agent_in_grader_queue(
+                            self.paths.coral_dir,
+                            agent_id,
+                            island_id=self._agent_island.get(agent_id),
+                        )
+                        if pending is not None:
+                            age = self._attempt_age_seconds(pending.timestamp)
+                            if age is not None and age <= self.config.agents.grader_pending_max_age:
+                                continue
 
                     # Classify the exit. Only non-clean exits feed the breaker;
                     # clean `max_turns`-style completions never trip it.
