@@ -29,7 +29,7 @@ Use the mode assigned by the trusted host if supplied:
 
 ### 1. Select a Parent and initialize
 
-- Compare your proposed method with `research_summary.md` when available. Avoid repeating the same mechanism and configuration; when extending an existing method, state the unresolved question and substantive difference.
+- Before initialization, compare your proposed method with `research_summary.md` when available and the Specs of in-progress Nodes. Avoid duplicating existing hypotheses or methods; sharing a Parent is allowed. When extending existing work, state the unresolved question and substantive difference in `selection_rationale`.
 - Autonomously select a completed Parent with valid Research Analysis and completed or explicitly skipped Engineering, balancing expected improvement or information gain, evidence, exploration coverage, validation cost and quality risk; it need not be the fastest Node.
 - In a clean Worktree, run `autoresearch node initialize` with the Parent, hypothesis, selection rationale (1–3 sentences), change, risk and falsification criteria. Use only the current six initialization fields accepted by the host.
 - The command fixes the Spec and Git base; use the system-assigned Node ID.
