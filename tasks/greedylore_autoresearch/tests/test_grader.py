@@ -184,10 +184,15 @@ def test_formal_evaluation_fails_as_infrastructure_before_gpu_when_references_mi
 
 
 @pytest.mark.parametrize("mode", ["research", "engineering"])
-@pytest.mark.parametrize("steps", [400, 800])
+@pytest.mark.parametrize("steps,period,events", [
+    (400, 200, [301, 501]),
+    (800, 800, [301, 501, 701, 901]),
+    (400, None, [137, 203, 499]),
+    (400, None, []),
+])
 @pytest.mark.parametrize("fault", [None, "missing_monitoring", "incomparable", "interference", "cross_interference", "wrong_model", "missing_cycle"])
 def test_formal_stages_reserve_separately_and_validate_before_scoring(
-    contract, tmp_path, monkeypatch, mode, fault, steps,
+    contract, tmp_path, monkeypatch, mode, fault, steps, period, events,
 ):
     import json
     from types import SimpleNamespace
@@ -312,8 +317,7 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
                     "bucket_layout_recorded": True, "observed_bucket_bytes": [[100]],
                     "topology_fingerprint": topology, "mean_iteration_seconds": 0.2,
                     "first_measured_update": 102, "last_measured_update": 101 + steps,
-                    "timing_cycle": {"period_steps": 200 if steps == 400 else 800,
-                                     "rank_event_steps": ([[301, 501]] if steps == 400 else [[901]]) * 4},
+                    "timing_cycle": {"period_steps": period, "rank_event_steps": [events] * 4},
                 }
             if fault == "missing_cycle":
                 payload.pop("timing_cycle", None)
@@ -332,7 +336,7 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
     grader.tasks = [Task(
         "formal", "formal", "formal",
         {"mode": mode, "contract_hash": contract.contract_hash, "quality_anchor": "research-sha",
-         "timing_declaration": {"period_steps": 200 if steps == 400 else 800}},
+         "timing_declaration": {"period_steps": period}},
     )]
 
     bundle = grader.evaluate()

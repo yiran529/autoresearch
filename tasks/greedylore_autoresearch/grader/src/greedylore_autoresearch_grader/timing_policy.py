@@ -45,7 +45,7 @@ def plan_timing(declaration, *, minimum, maximum, override=None):
         if not minimum <= override <= maximum or (period and override % period):
             raise TimingPolicyError("host timing override violates bounds or complete-cycle alignment")
         steps, covered = override, True
-    return {"version": "bounded-cycles-v1", "minimum_iterations": minimum,
+    return {"version": "bounded-cycles-v2", "minimum_iterations": minimum,
             "maximum_iterations": maximum, "period_steps": period,
             "requested_steps": requested, "host_override": override,
             "measured_iterations": steps, "window_covers_period": covered}
@@ -64,17 +64,27 @@ def validate_cycle_evidence(plan, payload):
             or any(events != ranks[0] for events in ranks)):
         return result
     period = plan["period_steps"]
-    if period is None:
-        return {"confirmed": not any(ranks), "reason": None if not any(ranks) else "unexpected_periodic_events"}
     events = ranks[0]
     first, last = payload.get("first_measured_update"), payload.get("last_measured_update")
-    if (type(first) is not int or type(last) is not int
+    if (type(first) is not int or type(last) is not int or first <= 0
             or last - first + 1 != plan["measured_iterations"]
-            or len(events) != plan["measured_iterations"] // period
             or any(type(step) is not int or not first <= step <= last for step in events)
-            or any(b - a != period for a, b in zip(events, events[1:]))):
+            or any(b < a for a, b in zip(events, events[1:]))):
         return result
-    return {"confirmed": True, "reason": None}
+    if period is not None:
+        if not events or plan["measured_iterations"] % period:
+            return result
+        # A complete cycle may contain several events, including simultaneous
+        # operations. Check the observed pattern, not a single-refresh schedule.
+        offsets = [step - first for step in events if step < first + period]
+        expected = [first + offset + cycle * period
+                    for cycle in range(plan["measured_iterations"] // period)
+                    for offset in offsets]
+        if events != expected:
+            return result
+    return {"confirmed": True, "reason": None,
+            "event_count_per_rank": len(events),
+            "coverage_scope": "declared_periods" if period else "measured_window_only"}
 
 
 def reference_for_window(reference, steps, default_steps):

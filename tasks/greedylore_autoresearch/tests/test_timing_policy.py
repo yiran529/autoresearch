@@ -48,11 +48,11 @@ def test_missing_or_disagreeing_cycle_events_cannot_certify_timing():
     assert validate_cycle_evidence(plan, good)["confirmed"] is False
 
 
-def test_nonperiodic_algorithms_need_explicit_telemetry_and_no_refresh_events():
+def test_nonperiodic_algorithms_need_explicit_telemetry():
     plan = plan_timing({"period_steps": None}, minimum=400, maximum=800)
     assert validate_cycle_evidence(plan, {"timing_cycle": {
         "period_steps": None, "rank_event_steps": [[], []],
-    }})["confirmed"] is True
+    }, "first_measured_update": 102, "last_measured_update": 501})["confirmed"] is True
     assert validate_cycle_evidence(plan, {})["confirmed"] is False
 
 
@@ -84,3 +84,44 @@ def test_window_mismatch_cannot_produce_a_comparable_speedup():
     assert result.scores["bf16_timing_mean"].value == 0.1
     assert result.scores["bf16_speedup"].value is None
     assert result.metadata["performance_eligible"] is False
+
+
+@pytest.mark.parametrize("period,events", [
+    (800, [301, 501, 701, 901]),
+    (200, [137, 201, 337, 401]),
+    (200, [137, 137, 201, 337, 337, 401]),  # simultaneous operations
+    (None, [137, 203, 499]),
+    (None, []),
+])
+def test_composite_cycles_and_adaptive_events_are_valid_measurements(period, events):
+    plan = plan_timing({"period_steps": period}, minimum=400, maximum=800)
+    payload = {"first_measured_update": 102,
+               "last_measured_update": 101 + plan["measured_iterations"],
+               "timing_cycle": {"period_steps": period, "rank_event_steps": [events, events]}}
+    result = validate_cycle_evidence(plan, payload)
+    assert result["confirmed"] is True
+    assert result["event_count_per_rank"] == len(events)
+    assert result["coverage_scope"] == ("measured_window_only" if period is None else "declared_periods")
+
+
+@pytest.mark.parametrize("period,events", [
+    (200, [137, 201, 337]),  # missing one event in the next cycle
+    (200, [137, 201, 338, 401]),  # changed phase in the next cycle
+    (None, [137, 136]),  # out of order
+    (None, [101]),  # before the measured window
+    (None, [502]),  # after the measured window
+    (None, [True]),
+    (None, [137.0]),
+])
+def test_malformed_or_nonrepeating_event_evidence_is_rejected(period, events):
+    plan = plan_timing({"period_steps": period}, minimum=400, maximum=800)
+    payload = {"first_measured_update": 102, "last_measured_update": 501,
+               "timing_cycle": {"period_steps": period, "rank_event_steps": [events, events]}}
+    assert validate_cycle_evidence(plan, payload)["confirmed"] is False
+
+
+@pytest.mark.parametrize("bounds", [{}, {"first_measured_update": 102, "last_measured_update": 500}])
+def test_nonperiodic_evidence_requires_the_full_measured_window(bounds):
+    plan = plan_timing({"period_steps": None}, minimum=400, maximum=800)
+    payload = {**bounds, "timing_cycle": {"period_steps": None, "rank_event_steps": [[], []]}}
+    assert validate_cycle_evidence(plan, payload)["confirmed"] is False

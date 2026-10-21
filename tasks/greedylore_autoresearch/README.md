@@ -22,7 +22,14 @@
   refresh execution into `state.timing_refresh_steps` when timing enables it.
   New mechanisms must maintain this telemetry and set `state.timing_period_steps`
   if their cycle differs from `update_proj_gap` (null for nonperiodic methods).
-  Reporting a configured period without actual event coverage is insufficient.
+  Record actual intermittent maintenance executions, including all interacting
+  schedules; multiple events per period or update are allowed. Fixed-period
+  evidence must repeat the same event pattern across measured cycles. For null
+  periods, events may be irregular or absent. All event lists must be ordered,
+  within the measured window and consistent across ranks.
+  This checks declared schedules against observations, not the true algorithmic
+  period. Nonperiodic timing covers only the measured window; absent rare events
+  do not establish their long-run cost.
 - Longer-than-cap cycles, missing/disagreeing event evidence or absent matching
   reference windows retain raw timing but are not eligible performance claims.
   Dense timing caches may supply `efficiency.json.timing_windows["800"]` with
