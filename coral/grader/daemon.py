@@ -441,7 +441,7 @@ def _grade_one(
                 key: attempt.metadata[key]
                 for key in (
                     "mode", "node_id", "node_type", "base_commit",
-                    "quality_anchor", "contract_hash", "submission_hash",
+                    "quality_anchor", "contract_hash", "submission_hash", "timing_declaration",
                 )
                 if key in attempt.metadata
             },

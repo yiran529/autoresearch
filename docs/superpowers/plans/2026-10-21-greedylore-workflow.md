@@ -40,13 +40,13 @@ taskdata/eval_contract.yaml, tests/test_utility.py and existing policy tests.
 Files: grader timing policy/efficiency/grader/contract; submission validation and
 template; seed timing telemetry plus source manifest; timing tests.
 
-- [ ] Add failing tests for 200/400/800 periods, cap overflow, authoritative step
+- [x] Add failing tests for 200/400/800 periods, cap overflow, authoritative step
   overrides, reference-window mismatch and actual cycle evidence.
-- [ ] Accept an optional committed timing declaration; host validates and derives
+- [x] Accept an optional committed timing declaration; host validates and derives
   the plan, keeping default legacy submissions readable.
-- [ ] Record requested/actual steps, period and coverage. Exclude unconfirmed
+- [x] Record requested/actual steps, period and coverage. Exclude unconfirmed
   timing from performance selection without discarding raw results.
-- [ ] Verify real command construction and synthetic payload validation; commit.
+- [x] Verify real command construction and synthetic payload validation; commit.
 
 ## Part 3 — Structured problem handover
 

@@ -244,6 +244,8 @@ def subspace_hook_ef14(
     
     # During the update_projection iteration, update the projection matrix.
     if update_projection:
+        if bucket_index == 0 and hasattr(state, 'timing_refresh_steps'):
+            state.timing_refresh_steps.append(state.iter + 1)
         # 1. Set up local error tensor for EF14
         # E_i = 0
         if bucket_index in state.error_dict:

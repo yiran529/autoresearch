@@ -811,6 +811,8 @@ class TrustedWriteService:
                 "submission_hash": canonical["submission_hash"],
                 "base_commit": canonical["base_commit"],
                 "quality_anchor": canonical["quality_anchor"],
+                **({"timing_declaration": canonical["timing_declaration"]}
+                   if "timing_declaration" in canonical else {}),
                 "contract_hash": canonical["contract_hash"],
                 "max_infra_retries": int(canonical["max_infra_retries"]),
                 "infra_retry_count": 0,

@@ -76,6 +76,14 @@ def build_timing_result(gathered, args, parameter_count, run_metadata=None):
         ))
     if run_metadata:
         result.update(run_metadata)
+    if gathered and 'timing_period_steps' in gathered[0]:
+        periods = [rank['timing_period_steps'] for rank in gathered]
+        if any(period != periods[0] for period in periods):
+            raise ValueError('Timing period differs across ranks')
+        result['timing_cycle'] = {
+            'period_steps': periods[0],
+            'rank_event_steps': [rank['timing_event_steps'] for rank in gathered],
+        }
     return result
 
 
@@ -199,6 +207,8 @@ class BucketRecordingHookState:
         self.inner_hook = inner_hook
         self._measured = False
         self._bucket_bytes = []
+        if hasattr(inner_state, 'iter'):
+            inner_state.timing_refresh_steps = []
 
     def begin_step(self, measured):
         if self._bucket_bytes:
@@ -500,6 +510,13 @@ def main():
             bucket_counts=bucket_counts,
             bucket_bytes=bucket_bytes,
         )
+        inner = timing_hook_state.inner_state
+        local_result['timing_period_steps'] = getattr(
+            inner, 'timing_period_steps', getattr(inner, 'update_proj_gap', None))
+        local_result['timing_event_steps'] = [
+            step for step in getattr(inner, 'timing_refresh_steps', [])
+            if args.warmup_iterations < step <= args.warmup_iterations + args.measured_iterations
+        ]
         if args.strict_blocking_communication:
             local_result['hook_step_seconds'] = hook_step_seconds
     gathered = [None] * world_size

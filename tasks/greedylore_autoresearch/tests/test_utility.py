@@ -99,6 +99,10 @@ def test_reference_uses_fixed_root_and_matching_implementation_stage(tmp_path):
     assert engineering["commit_hash"] == "b" * 40
     assert engineering["quality_source"] == "inherited (provisional)"
     assert root_reference(tmp_path, "research", "other-policy") is None
+    (private / "autoresearch_state.json").write_text(json.dumps({"nodes": {"N000": {
+        "research": {"status": "active"}, "engineering_status": "blocked",
+    }}}))
+    assert root_reference(tmp_path, "research", "contract") is None
 
 
 def test_low_utility_does_not_prevent_research_selection():

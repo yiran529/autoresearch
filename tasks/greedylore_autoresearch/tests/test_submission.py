@@ -104,6 +104,23 @@ def test_validator_reads_committed_submission_not_worktree(tmp_path):
     assert len(result["contract_hash"]) == 64
 
 
+def test_committed_timing_request_is_canonical_metadata_not_a_timer_override(tmp_path):
+    repo, base = _repo(tmp_path)
+    declaration = _submission(base)
+    declaration["timing"] = {"period_steps": 800, "requested_steps": 10000}
+    (repo / "submission.yaml").write_text(yaml.safe_dump(declaration))
+    _git(repo, "add", "submission.yaml")
+    _git(repo, "commit", "-m", "request long timing")
+    coral_dir = tmp_path / ".coral"
+    _write_node_spec(coral_dir, base)
+    result = validate_submission(_git(repo, "rev-parse", "HEAD"), {
+        "worktree": str(repo), "coral_dir": str(coral_dir),
+        "contract_path": str(_contract(tmp_path)), "parent_hash": base,
+    })
+    assert result["timing_declaration"] == {"period_steps": 800, "requested_steps": 10000}
+    assert "measured_iterations" not in result
+
+
 def test_validator_rejects_unknown_submission_fields(tmp_path):
     repo, base = _repo(tmp_path)
     declaration = _submission(base)

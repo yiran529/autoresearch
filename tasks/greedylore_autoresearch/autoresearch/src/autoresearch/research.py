@@ -33,6 +33,7 @@ def quality_eligible(attempt) -> bool:
     quality = attempt.metadata.get('scores', {}).get('quality_gate', {}).get('value')
     comparable = attempt.metadata.get('comparability', attempt.metadata.get('comparable'))
     return (not attempt.archived and scored_success(attempt)
+            and attempt.metadata.get('performance_eligible') is not False
             and not attempt.metadata.get('failure_class')
             and type(quality) in (float, int) and quality == 1
             and comparable in (None, True, 'comparable', 'cross_topology'))

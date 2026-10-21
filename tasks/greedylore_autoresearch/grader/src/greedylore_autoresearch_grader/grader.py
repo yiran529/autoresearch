@@ -17,6 +17,7 @@ def score_results(
     mode, quality, timing, reference, *, contract_hash, comparable, evidence_paths,
     max_relative_eval_loss=1.05, hardware_comparison=None,
     utility_reference=None, inherited_quality=None,
+    timing_protocol=None, performance_eligible=True, ineligibility_reasons=(),
 ):
     scores = {}
     quality_ok = True
@@ -48,16 +49,19 @@ def score_results(
         scores[f"{label}_timing_mean"] = Score(cell["mean"], f"{label}_timing_mean")
         scores[f"{label}_timing_spread"] = Score(cell["relative_spread"], f"{label}_timing_spread")
         value = None
-        if comparable:
+        if comparable and (timing_protocol or {}).get("reference_window_matches", True):
             dense = float(reference["efficiency"]["cells"][cell_name]["mean_iteration_seconds"])
             value = dense / float(cell["mean"])
             speedups[label] = value
         scores[f"{label}_speedup"] = Score(value, f"{label}_speedup")
-    efficiency = geometric_mean_speedup(speedups) if comparable else None
+    efficiency = geometric_mean_speedup(speedups) if speedups else None
     scores["efficiency_score"] = Score(efficiency, "efficiency_score")
     if not comparable:
         aggregated = None
         failure_class = "infra"
+    elif not performance_eligible:
+        aggregated = 0.0
+        failure_class = "candidate"
     elif mode == "research" and not quality_ok:
         aggregated = 0.0
         failure_class = "candidate"
@@ -66,11 +70,18 @@ def score_results(
         failure_class = None
     from .utility import advisory_utility
 
+    utility_reason = None if comparable else "incomparable_hardware"
+    if not performance_eligible:
+        utility_reason = "timing_evidence_unconfirmed"
+    if utility_reference and timing_protocol:
+        baseline_steps = (utility_reference.get("timing_protocol") or {}).get("measured_iterations", 400)
+        if baseline_steps != timing_protocol["measured_iterations"]:
+            utility_reason = "reference_window_mismatch"
     utility = advisory_utility(
         {name: payload["final_eval_loss"] for name, payload in quality.items()}
         if mode == "research" else (inherited_quality or {}),
         {name: cell["mean"] for name, cell in timing.items()}, utility_reference,
-        unavailable_reason=None if comparable else "incomparable_hardware",
+        unavailable_reason=utility_reason,
     )
     utility["quality_source"] = "measured" if mode == "research" else "inherited (provisional)"
     scores["advisory_utility"] = Score(utility["value"], "advisory_utility", "optional reference; never a gate")
@@ -82,6 +93,11 @@ def score_results(
             "evaluation_policy": {"version": "quality-gated-efficiency-v2",
                                   "max_relative_eval_loss": max_relative_eval_loss},
             "utility": utility,
+            "timing_protocol": timing_protocol,
+            "performance_eligible": bool(comparable and performance_eligible and quality_ok),
+            "ineligibility_reasons": [*ineligibility_reasons,
+                                      *([] if comparable else ["incomparable_hardware"]),
+                                      *([] if quality_ok else ["quality_gate_failed"])],
             "failure_class": failure_class, "contract_hash": contract_hash,
             "comparability": (hardware_comparison["status"] if hardware_comparison
                               else "comparable" if comparable else "incomparable_hardware"),
@@ -270,8 +286,24 @@ class Grader(TaskGrader):
         quality_results = {}
         timing_repetitions = {name: [] for name in contract.efficiency.cells}
         from .evaluation_context import publish_context
+        from .timing_policy import plan_timing, reference_for_window, validate_cycle_evidence
 
-        publish_context(contract, reference, evidence_root, mode)
+        declaration = self.tasks[0].metadata.get("timing_declaration", {
+            "period_steps": contract.raw["compressor"]["update_gap"],
+        })
+        timing_protocol = plan_timing(
+            declaration, minimum=contract.raw["efficiency"]["measured_iterations"],
+            maximum=contract.raw["efficiency"].get("max_measured_iterations", 800),
+            override=self.args.get("timing_measured_iterations"),
+        )
+        reference, window_matches = reference_for_window(
+            reference, timing_protocol["measured_iterations"],
+            contract.raw["efficiency"]["measured_iterations"],
+        )
+        timing_protocol["reference_window_matches"] = window_matches
+        cycle_evidence = []
+
+        publish_context(contract, reference, evidence_root, mode, timing_protocol)
         evidence_paths = []
         def acquire(stage):
             self._stage = stage
@@ -358,7 +390,8 @@ class Grader(TaskGrader):
                         journal.event("timing", "running", gpu_uuids=reservation.uuids,
                                       repetition=repetition, cell=name)
                         output = evidence_root / "efficiency" / f"r{repetition + 1}-{name}"
-                        cell = contract.efficiency.cells[name]
+                        cell = {**contract.efficiency.cells[name],
+                                "measured_iterations": timing_protocol["measured_iterations"]}
                         spec = build_timing_command(
                             cell, repetition, candidate, output, reservation.indices, hardware
                         )
@@ -369,6 +402,12 @@ class Grader(TaskGrader):
                                 or payload.get("strict_blocking_communication") is not False
                                 or payload.get("bucket_layout_recorded") is not True):
                             raise CandidateError(f"invalid timing result for {name}")
+                        cycle = validate_cycle_evidence(timing_protocol, payload)
+                        cycle_payload = payload.get("timing_cycle")
+                        rank_events = cycle_payload.get("rank_event_steps") if isinstance(cycle_payload, dict) else None
+                        if not isinstance(rank_events, list) or len(rank_events) != contract.hardware.gpu_count:
+                            cycle = {"confirmed": False, "reason": "cycle_rank_count_mismatch"}
+                        cycle_evidence.append({"repetition": repetition, "cell": name, **cycle})
                         bucket = hashlib.sha256(json.dumps(
                             payload.get("observed_bucket_bytes"), sort_keys=True
                         ).encode()).hexdigest()
@@ -388,6 +427,13 @@ class Grader(TaskGrader):
             summary = aggregate_timing_cell(repetitions)
             timing[name] = {"mean": summary.mean, "relative_spread": summary.relative_spread}
         comparable = comparison.valid
+        timing_protocol["cycle_evidence"] = cycle_evidence
+        reasons = sorted({item["reason"] for item in cycle_evidence if not item["confirmed"]})
+        if not window_matches:
+            reasons.append("reference_window_mismatch")
+        from .evaluation_context import publish_timing_protocol
+
+        publish_timing_protocol(evidence_root, timing_protocol)
         from .utility import losses_from_attempt, root_reference
 
         utility_reference = root_reference(Path(self.private_dir).parent, mode, contract.contract_hash)
@@ -408,10 +454,13 @@ class Grader(TaskGrader):
             hardware_comparison=hardware_comparison,
             max_relative_eval_loss=contract.raw["quality"]["max_relative_eval_loss"],
             utility_reference=utility_reference, inherited_quality=inherited_quality,
+            timing_protocol=timing_protocol, performance_eligible=not reasons,
+            ineligibility_reasons=reasons,
         )
 
     def evaluate(self) -> ScoreBundle:
         from .gpu import InfraFailure
+        from .timing_policy import TimingPolicyError
 
         self._hardware_comparison = None
         validation = bool(self.tasks and self.tasks[0].metadata.get("coral_validation"))
@@ -442,5 +491,5 @@ class Grader(TaskGrader):
             return self._formal(contract, mode, reference)
         except InfraFailure as exc:
             return self._failure(str(exc), "infra")
-        except CandidateError as exc:
+        except (CandidateError, TimingPolicyError) as exc:
             return self._failure(str(exc), "candidate")

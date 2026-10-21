@@ -184,9 +184,10 @@ def test_formal_evaluation_fails_as_infrastructure_before_gpu_when_references_mi
 
 
 @pytest.mark.parametrize("mode", ["research", "engineering"])
-@pytest.mark.parametrize("fault", [None, "missing_monitoring", "incomparable", "interference", "cross_interference", "wrong_model"])
+@pytest.mark.parametrize("steps", [400, 800])
+@pytest.mark.parametrize("fault", [None, "missing_monitoring", "incomparable", "interference", "cross_interference", "wrong_model", "missing_cycle"])
 def test_formal_stages_reserve_separately_and_validate_before_scoring(
-    contract, tmp_path, monkeypatch, mode, fault,
+    contract, tmp_path, monkeypatch, mode, fault, steps,
 ):
     import json
     from types import SimpleNamespace
@@ -237,6 +238,10 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
         "contract_hash": contract.contract_hash,
         "environment": environment,
         "monitoring": {} if fault == "missing_monitoring" else monitor_policy,
+        "timing_windows": {"800": {"measured_iterations": 800, "cells": {
+            "130m_adamw_bf16": {"mean_iteration_seconds": 0.4},
+            "130m_adamw_fp32": {"mean_iteration_seconds": 0.4},
+        }}},
         "cells": {
             "130m_adamw_bf16": {"mean_iteration_seconds": 0.4},
             "130m_adamw_fp32": {"mean_iteration_seconds": 0.4},
@@ -303,10 +308,15 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
             else:
                 payload = {
                     "status": "completed", "contract_hash": contract.contract_hash,
-                    "measured_steps": 400, "strict_blocking_communication": False,
+                    "measured_steps": steps, "strict_blocking_communication": False,
                     "bucket_layout_recorded": True, "observed_bucket_bytes": [[100]],
                     "topology_fingerprint": topology, "mean_iteration_seconds": 0.2,
+                    "first_measured_update": 102, "last_measured_update": 101 + steps,
+                    "timing_cycle": {"period_steps": 200 if steps == 400 else 800,
+                                     "rank_event_steps": ([[301, 501]] if steps == 400 else [[901]]) * 4},
                 }
+            if fault == "missing_cycle":
+                payload.pop("timing_cycle", None)
             (output / "all_results.json").write_text(json.dumps(payload))
             return SimpleNamespace(
                 timed_out=False, returncode=0, stderr_tail="",
@@ -321,12 +331,18 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
     grader.private_dir = str(private)
     grader.tasks = [Task(
         "formal", "formal", "formal",
-        {"mode": mode, "contract_hash": contract.contract_hash, "quality_anchor": "research-sha"},
+        {"mode": mode, "contract_hash": contract.contract_hash, "quality_anchor": "research-sha",
+         "timing_declaration": {"period_steps": 200 if steps == 400 else 800}},
     )]
 
     bundle = grader.evaluate()
 
     assert not held
+    if fault == "missing_cycle":
+        assert bundle.aggregated == 0.0
+        assert bundle.metadata["performance_eligible"] is False
+        assert bundle.scores["bf16_timing_mean"].value == 0.2
+        return
     if fault not in {None, "incomparable"}:
         assert bundle.aggregated is None
         assert bundle.metadata["failure_class"] == "infra"
@@ -344,6 +360,11 @@ def test_formal_stages_reserve_separately_and_validate_before_scoring(
             assert "interference" in bundle.feedback
         return
     assert bundle.aggregated == pytest.approx(2.0)
+    assert bundle.metadata["timing_protocol"]["measured_iterations"] == steps
+    assert bundle.metadata["performance_eligible"] is True
+    for command in grader.commands:
+        if "c4/table_v_timing.py" in command:
+            assert command[command.index("--measured_iterations") + 1] == str(steps)
     assert [r.stage for r in reservations] == (["quality", "timing"] if mode == "research" else ["timing"])
     assert len(grader.commands) == (6 if mode == "research" else 4)
     assert sum("c4/run_llama_pretraining.py" in command for command in grader.commands) == (2 if mode == "research" else 0)

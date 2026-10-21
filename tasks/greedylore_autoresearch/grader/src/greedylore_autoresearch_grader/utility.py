@@ -32,9 +32,12 @@ def root_reference(coral_dir: Path, mode: str, contract_hash: str):
                     if a.metadata.get("node_id") == "N000" and not a.archived
                     and a.metadata.get("contract_hash") == contract_hash
                     and a.status in {"improved", "baseline", "regressed", "reverted"}
+                    and a.budget_class == "real" and a.metadata.get("performance_eligible") is not False
                     and not a.metadata.get("failure_class")]
         research = [a for a in attempts if a.metadata.get("mode") == "research"]
         selected = root.get("research", {}).get("selected_sha")
+        if selected is None and root.get("research", {}).get("status") != "completed":
+            return None
         research = [a for a in research if selected is None or a.commit_hash == selected]
         if len(research) != 1:
             return None

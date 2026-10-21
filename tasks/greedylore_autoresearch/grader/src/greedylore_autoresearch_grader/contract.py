@@ -31,9 +31,14 @@ def _check_keys(value: Any, schema: Any, path: str = "contract") -> None:
             raise ContractError(f"{path} must be a mapping")
         unknown = set(value) - set(schema)
         missing = set(schema) - set(value)
+        # Existing private contracts remain readable without changing their hashes.
+        if path == "contract.efficiency":
+            missing.discard("max_measured_iterations")
         if unknown or missing:
             raise ContractError(f"{path} has unknown/missing keys: {sorted(unknown | missing)}")
         for key in schema:
+            if key not in value:
+                continue
             _check_keys(value[key], schema[key], f"{path}.{key}")
 
 
@@ -84,6 +89,10 @@ def _validate_values(raw: dict[str, Any]) -> None:
         raise ContractError("efficiency.repetitions must equal 2")
     for field in ("warmup_iterations", "measured_iterations", "bucket_cap_mb"):
         _positive_int(raw["efficiency"][field], f"efficiency.{field}")
+    maximum = raw["efficiency"].get("max_measured_iterations", 800)
+    _positive_int(maximum, "efficiency.max_measured_iterations")
+    if raw["efficiency"]["measured_iterations"] > maximum:
+        raise ContractError("efficiency.measured_iterations exceeds maximum")
     _finite_positive(raw["quality"]["max_relative_eval_loss"], "quality.max_relative_eval_loss")
     cells = raw["efficiency"]["cells"]
     if not isinstance(cells, dict) or set(cells) != {"130m_adamw_bf16", "130m_adamw_fp32"}:

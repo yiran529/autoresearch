@@ -14,7 +14,7 @@ def _plain(value):
     return value
 
 
-def publish_context(contract, reference, root: Path, mode: str) -> Path:
+def publish_context(contract, reference, root: Path, mode: str, timing_protocol=None) -> Path:
     """Called once before workloads, so failed runs also retain their real recipe."""
     path = root / 'evaluation_context.json'
     value = {
@@ -32,6 +32,7 @@ def publish_context(contract, reference, root: Path, mode: str) -> Path:
                    'run_order': contract.efficiency.run_order,
                    'comparison': 'dense mean_iteration_seconds / candidate mean_iteration_seconds'},
         'dense_timing': reference['efficiency']['cells'],
+        'timing_protocol': timing_protocol,
     }
     _atomic_json(path, _plain(value))
     return path
@@ -44,4 +45,13 @@ def publish_hardware_comparison(root: Path, comparison: dict) -> None:
     path = root / 'evaluation_context.json'
     value = json.loads(path.read_text())
     value['hardware_comparison'] = comparison
+    _atomic_json(path, _plain(value))
+
+
+def publish_timing_protocol(root: Path, protocol: dict) -> None:
+    import json
+
+    path = root / 'evaluation_context.json'
+    value = json.loads(path.read_text())
+    value['timing_protocol'] = protocol
     _atomic_json(path, _plain(value))

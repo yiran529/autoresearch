@@ -20,3 +20,8 @@ semantic_self_check:
   status: not_applicable      # pass | fail | partial | not_run | not_applicable
   commands: []                # commands actually executed / log paths
   limitations: ""            # uncovered behavior and numerical uncertainties
+
+# Optional request; the host owns the window (normally 400, at most 800).
+# timing:
+#   period_steps: 200  # effective full cycle; null for nonperiodic methods
+#   requested_steps: 400

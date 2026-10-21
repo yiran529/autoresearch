@@ -36,6 +36,16 @@ def test_contract_is_immutable_and_hash_stable(tmp_path):
         first.raw["training"] = {}
 
 
+def test_legacy_contract_remains_readable_without_rewriting_hash(tmp_path):
+    path = make_contract(tmp_path)
+    raw = yaml.safe_load(path.read_text())
+    raw['efficiency'].pop('max_measured_iterations')
+    raw['quality']['max_relative_eval_loss'] = 1.06
+    path.write_text(yaml.safe_dump(raw))
+    old_hash = canonical_contract_hash(path)
+    assert EvalContract.load(path).contract_hash == old_hash
+
+
 def test_contract_rejects_unknown_keys_and_missing_paths(tmp_path):
     path = make_contract(tmp_path)
     raw = yaml.safe_load(path.read_text())

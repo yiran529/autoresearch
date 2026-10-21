@@ -145,8 +145,19 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
         declaration = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
         raise SubmissionError("submission.yaml is not valid YAML") from exc
-    if not isinstance(declaration, dict) or set(declaration) != _FIELDS:
+    if not isinstance(declaration, dict) or set(declaration) not in (_FIELDS, _FIELDS | {"timing"}):
         raise SubmissionError("submission.yaml has an invalid schema")
+    timing = None
+    if "timing" in declaration:
+        from greedylore_autoresearch_grader.timing_policy import (
+            TimingPolicyError,
+            validate_declaration,
+        )
+
+        try:
+            timing = validate_declaration(declaration["timing"])
+        except TimingPolicyError as exc:
+            raise SubmissionError(str(exc)) from exc
 
     mode = declaration["mode"]
     if mode not in {"research", "engineering"}:
@@ -234,6 +245,7 @@ def validate_submission(commit_hash: str, context: dict[str, Any]) -> dict[str, 
         raise SubmissionError("max_infra_retries must be a non-negative integer")
 
     return {
+        **({"timing_declaration": timing} if timing is not None else {}),
         "mode": mode,
         "node_id": node_id,
         "node_type": node_type,

@@ -1,17 +1,16 @@
 {
-  "task_files": {
-    "diagnostic_checkpoint.py": {
-      "sha256": "a6e0ce781264c1688642a77e1e89b53268c9a8727d09e5c1628c1d17f32200d2"
-    }
-  },
   "adaptations": {
     "c4/run_llama_pretraining.py": {
       "reason": "offline tokenizer, formal quality evidence schema, and final diagnostic checkpoint",
       "seed_sha256": "a49d3c72feb0a16a459ff51474436f527a179382dc9b6683d798aaf530be0d25"
     },
     "c4/table_v_timing.py": {
-      "reason": "formal timing identity and hardware evidence schema",
-      "seed_sha256": "dca2c721748ad1d08542e431943e3ef47d1f7b8033c9cadead6cb1f69f4813db"
+      "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
+      "seed_sha256": "dcb4a359a43aad427fe9c248216392c2e87e8141c84ed0769cfe3d8df168718c"
+    },
+    "comm_hooks/subspace_hook.py": {
+      "reason": " Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
+      "seed_sha256": "d91d67ba24e144b40bf37e787249e030b71e342c7c49584bcb9b5e08c49fef46"
     },
     "comm_hooks/utils.py": {
       "reason": "return hook state and enable quality-only checkpoint bucket recording; timing hooks unchanged",
@@ -510,5 +509,10 @@
   },
   "schema_version": 1,
   "source_commit": "d2c38bc2062e06fdfd73185c508e7cc652933de6",
-  "source_repository": "/home/wyr/greedy_lore"
+  "source_repository": "/home/wyr/greedy_lore",
+  "task_files": {
+    "diagnostic_checkpoint.py": {
+      "sha256": "a6e0ce781264c1688642a77e1e89b53268c9a8727d09e5c1628c1d17f32200d2"
+    }
+  }
 }
