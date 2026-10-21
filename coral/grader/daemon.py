@@ -11,8 +11,9 @@ Design invariants:
   just configuration; safety is the operator's call — most graders are NOT
   concurrency-safe (Docker port conflicts, GPU contention, shared scratch
   dirs, etc.).
+- All daemons continuously admit new attempts as worker slots become free.
 - Opt-in cooperative resource graders may add `max_waiting_workers` host
-  slots and continuous admission; their allocator enforces active resource
+  slots; their allocator enforces active resource
   limits and priority while a reserved slot admits late engineering work.
 - Writes are atomic via hub.attempts.write_attempt (tmp + rename).
 - Daemon is idempotent: re-seeing an already-scored attempt is a no-op.
@@ -775,11 +776,11 @@ def _serve_resource_pending(
     heartbeat_file: Path | None = None,
     once: bool = False,
 ) -> list[Attempt]:
-    """Keep accepting late high-priority work while cooperative graders await GPUs.
+    """Keep admitting pending work without waiting for a whole batch to finish.
 
-    Enabled only with max_waiting_workers. The task's resource allocator, rather
-    than the host thread count, enforces max_workers active GPU stages per run.
-    A reserved host slot prevents low-priority waiting workers filling the pool.
+    Without extra waiting workers, the pool enforces max_workers directly.
+    With extra workers, the task's allocator enforces the active resource limit;
+    one host slot is reserved for late Engineering to avoid head blocking.
     """
     capacity = config.grader.parallel.max_workers + config.grader.parallel.max_waiting_workers
     finalized: list[Attempt] = []
@@ -802,9 +803,14 @@ def _serve_resource_pending(
                 for attempt in candidates:
                     if len(in_flight) >= capacity:
                         break
-                    low_count = sum(a.metadata.get("mode") != "engineering"
-                                    for a in in_flight.values())
-                    if attempt.metadata.get("mode") != "engineering" and low_count >= capacity - 1:
+                    low_count = sum(
+                        a.metadata.get("mode") != "engineering" for a in in_flight.values()
+                    )
+                    if (
+                        config.grader.parallel.max_waiting_workers
+                        and attempt.metadata.get("mode") != "engineering"
+                        and low_count >= capacity - 1
+                    ):
                         continue
                     future = pool.submit(_safe_grade_one, attempt, config_path, coral_dir, config)
                     in_flight[future] = attempt
@@ -822,7 +828,7 @@ def _serve_resource_pending(
             for future in done:
                 del in_flight[future]
                 result = future.result()
-                if result is not None:
+                if once and result is not None:
                     finalized.append(result)
     return finalized
 
@@ -868,35 +874,9 @@ def run_daemon(coral_dir: str | Path, stop_event: Any = None) -> None:
         trusted_server.start()
 
     try:
-        if config.grader.parallel.max_waiting_workers:
-            _serve_resource_pending(config_path, coral_dir, config,
-                                    should_stop=_should_stop, heartbeat_file=heartbeat_file)
-            return
-        while not _should_stop():
-            try:
-                pending = _find_pending(coral_dir)
-            except Exception:
-                logger.exception("Failed to scan for pending attempts")
-                pending = []
-
-            if not pending:
-                # Idle heartbeat so supervisors can tell the daemon is alive.
-                try:
-                    heartbeat_file.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
-                except OSError:
-                    pass
-                time.sleep(_POLL_INTERVAL_SEC)
-                continue
-
-            _drain_pending(
-                pending,
-                config_path,
-                coral_dir,
-                config,
-                max_workers=max_workers,
-                heartbeat_file=heartbeat_file,
-                should_stop=_should_stop,
-            )
+        _serve_resource_pending(
+            config_path, coral_dir, config, should_stop=_should_stop, heartbeat_file=heartbeat_file
+        )
 
     finally:
         if trusted_server is not None:

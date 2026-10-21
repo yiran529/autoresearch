@@ -1409,3 +1409,181 @@ def test_trusted_socket_responds_while_grader_is_running(tmp_path):
         stop.set()
         thread.join(timeout=4)
     assert not thread.is_alive()
+
+
+def test_daemon_admits_late_attempt_with_zero_waiting_workers(tmp_path, monkeypatch):
+    """A free second slot must accept a later submission while the first is blocked."""
+    import threading
+
+    repo = _init_repo_and_coral(tmp_path)
+    coral_dir = repo / ".coral"
+    _set_config(repo, parallel={"max_workers": 2, "max_waiting_workers": 0})
+    _write_grader(
+        repo,
+        """
+import time
+from pathlib import Path
+from coral.grader.task_grader import TaskGrader
+
+class Grader(TaskGrader):
+    def evaluate(self):
+        root = Path(self.private_dir)
+        agent = self.tasks[0].metadata['agent_id']
+        (root / (agent + '.started')).touch()
+        deadline = time.monotonic() + 10
+        while not (root / (agent + '.release')).exists():
+            if time.monotonic() > deadline:
+                raise RuntimeError('test grader was not released')
+            time.sleep(0.01)
+        return 0.5
+""",
+    )
+    monkeypatch.setattr("coral.grader.daemon._POLL_INTERVAL_SEC", 0.01)
+
+    def submit(agent):
+        (repo / "main.py").write_text(f"print({agent!r})\n")
+        return submit_eval(message=agent, agent_id=agent, workdir=str(repo), wait=False)
+
+    def until(predicate):
+        deadline = time.monotonic() + 4
+        while not predicate() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert predicate()
+
+    first = submit("first")
+    stop = threading.Event()
+    daemon = threading.Thread(target=run_daemon, args=(coral_dir, stop))
+    daemon.start()
+    try:
+        until(lambda: (coral_dir / "private/first.started").exists())
+        second = submit("second")
+        # This must happen without completing or resubmitting the first Attempt.
+        until(lambda: (coral_dir / "private/second.started").exists())
+        assert read_attempt(coral_dir, first.commit_hash).status == "pending"
+        third = submit("third")
+        # Both existing slots remain occupied; the third must stay undispatched.
+        time.sleep(0.15)
+        queued = read_attempt(coral_dir, third.commit_hash)
+        assert queued.status == "pending"
+        assert queued.metadata.get("grader_invocation_count", 0) == 0
+        # A later Engineer must get the next slot ahead of queued Research.
+        engineering = submit("engineer")
+        engineering.metadata["mode"] = "engineering"
+        write_attempt(coral_dir, engineering)
+        (coral_dir / "private/first.release").touch()
+        until(lambda: (coral_dir / "private/engineer.started").exists())
+        assert (
+            read_attempt(coral_dir, third.commit_hash).metadata.get("grader_invocation_count", 0)
+            == 0
+        )
+        (coral_dir / "private/engineer.release").touch()
+        until(lambda: (coral_dir / "private/third.started").exists())
+        assert read_attempt(coral_dir, second.commit_hash).status == "pending"
+        for agent in ("second", "third"):
+            (coral_dir / f"private/{agent}.release").touch()
+        until(
+            lambda: all(
+                read_attempt(coral_dir, attempt.commit_hash).status != "pending"
+                for attempt in (first, second, third, engineering)
+            )
+        )
+    finally:
+        stop.set()
+        for agent in ("first", "second", "third", "engineer"):
+            (coral_dir / f"private/{agent}.release").touch()
+        daemon.join(6)
+    assert not daemon.is_alive()
+    for attempt in (first, second, third, engineering):
+        final = read_attempt(coral_dir, attempt.commit_hash)
+        assert final.score == 0.5
+        assert final.metadata["grader_invocation_count"] == 1
+        assert len(final.metadata["grader_runs"]) == 1
+
+
+@pytest.mark.parametrize("max_workers", [1, 2])
+def test_daemon_stop_drains_active_without_admitting_queued(tmp_path, monkeypatch, max_workers):
+    """Stop preserves queued Attempts and waits for already admitted grades to finish."""
+    import threading
+
+    repo = _init_repo_and_coral(tmp_path)
+    coral_dir = repo / ".coral"
+    _set_config(
+        repo,
+        max_pending_per_agent=0,
+        parallel={"max_workers": max_workers, "max_waiting_workers": 0},
+    )
+    _submit_n(repo, max_workers + 1)
+    attempts = _find_pending(coral_dir)
+    active = 0
+    lock = threading.Lock()
+    full = threading.Event()
+    release = threading.Event()
+    stop = threading.Event()
+
+    def grade(attempt, *_args):
+        nonlocal active
+        with lock:
+            active += 1
+            if active == max_workers:
+                full.set()
+        assert release.wait(5), "test grades were not released"
+        attempt.status = "improved"
+        attempt.score = 0.5
+        write_attempt(coral_dir, attempt)
+        return attempt
+
+    monkeypatch.setattr("coral.grader.daemon._safe_grade_one", grade)
+    monkeypatch.setattr("coral.grader.daemon._POLL_INTERVAL_SEC", 0.01)
+    daemon = threading.Thread(target=run_daemon, args=(coral_dir, stop))
+    daemon.start()
+    try:
+        assert full.wait(3), "configured worker capacity was never filled"
+        stop.set()
+        assert daemon.is_alive()
+    finally:
+        stop.set()
+        release.set()
+        daemon.join(6)
+    assert not daemon.is_alive()
+    assert active == max_workers
+    assert [read_attempt(coral_dir, a.commit_hash).status for a in attempts] == (
+        ["improved"] * max_workers + ["pending"]
+    )
+
+
+def test_continuous_daemon_releases_completed_results(tmp_path, monkeypatch):
+    """Large completed feedback must not stay retained for the daemon's lifetime."""
+    import gc
+    import threading
+    import weakref
+    from dataclasses import replace
+
+    repo = _init_repo_and_coral(tmp_path)
+    coral_dir = repo / ".coral"
+    _set_config(repo, max_pending_per_agent=0)
+    _submit_n(repo, 4)
+    last_started, release, stop = threading.Event(), threading.Event(), threading.Event()
+    results = []
+
+    def grade(attempt, *_args):
+        if len(results) == 3:
+            last_started.set()
+            assert release.wait(5)
+        final = replace(attempt, status="improved", score=0.5)
+        write_attempt(coral_dir, final)
+        results.append(weakref.ref(final))
+        return final
+
+    monkeypatch.setattr("coral.grader.daemon._safe_grade_one", grade)
+    monkeypatch.setattr("coral.grader.daemon._POLL_INTERVAL_SEC", 0.01)
+    daemon = threading.Thread(target=run_daemon, args=(coral_dir, stop))
+    daemon.start()
+    try:
+        assert last_started.wait(3)
+        gc.collect()
+        assert results[0]() is None
+    finally:
+        stop.set()
+        release.set()
+        daemon.join(6)
+    assert not daemon.is_alive()

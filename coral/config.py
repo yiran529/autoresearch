@@ -28,9 +28,9 @@ class ParallelGraderConfig:
     the pool existed. Set higher only when the grader is concurrency-safe
     (pure Python, sandboxed swebench runs, etc.); the daemon does not enforce
     safety, so a misconfigured value with a non-safe grader is the user's
-    responsibility. ``max_waiting_workers > 0`` enables continuous admission
-    of additional host workers for cooperative resource-aware graders. Such
-    graders must enforce ``max_workers`` at resource acquisition themselves.
+    responsibility. New attempts are admitted continuously as slots free up.
+    ``max_waiting_workers > 0`` adds host workers for cooperative resource-aware
+    graders, which must enforce ``max_workers`` at resource acquisition themselves.
     """
 
     max_workers: int = 1
