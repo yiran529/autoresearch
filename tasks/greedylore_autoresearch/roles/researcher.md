@@ -31,6 +31,7 @@ Keep selection notes in scratch until initialization. The default lock lease is 
 - Complete `submission.yaml` with `mode: research` and fixed Spec references. Declare `timing.period_steps`: the full effective cycle, or null for a nonperiodic method. Only `requested_steps` is optional; host bounds remain authoritative. Maintain actual maintenance-event telemetry as described in `notes/toolkit/README.md`.
 - Before each formal run, archive self-check scripts/logs needed by Analysis with `autoresearch evidence archive`. Temporary files and retired Worktrees are not persistent evidence.
 - Use `coral eval` for quality and efficiency. Allow at most **3 successful scored formal runs and 10 total formal runs**, including failures, permitted same-SHA infrastructure retries, archived Attempts and all resumes. A scored regression counts as successful regardless of quality passing; pending runs reserve capacity.
+  - **WHEN WAITING FOR RESULTS, USE 1800-SECOND LONG WAITS (`yield_time_ms=1800000`).** Apply this to `write_stdin` and any outer `functions.exec`/`functions.wait`; continue as soon as results return. **DO NOT use short polling loops, periodic log reads or waiting updates.**
 - Inspect quality, cycle coverage, comparability and end-to-end timing; U is optional advice. Missing evidence is not a speedup. Within budget continue justified refinements; one result does not end the assignment. Keep Parent/base_commit, Spec and hypothesis fixed. Core mechanism changes require a new Node, not another candidate here.
 
 ## 4. Finish and wait for the host
