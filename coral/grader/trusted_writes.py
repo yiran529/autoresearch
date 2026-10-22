@@ -266,12 +266,21 @@ def begin_grader_run(
     coral_dir: str | Path,
     commit_hash: str,
     island_id: str | int | None,
+    *,
+    dispatch_validator: Callable[[Attempt], bool] | None = None,
 ) -> tuple[Attempt, str]:
     """Append one running record before an actual grader invocation."""
     with trusted_writes_lock(coral_dir):
         attempt = _read_attempt_unlocked(coral_dir, commit_hash, island_id)
         if attempt.status != "pending" or attempt.score is not None:
             raise TrustedWriteError("only a pending attempt can be dispatched")
+        if dispatch_validator is not None:
+            try:
+                allowed = dispatch_validator(attempt)
+            except Exception as exc:
+                raise DispatchClaimError('cannot verify dispatch eligibility') from exc
+            if not allowed:
+                raise DispatchClaimError('Node is waiting for dispatch eligibility')
         metadata = dict(attempt.metadata or {})
         runs = list(metadata.get("grader_runs") or [])
         for index, existing in enumerate(runs):

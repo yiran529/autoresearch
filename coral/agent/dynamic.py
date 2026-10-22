@@ -111,11 +111,11 @@ class DynamicAssignmentClient:
                 valid = False
             if (
                 not valid
-                or status not in {"reserved", "active", "finalizing"}
+                or status not in {"reserved", "active", "finalizing", "waiting"}
                 or agent_id in seen
                 or role == "research" and (not isinstance(research_mode, str) or research_mode not in {"REFINE", "EXPLORE"})
                 or role == "engineering" and research_mode is not None
-                or role == "engineering" and (status in {"active", "finalizing"}) != (node_id is not None)
+                or role == "engineering" and (status in {"active", "finalizing", "waiting"}) != (node_id is not None)
             ):
                 raise ValueError("invalid dynamic assignment entry")
             assignments.append(DynamicAssignment(agent_id, role, node_id, status, research_mode))

@@ -119,6 +119,63 @@ def _init_repo_and_coral(base_dir: Path, score: float = 0.5) -> Path:
     return repo
 
 
+def _install_dispatch_filter(repo):
+    coral_dir = repo / '.coral'
+    config = yaml.safe_load((coral_dir / 'config.yaml').read_text())
+    config['grader']['args'] = {'trusted_dispatch_filter': 'testgrader:filter_dispatch'}
+    (coral_dir / 'config.yaml').write_text(yaml.safe_dump(config))
+    with (coral_dir / 'private/grader_pkg/testgrader.py').open('a') as stream:
+        stream.write('''
+def filter_dispatch(*, candidates, context):
+    import json
+    from pathlib import Path
+    from coral.hub.attempts import read_attempt
+    coral_dir = context['coral_dir']
+    allowed = json.loads((Path(coral_dir) / 'private/allowed_nodes.json').read_text())
+    return {'eligible_hashes': [c['commit_hash'] for c in candidates
+            if read_attempt(coral_dir, c['commit_hash']).metadata['node_id'] in allowed]}
+''')
+    allowed = coral_dir / 'private/allowed_nodes.json'
+    allowed.write_text('["N001", "N002"]')
+    return config, allowed
+
+
+def test_pending_dispatch_filter_retains_deferred_attempt_without_grading(tmp_path):
+    repo = _init_repo_and_coral(tmp_path)
+    _install_dispatch_filter(repo)
+    coral_dir = repo / '.coral'
+    for number in [1, 2, 3]:
+        write_attempt(coral_dir, Attempt(
+            commit_hash=f'{number:040x}', agent_id=f'research-N{number:03d}',
+            title='queued', status='pending', score=None, parent_hash=None,
+            timestamp='2026-01-01T00:00:00+00:00',
+            metadata={'node_id': f'N{number:03d}', 'mode': 'research'}))
+    assert [a.metadata['node_id'] for a in _find_pending(coral_dir)] == ['N001', 'N002']
+    deferred = read_attempt(coral_dir, f'{3:040x}')
+    assert deferred.status == 'pending'
+    assert not deferred.metadata.get('grader_runs')
+
+
+def test_dispatch_rechecks_admission_before_claiming_a_run(tmp_path):
+    from coral.grader.daemon import _grade_one
+    from coral.grader.trusted_writes import DispatchClaimError
+
+    repo = _init_repo_and_coral(tmp_path)
+    config, allowed = _install_dispatch_filter(repo)
+    coral_dir = repo / '.coral'
+    attempt = Attempt(commit_hash='a' * 40, agent_id='research-N001',
+                      title='queued', status='pending', score=None, parent_hash=None,
+                      timestamp='2026-01-01T00:00:00+00:00', metadata={'node_id': 'N001'})
+    write_attempt(coral_dir, attempt)
+    queued = _find_pending(coral_dir)[0]
+    allowed.write_text('[]')
+    with pytest.raises(DispatchClaimError):
+        _grade_one(queued, coral_dir / 'config.yaml', coral_dir, CoralConfig.from_dict(config))
+    unchanged = read_attempt(coral_dir, attempt.commit_hash)
+    assert unchanged.status == 'pending'
+    assert not unchanged.metadata.get('grader_runs')
+
+
 # --------------------------------------------------------------------------- #
 # _repo_dir — handles both production and test layouts                        #
 # --------------------------------------------------------------------------- #

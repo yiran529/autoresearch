@@ -104,6 +104,8 @@ def build_config(source_coral, output, model, effort):
         shlex.join(["uv", "pip", "install", "--offline", "-e", str(TASK / "grader"),
                     "-e", str(TASK / "autoresearch")])]
     args = raw["grader"]["args"]
+    # This standalone tool must stop after Root Engineering, without child Nodes.
+    args['max_active_nodes'] = 0
     # Short reconciliation publishes Engineering; no model worker is needed.
     args.pop("trusted_workflow_worker", None)
     args.pop("trusted_memory_worker", None)

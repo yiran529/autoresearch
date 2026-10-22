@@ -22,6 +22,7 @@ grader:
     trusted_workflow_handler: autoresearch.state:handle_workflow
     trusted_workflow_worker: autoresearch.lifecycle:run_worker
     trusted_workflow_authorizer: autoresearch.state:authorize_attempt
+    trusted_dispatch_filter: autoresearch.state:filter_dispatch
     trusted_artifact_authorizer: autoresearch.state:authorize_artifact
     trusted_memory_authorizer: autoresearch.state:authorize_memory_start
     trusted_memory_worker: autoresearch.memory:run_worker
@@ -30,6 +31,7 @@ grader:
     engineer_diagnostics: true
     p_explore: 0.20
     research_planning_lease_seconds: 1800
+    max_active_nodes: 2
     # Opt in per run only: local IPC exception for the isolated Analyzer.
     analyzer_allow_unix_sockets: false
     # Explicit public Python/CUDA/data roots can be mounted read-only when needed.
@@ -53,8 +55,6 @@ agents:
   grader_pending_max_age: 176400
   dynamic:
     enabled: true
-    max_researchers: 2
-    max_engineers: 1
   assignments:
   - role: research
     runtime_options:

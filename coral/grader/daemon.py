@@ -429,7 +429,10 @@ def _grade_one(
     )
     attempt = current_attempt or attempt
     attempt, run_id = begin_grader_run(
-        coral_dir, attempt.commit_hash, dispatch_island_id
+        coral_dir, attempt.commit_hash, dispatch_island_id,
+        **({'dispatch_validator': lambda current: bool(_filter_dispatchable(
+            coral_dir, [current], config=config, lock_held=True))}
+           if config.grader.args.get('trusted_dispatch_filter') else {}),
     )
     budget_class = get_budget_class(attempt.metadata)
     task = Task(
@@ -580,6 +583,35 @@ def _grade_one(
 # --------------------------------------------------------------------------- #
 
 
+def _filter_dispatchable(
+    coral_dir: Path, attempts: list[Attempt], *,
+    config: CoralConfig | None = None, lock_held: bool = False,
+) -> list[Attempt]:
+    """Ask an optional task policy before queuing and again under the dispatch lock."""
+    if not attempts:
+        return attempts
+    if config is None:
+        path = coral_dir / 'config.yaml'
+        if not path.exists():
+            return attempts
+        config = CoralConfig.from_yaml(path)
+    entrypoint = config.grader.args.get('trusted_dispatch_filter')
+    if not entrypoint:
+        return attempts
+    from coral.grader.trusted_worker import invoke_task_validator
+
+    result = invoke_task_validator(
+        coral_dir, entrypoint, context={'coral_dir': str(coral_dir), 'lock_held': lock_held},
+        candidates=[{'commit_hash': a.commit_hash, 'island_id': _attempt_island_id(a)}
+                    for a in attempts],
+    )
+    hashes = result.get('eligible_hashes')
+    if (not isinstance(hashes, list) or any(not isinstance(h, str) for h in hashes)
+            or not set(hashes).issubset({a.commit_hash for a in attempts})):
+        raise ValueError('invalid task dispatch filter response')
+    return [a for a in attempts if a.commit_hash in hashes]
+
+
 def _find_pending(coral_dir: Path) -> list[Attempt]:
     """Return pending attempts (across all islands in multi-island mode), oldest first."""
     if (coral_dir / "islands").exists():
@@ -603,7 +635,11 @@ def _find_pending(coral_dir: Path) -> list[Attempt]:
             if a.status == "pending" and a.score is None and not a.archived:
                 pending.append(a)
     pending.sort(key=lambda x: x.timestamp)
-    return pending
+    try:
+        return _filter_dispatchable(coral_dir, pending)
+    except Exception:
+        logger.exception('Cannot verify pending dispatch eligibility; deferring work')
+        return []
 
 
 def _safe_grade_one(

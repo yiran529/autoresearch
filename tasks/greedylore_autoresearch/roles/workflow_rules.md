@@ -29,6 +29,7 @@
 
 ## Node lifecycle
 
+- The host advances at most two unfinished Nodes at a time, without separate Researcher or Engineer concurrency limits. A Node keeps its slot from Research through published Research Analysis and completed or legitimately skipped Engineering. When one Node finishes, the oldest waiting Node continues its existing work before a new Node is created; resume preserves its Spec, code, session and consumed budgets.
 - Research freezes after explicit early completion or either formal-run cap, once all runs have ended. The host selects the quality-passing, comparable candidate with valid score and highest efficiency, with deterministic ties; if none qualifies it retains a representative failure and skips Engineering.
 - Only after Research freezes does the host retire Researcher, refresh Evaluation and start independent Research Analysis over all Research Attempts and quality-gated Engineering at the selected fixed SHA.
 - Root bootstrap remains one fixed baseline Attempt A0; historical completed Nodes are not reopened.

@@ -9,6 +9,7 @@ import random
 import shutil
 import subprocess
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ import yaml
 
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 from coral.hub._island import island_root
-from coral.hub.attempts import read_attempts
+from coral.hub.attempts import read_attempt, read_attempts
 
 from .analysis import AnalysisContext, _artifact_evidence, resolve_evidence
 from .atomic import atomic_write_text
@@ -88,6 +89,9 @@ class WorkflowStore:
         self.tree_path = self.notes_root / "tree.md"
         config_path = self.coral_dir / "config.yaml"
         config = (yaml.safe_load(config_path.read_text()) or {}) if config_path.exists() else {}
+        self.max_active_nodes = config.get('grader', {}).get('args', {}).get('max_active_nodes', 0)
+        if type(self.max_active_nodes) is not int or self.max_active_nodes < 0:
+            raise WorkflowError('max_active_nodes must be a non-negative integer')
         self.research_planning_lease_seconds = config.get('grader', {}).get('args', {}).get(
             'research_planning_lease_seconds', 0)
         if (type(self.research_planning_lease_seconds) is not int
@@ -200,11 +204,15 @@ class WorkflowStore:
         rows = ["# Research Tree", "", "Open a Node's index for its code SHAs, reports and persistent evidence.", "",
                 "| Node | Parent | Research mode | Research | Analysis | Engineering | Node status |",
                 "| --- | --- | --- | --- | --- | --- | --- |"]
+        admitted = self._admitted_node_ids_unlocked(state)
         for node_id, record in sorted(state["nodes"].items()):
             analysis = (record.get("analysis") or {}).get("status", "—")
             claims = record.get("engineering_claims", [])
             engineering = claims[-1]["status"] if claims else record.get("engineering_status", "blocked")
             status = "completed" if self._node_completed(record) else "in_progress"
+            if (node_id not in admitted and status != 'completed'
+                    and record['research']['status'] != 'cancelled'):
+                status = 'waiting_for_node_slot'
             if record.get("error"):
                 status = "error"
             parent, research_mode = node_relationship(self.notes_root, node_id, record)
@@ -237,16 +245,40 @@ class WorkflowStore:
         with trusted_writes_lock(self.coral_dir):
             return self._node_completed_unlocked(self._load_unlocked(), node_id)
 
+    def _unfinished_node_ids_unlocked(self, state: dict) -> list[str]:
+        """Oldest unfinished Nodes keep their slots through Analysis and Engineering."""
+        unfinished = []
+        for node_id, record in sorted(state['nodes'].items()):
+            if record['research']['status'] == 'cancelled':
+                continue
+            try:
+                completed = self._node_completed_unlocked(state, node_id)
+            except (ValueError, OSError):
+                completed = False
+            if not completed:
+                unfinished.append(node_id)
+        return unfinished
+
+    def _admitted_node_ids_unlocked(self, state: dict) -> set[str]:
+        if not self.max_active_nodes:
+            return set(state['nodes'])
+        return set(self._unfinished_node_ids_unlocked(state)[:self.max_active_nodes])
+
+    def _require_node_slot_unlocked(self, state: dict, node_id: str) -> None:
+        if node_id not in self._admitted_node_ids_unlocked(state):
+            raise WorkflowError('Node is waiting for an active Node slot')
+
     def rebuild_tree(self) -> Path:
         with trusted_writes_lock(self.coral_dir):
             state = self._load_unlocked()
             self._rebuild_tree_unlocked(state)
         return self.tree_path
 
-    @staticmethod
-    def _assignments(state: dict[str, Any]) -> tuple[WorkflowAssignment, ...]:
+    def _assignments(self, state: dict[str, Any]) -> tuple[WorkflowAssignment, ...]:
+        admitted = self._admitted_node_ids_unlocked(state)
         assignments = [
             WorkflowAssignment(record["research"]["agent_id"], "research", node_id,
+                               "waiting" if node_id not in admitted else
                                "finalizing" if record["research"].get("finish_requested")
                                else record["research"]["status"],
                                research_mode=record["research"].get("research_mode", "REFINE"))
@@ -255,15 +287,21 @@ class WorkflowStore:
         ]
         assignments.extend(
             WorkflowAssignment(agent_id, "engineering", worker.get("node_id"),
+                               "waiting" if worker.get('node_id') is not None
+                               and worker['node_id'] not in admitted else
                                "finalizing" if worker.get("finish_requested") and worker.get("analysis_submission") else worker["status"])
             for agent_id, worker in sorted(state["engineering_workers"].items())
             if worker["status"] in {"reserved", "active"}
         )
         return tuple(assignments)
 
-    def _qualified_research_unlocked(self, state: dict[str, Any], node_id: str) -> str | None:
+    def _qualified_research_unlocked(
+        self, state: dict[str, Any], node_id: str, *, admitted: set[str] | None = None,
+    ) -> str | None:
         record = state["nodes"].get(node_id)
         if not record or record.get("engineering_status") != "pending" or record["engineering_claims"]:
+            return None
+        if node_id not in (admitted if admitted is not None else self._admitted_node_ids_unlocked(state)):
             return None
         attempt = self._terminal_research_unlocked(node_id)
         if self.repo_path is None or not self.repo_path.is_dir():
@@ -408,6 +446,9 @@ class WorkflowStore:
             or max_engineers < 0
         ):
             raise WorkflowError("workflow capacities must be non-negative integers")
+        if self.max_active_nodes:
+            # Node admission is the only task concurrency limit in this mode.
+            max_researchers = max_engineers = self.max_active_nodes
         with trusted_writes_lock(self.coral_dir):
             self._verify_root()
             toolkit = self.notes_root / "toolkit"
@@ -419,13 +460,17 @@ class WorkflowStore:
             shutil.copyfile(task_root / "README.md", toolkit / "README.md")
             state = self._load_unlocked()
             self._advance_unlocked(state)
+            admitted = self._admitted_node_ids_unlocked(state)
             live_research = sum(
                 record["research"]["status"] in {"reserved", "active"}
                 for node_id, record in state["nodes"].items()
-                if node_id != "N000"
+                if node_id != "N000" and node_id in admitted
             )
             changed = not self.state_path.is_file()
             while live_research < max_researchers and self._node_completed_unlocked(state, "N000"):
+                if (self.max_active_nodes
+                        and len(self._unfinished_node_ids_unlocked(state)) >= self.max_active_nodes):
+                    break
                 sequence = state["next_node_seq"]
                 if sequence > 999:
                     raise WorkflowError("Node ID space is exhausted")
@@ -442,14 +487,17 @@ class WorkflowStore:
                 state["next_node_seq"] = sequence + 1
                 live_research += 1
                 changed = True
+            admitted = self._admitted_node_ids_unlocked(state)
             live_engineers = sum(worker["status"] == "active"
+                                 and (worker.get('node_id') is None
+                                      or worker['node_id'] in admitted)
                                  for worker in state["engineering_workers"].values())
             for node_id in sorted(state["nodes"], key=lambda n: state["nodes"][n].get("ready_seq", float("inf"))):
                 if live_engineers >= max_engineers:
                     break
                 record = state["nodes"][node_id]
                 try:
-                    research_sha = self._qualified_research_unlocked(state, node_id)
+                    research_sha = self._qualified_research_unlocked(state, node_id, admitted=admitted)
                 except WorkflowError as exc:
                     record["error"] = str(exc)
                     changed = True
@@ -582,6 +630,7 @@ class WorkflowStore:
             record = state["nodes"].get(node_id)
             if not isinstance(record, dict) or record["research"]["agent_id"] != agent_id:
                 raise WorkflowError("Research reservation owner does not match")
+            self._require_node_slot_unlocked(state, node_id)
             research = record["research"]
             if research["status"] not in {"reserved", "active"}:
                 raise WorkflowError("Research reservation is not active")
@@ -792,6 +841,23 @@ class WorkflowStore:
 
 
 
+def filter_dispatch(*, candidates: list[dict], context: dict) -> dict:
+    """Host-only dispatch policy; recheck canonical Attempts without consuming runs."""
+    coral_dir = context['coral_dir']
+    store = WorkflowStore(coral_dir)
+    with nullcontext() if context.get('lock_held') else trusted_writes_lock(coral_dir):
+        state = store._load_unlocked()
+        admitted = store._admitted_node_ids_unlocked(state)
+        hashes = []
+        for candidate in candidates:
+            attempt = read_attempt(coral_dir, candidate['commit_hash'],
+                                   island_id=candidate.get('island_id'))
+            if (attempt is not None and not attempt.archived and attempt.status == 'pending'
+                    and attempt.metadata.get('node_id') in admitted):
+                hashes.append(attempt.commit_hash)
+        return {'eligible_hashes': hashes}
+
+
 def _owned_active(
     state: dict[str, Any], agent_id: str | None, node_id: str, mode: str,
 ) -> bool:
@@ -817,6 +883,7 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
         state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode")
     ):
         raise WorkflowError("Attempt owner is not the active Node assignment")
+    store._require_node_slot_unlocked(state, canonical.get('node_id'))
     _reject_finalizing(state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode"))
     mode = canonical.get("mode")
     iterative = mode == "research" and state["nodes"][canonical["node_id"]]["research"].get("iterative")
@@ -908,7 +975,7 @@ def handle_workflow(
     if operation == "reconcile_workflow":
         if not context.get("is_manager") or payload:
             raise WorkflowError("only the manager may reconcile workflow")
-        if context["max_engineers"] < 1:
+        if not store.max_active_nodes and context["max_engineers"] < 1:
             raise WorkflowError("node-bound workflow requires agents.dynamic.max_engineers >= 1")
         assignments = store.reconcile(
             context["max_researchers"], context["max_engineers"]

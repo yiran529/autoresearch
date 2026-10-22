@@ -228,7 +228,7 @@ class AgentManager:
         }
         for handle in list(self.handles):
             desired_item = desired_by_id.get(handle.agent_id)
-            if desired_item is not None and desired_item.status != "finalizing":
+            if desired_item is not None and desired_item.status not in {"finalizing", "waiting"}:
                 continue
             handle.stop()
             self.handles.remove(handle)
@@ -246,12 +246,13 @@ class AgentManager:
         self.specs_by_id.update(desired_specs)
         for item in desired:
             spec = desired_specs[item.agent_id]
-            if item.agent_id in live_ids or item.status == "finalizing":
+            if item.agent_id in live_ids or item.status in {"finalizing", "waiting"}:
                 continue
             self.runtimes[item.agent_id] = get_runtime(spec.runtime)
             handle = self._setup_and_start_agent(
                 item.agent_id,
-                resume_session_id=(resume_sessions or {}).get(item.agent_id),
+                resume_session_id=((resume_sessions or {}).get(item.agent_id)
+                                   or self._find_latest_session_from_logs(item.agent_id)),
             )
             self.handles.append(handle)
             live_ids.add(item.agent_id)

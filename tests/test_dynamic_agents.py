@@ -219,6 +219,39 @@ def test_retire_only_removes_clean_worktree_and_preserves_branch(tmp_path):
     assert dirty.exists()
 
 
+def test_waiting_node_keeps_worktree_and_resumes_its_saved_session(tmp_path, monkeypatch):
+    manager = AgentManager(_config())
+    coral_dir = tmp_path / '.coral'
+    logs = coral_dir / 'public/logs'
+    logs.mkdir(parents=True)
+    worktree = tmp_path / 'agents/research-N003'
+    worktree.mkdir(parents=True)
+    (worktree / 'candidate.txt').write_text('preserve candidate')
+    session = '019fbea9-d7c0-7870-9606-cf1100d303e8'
+    (logs / 'research-N003.0.log').write_text(
+        '{"type":"thread.started","thread_id":"' + session + '"}\n')
+    manager.paths = SimpleNamespace(coral_dir=coral_dir, repo_dir=tmp_path / 'repo',
+                                    agents_dir=tmp_path / 'agents')
+    assignment = {'agent_id': 'research-N003', 'role': 'research',
+                  'node_id': 'N003', 'status': 'waiting'}
+    manager._dynamic_client = DynamicAssignmentClient(
+        coral_dir, request=lambda *_: {'assignments': [dict(assignment)]})
+    launches = []
+    monkeypatch.setattr(manager, '_setup_and_start_agent', lambda aid, **kw: (
+        launches.append((aid, kw.get('resume_session_id'))) or
+        SimpleNamespace(agent_id=aid)))
+    monkeypatch.setattr(manager, '_write_trusted_agent_registry', lambda: None)
+    monkeypatch.setattr(manager, '_write_agent_pids', lambda: None)
+    monkeypatch.setattr(manager, '_persist_agent_state', lambda: None)
+    manager._reconcile_dynamic_agents()
+    manager._reconcile_dynamic_agents()
+    assert manager.handles == []
+    assert (worktree / 'candidate.txt').read_text() == 'preserve candidate'
+    assignment['status'] = 'active'
+    manager._reconcile_dynamic_agents()
+    assert launches == [('research-N003', session)]
+
+
 def test_crashed_dynamic_agent_restarts_same_identity_and_session(tmp_path, monkeypatch):
     manager = AgentManager(_config())
     assignment = DynamicAssignmentClient(

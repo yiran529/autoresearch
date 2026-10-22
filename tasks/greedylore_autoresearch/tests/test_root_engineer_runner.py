@@ -26,6 +26,8 @@ def test_worktree_installs_coral_before_importing_sandbox_helper(tmp_path):
     source.mkdir()
     (source / 'config.yaml').write_text((runner.TASK / 'task.yaml').read_text())
     config = runner.build_config(source, tmp_path / 'experiment', 'gpt-6.1-sol', 'medium')
+    assert config.grader.args['max_active_nodes'] == 0
+    assert config.agents.dynamic.max_researchers == 0
     setup = config.workspace.setup
     helper = next(i for i, command in enumerate(setup) if '--prepare-sandbox-worktree' in command)
     assert any(str(runner.SOURCE) in shlex.split(command) for command in setup[:helper])

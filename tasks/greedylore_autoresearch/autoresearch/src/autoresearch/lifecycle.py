@@ -102,6 +102,8 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
             try:
                 with trusted_writes_lock(store.coral_dir):
                     state = store._load_unlocked()
+                    if node_id not in store._admitted_node_ids_unlocked(state):
+                        continue
                     record = state["nodes"][node_id]
                     job = record.get("analysis")
                     if not job or job["status"] in {"completed", "blocked"}:
