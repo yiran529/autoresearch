@@ -525,8 +525,17 @@ def _artifact_evidence(
         if record.status not in {"present", "missing"}:
             raise ArtifactValidationError("published Analysis has invalid evidence status")
         if record.status == "present":
-            path = _reference_path(record.path, context)
-            if not path.is_file() or _hash_bytes(path.read_bytes()) != record.sha256:
+            if record.path.startswith('code/') or (
+                record.path.startswith(f'diagnostics/{current.node_id}-{current.mode}-v')
+                and record.path not in {r.path for r in current.evidence_records}
+            ):
+                from .analysis_sources import read_source
+
+                data = read_source(record.path, current, context)
+            else:
+                path = _reference_path(record.path, context)
+                data = path.read_bytes() if path.is_file() else None
+            if data is None or _hash_bytes(data) != record.sha256:
                 raise ArtifactValidationError(f"published Analysis evidence changed: {record.path}")
         elif record.sha256 is not None:
             raise ArtifactValidationError("missing evidence must not have a hash")
@@ -642,6 +651,7 @@ def analyze(
     publisher: Publisher | None = None,
     code_snapshotter: CodeSnapshotter = _prepare_code_snapshot,
     diagnostic_runner: Callable | None = None,
+    validation_feedback: str | None = None,
 ) -> AnalysisResult:
     if mode != "research":
         raise ValueError(
@@ -701,6 +711,10 @@ def analyze(
             analyzer_roots.extend(checkpoint_roots)
             session_prompt = (_prompt(evidence) + render_context(evidence, analyzer_snapshot)
                               + checkpoint_text)
+            if validation_feedback:
+                session_prompt += ('\n## Previous publication validation error\n'
+                                   + validation_feedback
+                                   + '\nCorrect these citations; do not repeat the rejected reference.\n')
             if task is not None:
                 from coral.grader.trusted_writes import _atomic_json
 
@@ -739,6 +753,9 @@ def analyze(
 
             authored = load_document(output)
             validate_authored_references(authored)
+            from .analysis_sources import seal_sources
+
+            authored, evidence = seal_sources(authored, evidence, ctx, version)
             analysis_document = validate_analysis(seal_document(authored, evidence), evidence)
             content = json.dumps(analysis_document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             analysis_path = _publish(publish, ctx, "analysis", mode, version, content)

@@ -103,10 +103,11 @@ def validate_analysis(document: dict[str, Any], evidence: Any) -> dict[str, Any]
         except ValueError as exc:
             raise ArtifactValidationError(str(exc)) from exc
         allowed = {"spec.md", "evaluation.md", *evidence.evidence_paths,
+                   *(ref.removeprefix('evidence/') for ref in evidence.evidence_paths),
                    *(record.path for record in evidence.evidence_records if record.status == "present")}
         for ref in document["handover"]["evidence_refs"]:
             if ref not in allowed:
-                raise ArtifactValidationError("handover evidence_ref is not in the frozen evidence")
+                raise ArtifactValidationError(f"handover evidence_ref is not in the frozen evidence: {ref}")
     if document["mode"] == "research":
         import yaml
 

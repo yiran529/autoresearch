@@ -23,7 +23,7 @@ from .artifacts import validate_artifact
 from .atomic import atomic_write_text
 from .evaluation import refresh_node_evaluation
 from .state import WorkflowError, WorkflowStore
-from .validation import load_document, validate_analysis
+from .validation import ArtifactValidationError, load_document, validate_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
                     state = store._load_unlocked()
                     record = state["nodes"][node_id]
                     job = record.get("analysis")
-                    if not job or job["status"] == "completed":
+                    if not job or job["status"] in {"completed", "blocked"}:
                         continue
                     path = store.notes_root / "nodes" / node_id / f"research_analysis_v{job['version']}.md"
                     if path.exists():
@@ -126,7 +126,7 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
                             {"node_id": node_id, "mode": "research", "version": job["version"]})
                 else:
                     analyze(node_id, "research", context=context, runner=runner, publisher=publish,
-                            code_snapshotter=code_snapshotter)
+                            code_snapshotter=code_snapshotter, validation_feedback=job.get('last_error'))
                 with trusted_writes_lock(store.coral_dir):
                     state = store._load_unlocked()
                     record = state["nodes"][node_id]
@@ -144,8 +144,12 @@ def run_worker(coral_dir: str, *, runner=run_fresh_codex,
                     job = record.get("analysis")
                     if job and job["generation"] == generation:
                         job["failures"] += 1
+                        if isinstance(exc, ArtifactValidationError):
+                            job['validation_failures'] = job.get('validation_failures', 0) + 1
                         job.update(status="pending", last_error=str(exc),
                                    next_retry_at=now() + min(1800, 60 * 2 ** min(job["failures"] - 1, 5)))
+                        if job.get('validation_failures', 0) >= 3:
+                            job['status'] = 'blocked'
                         store._save_unlocked(state)
                     errors[record["research"]["agent_id"]] = str(exc)
         return {"status": "advanced", "completed": completed, "errors": errors}
