@@ -1,5 +1,28 @@
 # Gap-driven GreedyLoRE AutoResearch
 
+## Exclusive method selection
+
+New Research Nodes acquire a run-wide selection lock before reading registered
+methods and choosing their own. `autoresearch node planning acquire --wait`
+returns a token and the shared registry location (`notes/tree.md`, linking to
+canonical Specs). Hold the lock through reading, reasoning and overlap review;
+then register the method with `node initialize --planning-token <token>
+--overlap-review "<substantive differences>"`. The host records the review in
+the immutable Spec and releases the lock atomically with registration. Models
+judge semantic overlap; the host enforces exclusive ownership, not similarity.
+
+The default task sets `grader.args.research_planning_lease_seconds: 1800`.
+Renew using `node planning renew --token <token>` before expiry, or explicitly
+release with `node planning release --token <token>`. Expired tokens cannot
+register; reacquire and reread before deciding again. Cancelled Nodes and dead
+owner processes relinquish ownership on the next request. The lease survives a
+service restart and authenticates the owning Agent process identity. It does
+not hold the global write lock while a model thinks, so implementation,
+training, grading and Engineer work remain concurrent. There is no timed
+Researcher launch stagger. Existing Specs remain immutable. Historical run
+configs without this option retain their prior initialization behavior; enable
+the option to require the selection lock for their uninitialized Nodes.
+
 ## Evaluation and handover policy
 
 - New contracts require each workload's final loss / Dense final loss <= **1.05**.

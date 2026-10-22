@@ -29,6 +29,7 @@ grader:
     analyzer_diagnostics: true
     engineer_diagnostics: true
     p_explore: 0.20
+    research_planning_lease_seconds: 1800
     # Opt in per run only: local IPC exception for the isolated Analyzer.
     analyzer_allow_unix_sockets: false
     # Explicit public Python/CUDA/data roots can be mounted read-only when needed.

@@ -83,6 +83,8 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
         if mode not in {"REFINE", "EXPLORE"}:
             raise NodeError("invalid host research mode")
         spec["research_mode"] = mode
+    if 'method_registration' in evidence:
+        spec['method_registration'] = evidence['method_registration']
     from .handover import freeze_parent
 
     intent = request.get("research_intent")

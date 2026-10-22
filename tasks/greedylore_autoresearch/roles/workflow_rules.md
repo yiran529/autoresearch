@@ -8,6 +8,7 @@
 
 ## Research candidates and formal evaluation
 
+- Before choosing a new method, acquire `autoresearch node planning acquire --wait`. While holding the returned token, read registered Specs, choose a Parent and method, and judge overlap yourself. Register through `node initialize --planning-token <token> --overlap-review "<differences>"`; successful Spec publication releases the selection lock. Implement and train after release. Renew before expiry; after loss or expiry reacquire and reread before deciding. Existing initialized Nodes continue without acquiring this lock.
 - Each Research Node fixes one method hypothesis, one Parent/base_commit and its Spec; candidates may refine that method or meaningful parameters (for example refresh period or rank). A core mechanism or hypothesis change belongs in a child Node handled by a new Agent.
 - Smoke tests and ordinary commits are allowed; later candidates may descend from earlier candidates in the same Node. Record each change and rationale in the existing `change_summary` and `selection_rationale` fields.
 - Research allows at most 3 successful scored formal runs and 10 total formal runs, across resumes and archived Attempts. Valid scored regressions count as successful regardless of quality passing; failures and permitted same-SHA infrastructure retries count toward the total, and pending runs reserve capacity.

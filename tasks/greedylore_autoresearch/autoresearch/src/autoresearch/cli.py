@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import subprocess
+import time
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -110,6 +111,8 @@ def _initialize_node(args: argparse.Namespace) -> dict:
             "falsification_criteria": args.falsification_criteria,
             **({"research_intent": json.loads(Path(args.intent_file).read_text())}
                if args.intent_file else {}),
+            **({'planning_token': args.planning_token} if args.planning_token else {}),
+            **({'overlap_review': args.overlap_review} if args.overlap_review is not None else {}),
         },
     )
     _checkout_base(result["base_commit"])
@@ -185,6 +188,14 @@ def _parser() -> argparse.ArgumentParser:
     initialize.add_argument("--risk", required=True)
     initialize.add_argument("--falsification-criteria", required=True)
     initialize.add_argument("--intent-file", help="JSON research question, predictions and handover/engineering response")
+    initialize.add_argument('--planning-token', help='exclusive method-selection token from node planning acquire')
+    initialize.add_argument('--overlap-review', help='differences from registered methods after reading their Specs')
+    planning = node_commands.add_parser('planning', help='hold exclusive method selection until Spec registration')
+    planning_commands = planning.add_subparsers(dest='planning_command', required=True)
+    acquire = planning_commands.add_parser('acquire')
+    acquire.add_argument('--wait', action='store_true', help='wait for the current selector to register or release')
+    for action in ('renew', 'release'):
+        planning_commands.add_parser(action).add_argument('--token', required=True)
     complete = node_commands.add_parser("complete", help="complete this Node assignment")
     complete.add_argument("--mode", choices=("research", "engineering"), required=True)
     node_commands.add_parser("cancel", help="cancel an unstarted assignment")
@@ -267,6 +278,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             result = {"status": memory_result.status}
     elif args.command == "node" and args.node_command == "initialize":
         result = _initialize_node(args)
+    elif args.command == 'node' and args.node_command == 'planning':
+        operation = f'{args.planning_command}_research_planning'
+        payload = {} if args.planning_command == 'acquire' else {'token': args.token}
+        while True:
+            result = request_trusted(_coral_dir(), operation, payload)
+            if result.get('status') != 'busy' or not getattr(args, 'wait', False):
+                break
+            time.sleep(2)
     elif args.command == "node" and args.node_command == "complete":
         result = request_trusted(_coral_dir(), "complete_assignment", {"mode": args.mode})
     elif args.command == "node" and args.node_command == "cancel":

@@ -311,6 +311,14 @@ def agent(coral_dir: Path, aid: str):
             return
         spec_path = coral_dir / f"public/notes/nodes/{node}/spec.md"
         if not spec_path.exists():
+            from autoresearch.client import request_trusted
+
+            while True:
+                planning = request_trusted(coral_dir, 'acquire_research_planning', {})
+                if planning['status'] != 'busy':
+                    break
+                time.sleep(.05)
+            event('selection_acquired', node=node)
             handover = json.loads((coral_dir / "public/notes/nodes/N000/handover.json").read_text())
             parent_engineering = handover['sources']['engineering_analysis']['path']
             engineering_text = (coral_dir / 'public/notes' / parent_engineering).read_text()
@@ -355,6 +363,10 @@ def agent(coral_dir: Path, aid: str):
                 "Workflow assertion fails",
                 "--intent-file",
                 str(intent_path),
+                '--planning-token',
+                planning['token'],
+                '--overlap-review',
+                'Read registered synthetic Specs; this fixture tests lifecycle, not scientific novelty.',
             )
         event("initialized", node=node, agent=aid, head=git(Path.cwd(), "rev-parse", "HEAD"))
         if node == "N001":

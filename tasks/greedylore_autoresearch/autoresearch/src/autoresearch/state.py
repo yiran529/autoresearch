@@ -86,9 +86,14 @@ class WorkflowStore:
         self.notes_root = self.island_root / "notes"
         self.state_path = self.coral_dir / "private" / "autoresearch_state.json"
         self.tree_path = self.notes_root / "tree.md"
+        config_path = self.coral_dir / "config.yaml"
+        config = (yaml.safe_load(config_path.read_text()) or {}) if config_path.exists() else {}
+        self.research_planning_lease_seconds = config.get('grader', {}).get('args', {}).get(
+            'research_planning_lease_seconds', 0)
+        if (type(self.research_planning_lease_seconds) is not int
+                or self.research_planning_lease_seconds < 0):
+            raise WorkflowError('research_planning_lease_seconds must be a non-negative integer')
         if p_explore is None:
-            config_path = self.coral_dir / "config.yaml"
-            config = (yaml.safe_load(config_path.read_text()) or {}) if config_path.exists() else {}
             p_explore = config.get("grader", {}).get("args", {}).get("p_explore", 0.20)
         if type(p_explore) not in (int, float) or not math.isfinite(p_explore) or not 0 <= p_explore <= 1:
             raise WorkflowError("p_explore must be a finite probability between 0 and 1")
@@ -325,6 +330,9 @@ class WorkflowStore:
     def _advance_unlocked(self, state: dict) -> list[str]:
         """Short transitions only; never wait for an Analyzer or acquire another workflow lock."""
         before = copy.deepcopy(state)
+        from .planning import recover_registration
+
+        recover_registration(self, state)
         for node_id, record in state["nodes"].items():
             if record["research"]["status"] not in {"active", "completed"}:
                 continue
@@ -555,14 +563,20 @@ class WorkflowStore:
         raise WorkflowError(f"Node {node_id} requires a valid {mode.title()} Analysis")
 
     def initialize_research(
-        self, agent_id: str, node_id: str, request: Mapping[str, Any]
+        self, agent_id: str, node_id: str, request: Mapping[str, Any],
+        *, owner_identity: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         required = {
             "parent_node", "hypothesis", "selection_rationale",
             "delta", "risk", "falsification_criteria",
         }
-        if not isinstance(request, Mapping) or set(request) not in (required, required | {"research_intent"}):
+        optional = {'research_intent', 'planning_token', 'overlap_review'}
+        if (not isinstance(request, Mapping) or not required.issubset(request)
+                or set(request) - required - optional):
             raise WorkflowError("Research initialization has invalid fields")
+        request = dict(request)
+        planning_token = request.pop('planning_token', None)
+        overlap_review = request.pop('overlap_review', None)
         with trusted_writes_lock(self.coral_dir):
             state = self._load_unlocked()
             record = state["nodes"].get(node_id)
@@ -574,17 +588,28 @@ class WorkflowStore:
             from .handover import _safe_file
 
             target = _safe_file(self.notes_root, f"nodes/{node_id}/spec.md")
+            from .planning import release_owned, require_lease
+
             if target.exists():
                 fixed = yaml.safe_load(target.read_text())
                 if (not isinstance(fixed, dict) or fixed.get("node_id") != node_id
-                        or any(fixed.get(key) != value for key, value in request.items())):
+                        or any(fixed.get(key) != value for key, value in request.items())
+                        or overlap_review is not None and overlap_review != (
+                            fixed.get('method_registration') or {}).get('overlap_review')):
                     raise WorkflowError("immutable Node Spec conflicts with reservation")
+                before = copy.deepcopy(state)
+                release_owned(state, agent_id, planning_token)
                 if research["status"] == "reserved":
                     research.update(status="active", spec_ref=f"nodes/{node_id}/spec.md")
+                if state != before:
                     self._save_unlocked(state)
                 return {"agent_id": agent_id, "node_id": node_id, "status": "active",
                         "spec_ref": f"nodes/{node_id}/spec.md", "base_commit": fixed["base_commit"],
                         "research_mode": research.get("research_mode", "REFINE")}
+            if self.research_planning_lease_seconds:
+                require_lease(state, agent_id, planning_token, owner_identity)
+                if not isinstance(overlap_review, str) or not overlap_review.strip() or len(overlap_review) > 4000:
+                    raise WorkflowError('overlap_review must explain differences from registered methods in at most 4000 characters')
             parent_node = request["parent_node"]
             parent = state["nodes"].get(parent_node)
             if not isinstance(parent, dict) or not self._node_completed_unlocked(state, parent_node):
@@ -617,10 +642,16 @@ class WorkflowStore:
                     if parent.get("engineering_status") == "completed" else None),
                 "publish": publish,
             }
+            if self.research_planning_lease_seconds:
+                evidence['method_registration'] = {
+                    'overlap_review': overlap_review,
+                    'reviewed_specs': [f'nodes/{other}/spec.md' for other in sorted(state['nodes'])
+                                       if other != node_id and (self.notes_root / 'nodes' / other / 'spec.md').is_file()]}
             # Do not rewrite an immutable pre-upgrade Spec just to add mode metadata.
             if not target.exists() or "research_mode" in yaml.safe_load(target.read_text()):
                 evidence["research_mode"] = research.get("research_mode", "REFINE")
             create_node({**request, "node_id": node_id}, evidence)
+            release_owned(state, agent_id, planning_token)
             if research["status"] == "reserved":
                 research.update({"status": "active", "spec_ref": f"nodes/{node_id}/spec.md"})
                 self._save_unlocked(state)
@@ -892,10 +923,14 @@ def handle_workflow(
         return result
     if context.get("is_manager") or not isinstance(owner, str):
         raise WorkflowError("workflow mutation requires an authenticated Agent")
+    if operation in {'acquire_research_planning', 'renew_research_planning', 'release_research_planning'}:
+        from .planning import planning_operation
+
+        return planning_operation(store, operation, owner, payload, context)
     if operation == "initialize_research":
         node_id = payload["node_id"]
         request = {key: value for key, value in payload.items() if key != "node_id"}
-        return store.initialize_research(owner, node_id, request)
+        return store.initialize_research(owner, node_id, request, owner_identity=context)
     if operation == "claim_engineering":
         return store.claim_engineering(owner, payload["node_id"])
     if operation == "archive_evidence":

@@ -31,6 +31,7 @@ MAX_REQUEST_BYTES = 64 * 1024
 WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
     "complete_assignment", "cancel_assignment", "finish_assignment", "archive_evidence",
+    "acquire_research_planning", "renew_research_planning", "release_research_planning",
 })
 OPERATIONS = frozenset({
     "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due", "run_diagnostic",
@@ -43,6 +44,9 @@ _WORKFLOW_FIELDS = {
     "finish_assignment": frozenset({"mode"}),
     "cancel_assignment": frozenset(),
     "archive_evidence": frozenset({"node_id", "request_id", "commit_sha", "files"}),
+    "acquire_research_planning": frozenset(),
+    "renew_research_planning": frozenset({"token"}),
+    "release_research_planning": frozenset({"token"}),
 }
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _NODE_ARTIFACT = re.compile(
@@ -516,6 +520,8 @@ class TrustedWriteService:
         expected = _WORKFLOW_FIELDS[operation]
         if operation == "initialize_research" and "research_intent" in payload:
             expected = expected | {"research_intent"}
+        if operation == "initialize_research":
+            expected = expected | ({"planning_token", "overlap_review"} & payload.keys())
         if operation == "finish_assignment" and payload.get("mode") == "engineering" and "analysis" in payload:
             expected = expected | {"analysis"}
         if set(payload) != expected:
@@ -524,6 +530,8 @@ class TrustedWriteService:
         context = {
             "coral_dir": str(self.coral_dir),
             "agent_id": binding.agent_id if binding else None,
+            "agent_root_pid": binding.root_pid if binding else None,
+            "agent_start_time": binding.start_time if binding else None,
             "island_id": binding.island_id if binding else None,
             "max_engineering_runs_per_node": (getattr(getattr(self.config, "grader", None), "args", {}) or {}).get("max_engineering_runs_per_node", 1),
             "is_manager": binding is None,
