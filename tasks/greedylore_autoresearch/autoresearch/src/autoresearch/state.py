@@ -77,7 +77,6 @@ class WorkflowStore:
         max_engineering_runs_per_node: int = 1,
         p_explore: float | None = None,
     ) -> None:
-        self.repo_path = Path(repo_path).resolve() if repo_path is not None else None
         self.max_engineering_runs_per_node = max_engineering_runs_per_node
         if type(max_engineering_runs_per_node) is not int or max_engineering_runs_per_node != 1:
             raise WorkflowError("node-bound Engineering requires max_engineering_runs_per_node=1")
@@ -89,6 +88,16 @@ class WorkflowStore:
         self.tree_path = self.notes_root / "tree.md"
         config_path = self.coral_dir / "config.yaml"
         config = (yaml.safe_load(config_path.read_text()) or {}) if config_path.exists() else {}
+        if repo_path is None:
+            # Saved workspace.repo_path can name the original source, which lacks
+            # Agent commits. All entrypoints must prefer the run's actual clone.
+            for candidate in (self.coral_dir.parent / 'repo', self.coral_dir.parent):
+                if (candidate / '.git').exists():
+                    repo_path = candidate
+                    break
+            if repo_path is None:
+                repo_path = config.get('workspace', {}).get('repo_path') or None
+        self.repo_path = Path(repo_path).resolve() if repo_path is not None else None
         self.max_active_nodes = config.get('grader', {}).get('args', {}).get('max_active_nodes', 0)
         if type(self.max_active_nodes) is not int or self.max_active_nodes < 0:
             raise WorkflowError('max_active_nodes must be a non-negative integer')

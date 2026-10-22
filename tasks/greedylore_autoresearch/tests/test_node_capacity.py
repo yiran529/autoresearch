@@ -2,12 +2,15 @@
 
 # ruff: noqa: S101
 
+import hashlib
 import json
 
 import pytest
 import yaml
 from autoresearch.state import WorkflowStore
+from test_analysis_recovery import _fake_code_snapshot
 from test_workflow_state import (
+    _git,
     _publish_research_evidence,
     _research_request,
 )
@@ -191,3 +194,76 @@ def test_node_mode_ignores_legacy_role_caps_at_manager_entry(root_run):
     })
     assert [a['node_id'] for a in result['assignments']
             if a['role'] == 'research' and a['status'] != 'waiting'] == ['N001', 'N002']
+
+
+@pytest.mark.parametrize('layout', ['configured', 'discovered', 'custom', 'source_config'])
+@pytest.mark.parametrize('entrypoint', ['completion', 'authorize', 'dispatch'])
+def test_all_entrypoints_release_slots_after_pinned_code_analysis(engineering_ready, layout, entrypoint):
+    from autoresearch.lifecycle import run_worker
+    from autoresearch.state import authorize_attempt, filter_dispatch
+
+    root, repo, sha = engineering_ready
+    store = WorkflowStore(root, repo_path=repo)
+    attempt = read_attempt(root, sha)
+    attempt.score = 0.0
+    attempt.status = 'regressed'
+    attempt.metadata['scores']['quality_gate']['value'] = 0.0
+    write_attempt(root, attempt)
+    for item in store.reconcile(2, 0):
+        if item.role == 'research':
+            store.initialize_research(item.agent_id, item.node_id, _research_request())
+
+    def runner(_prompt, _roots, _schema, scratch):
+        out = scratch / 'output.json'
+        out.write_text(json.dumps({
+            'summary': 'Fixed code was inspected.', 'findings': ['Recorded failure.'],
+            'limitations': ['One trial.'], 'handover': {
+                'mechanism_verdict': 'inconclusive', 'practical_verdict': 'not_solved',
+                'evidence_refs': [f'code/{sha}/model.txt'],
+                'new_information': ['A fixed source file.'], 'follow_up_questions': [],
+            },
+        }))
+        return out
+
+    result = run_worker(str(root), checkout_root=repo, only_node='N001',
+                        runner=runner, code_snapshotter=_fake_code_snapshot)
+    assert result['errors'] == {}
+    assert store.is_node_completed('N001')
+    if layout == 'custom':
+        renamed = repo.with_name('custom-repository')
+        repo.rename(renamed)
+        repo = renamed
+    config = {'grader': {'args': {'max_active_nodes': 2}}}
+    if layout != 'discovered':
+        config['workspace'] = {'repo_path': str(repo)}
+    if layout == 'source_config':
+        # create_project saves the source path before cloning run/repo. Later
+        # Agent commits exist only in the run clone, not this source repository.
+        source = repo.with_name('source-repository')
+        source.mkdir()
+        _git(source, 'init', '-q')
+        _git(source, 'config', 'user.name', 'Test')
+        _git(source, 'config', 'user.email', 'test@example.invalid')
+        (source / 'model.txt').write_text('source baseline\n')
+        _git(source, 'add', '.')
+        _git(source, 'commit', '-qm', 'original source')
+        config['workspace'] = {'repo_path': str(source)}
+    (root / 'config.yaml').write_text(yaml.safe_dump(config))
+    manager = WorkflowStore(root, repo_path=repo)
+    assert manager._admitted_node_ids_unlocked(manager._load_unlocked()) == {'N002', 'N003'}
+    before = hashlib.sha256(store.state_path.read_bytes()).hexdigest()
+    if entrypoint == 'completion':
+        assert WorkflowStore(root).is_node_completed('N001')
+    elif entrypoint == 'authorize':
+        assert authorize_attempt({'node_id': 'N003', 'mode': 'research'}, {
+            'coral_dir': str(root), 'agent_id': 'research-N003',
+        }) == {'allow_multiple_research': True}
+    else:
+        write_attempt(root, Attempt(
+            commit_hash='f' * 40, agent_id='research-N003', title='queued',
+            status='pending', score=None, parent_hash=None,
+            timestamp='2026-01-01T00:00:00+00:00',
+            metadata={'node_id': 'N003', 'mode': 'research'}))
+        assert filter_dispatch(candidates=[{'commit_hash': 'f' * 40, 'island_id': None}],
+                               context={'coral_dir': str(root)}) == {'eligible_hashes': ['f' * 40]}
+    assert hashlib.sha256(store.state_path.read_bytes()).hexdigest() == before
