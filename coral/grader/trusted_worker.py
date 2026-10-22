@@ -126,9 +126,18 @@ def prepare_workflow_model(environment: dict) -> Path | None:
     registry = os.environ.get("CORAL_WORKFLOW_CORAL_DIR")
     if not registry:
         return None
-    path = Path(registry) / "private/workflow_model.json"
+    if (Path(registry) / 'private/workflow_stopping').exists():
+        raise PermissionError('workflow is stopping')
+    path = _model_registry_path(registry, environment['CORAL_WORKFLOW_PROCESS_TOKEN'])
     _atomic_json(path, {"phase": "spawning", "token": environment["CORAL_WORKFLOW_PROCESS_TOKEN"]})
     return path
+
+
+def _model_registry_path(coral_dir: str | Path, token: str) -> Path:
+    # Independent model sessions must never overwrite another Node's recovery PID.
+    if uuid.UUID(token).hex != token:
+        raise ValueError('workflow model token must be a canonical UUID hex string')
+    return Path(coral_dir) / 'private/workflow_models' / f'{token}.json'
 
 
 def stop_workflow_worker(coral_dir: str | Path, *, drain_timeout: float = 5) -> None:
@@ -138,16 +147,23 @@ def stop_workflow_worker(coral_dir: str | Path, *, drain_timeout: float = 5) -> 
         return
     (private / "workflow_stopping").touch()
     # Models have their own session so worker death cannot hide live descendants.
-    for name in ("workflow_process.json", "workflow_model.json"):
-        path = private / name
+    def stop_registered(path):
         try:
             record = json.loads(path.read_text())
         except FileNotFoundError:
-            continue
+            return
         if record.get("phase") == "spawning":
             _stop_prepared_models(record["token"])
         else:
             _stop_record(record)
+    # Stop the producer before taking the model-record snapshot: it may still
+    # be starting another Node's model when shutdown begins.
+    worker_path = private / 'workflow_process.json'
+    stop_registered(worker_path)
+    paths = [worker_path, private / 'workflow_model.json',
+             *sorted((private / 'workflow_models').glob('*.json'))]
+    for path in paths[1:]:
+        stop_registered(path)
     # Diagnostic executors own separate process groups and hold this lock while
     # queued/running. Revocation is visible without acquiring the held lock.
     deadline = time.monotonic() + drain_timeout
@@ -161,8 +177,8 @@ def stop_workflow_worker(coral_dir: str | Path, *, drain_timeout: float = 5) -> 
                     if time.monotonic() >= deadline:
                         raise TimeoutError("diagnostic execution is still draining; workflow registration retained") from None
                     time.sleep(0.02)
-    for name in ("workflow_process.json", "workflow_model.json"):
-        (private / name).unlink(missing_ok=True)
+    for path in paths:
+        path.unlink(missing_ok=True)
 
 
 def register_workflow_model(process: subprocess.Popen, *, token=None) -> Path | None:
@@ -174,7 +190,7 @@ def register_workflow_model(process: subprocess.Popen, *, token=None) -> Path | 
     registry = os.environ.get("CORAL_WORKFLOW_CORAL_DIR")
     if not registry:
         return None
-    path = Path(registry) / "private/workflow_model.json"
+    path = _model_registry_path(registry, process._workflow_record['token'])
     _atomic_json(path, process._workflow_record)
     return path
 

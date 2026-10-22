@@ -214,7 +214,7 @@ def test_worker_death_between_spawn_and_registration_is_recoverable(tmp_path):
     child = None
     try:
         child = int(worker.stdout.readline())  # Spawned, deliberately not registered.
-        registry = coral / "private/workflow_model.json"
+        registry, = (coral / 'private/workflow_models').glob('*.json')
         assert json.loads(registry.read_text())["phase"] == "spawning"
         worker.kill()
         worker.wait(timeout=5)
@@ -231,3 +231,36 @@ def test_worker_death_between_spawn_and_registration_is_recoverable(tmp_path):
                 os.kill(child, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_parallel_models_have_separate_recovery_records_and_all_stop(tmp_path, monkeypatch):
+    from coral.grader.trusted_worker import (
+        prepare_workflow_model,
+        register_workflow_model,
+        stop_workflow_worker,
+        workflow_model_environment,
+    )
+
+    coral = tmp_path / '.coral'
+    monkeypatch.setenv('CORAL_WORKFLOW_CORAL_DIR', str(coral))
+    processes, registries = [], []
+    try:
+        for _ in range(2):
+            env = workflow_model_environment()
+            registry = prepare_workflow_model(env)
+            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                                     env=env, start_new_session=True)
+            processes.append(child)
+            register_workflow_model(child, token=env['CORAL_WORKFLOW_PROCESS_TOKEN'])
+            registries.append(registry)
+        assert len(set(registries)) == 2
+        assert {json.loads(p.read_text())['pid'] for p in registries} == {
+            p.pid for p in processes}
+        stop_workflow_worker(coral)
+        assert all(p.wait(timeout=5) < 0 for p in processes)
+        assert all(not p.exists() for p in registries)
+    finally:
+        for p in processes:
+            if p.poll() is None:
+                p.kill()
+            p.wait()
