@@ -495,3 +495,106 @@ def test_expired_waiter_cannot_claim_cards_after_delayed_wakeup(tmp_path):
                                inventory_provider=lambda: next(samples), wait_timeout=.01,
                                poll_interval=.001, on_event=delayed_event):
             pass
+
+
+def test_timing_guard_remembers_owned_rank_after_launcher_exit(monkeypatch):
+    from greedylore_autoresearch_grader import gpu
+    from greedylore_autoresearch_grader.runtime import ProcessIdentity
+
+    launcher = ProcessIdentity(99, 1000, 1, 99, 99)
+    rank = ProcessIdentity(123, 1000, 77, 123, 123)
+    device = GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0, (rank,))
+    guard = gpu.GpuReservation((device,), [], 'topology',
+                               inventory_provider=lambda: GpuInventory((device,), 'topology'))
+    identities = {99: launcher, 123: rank}
+    monkeypatch.setattr(gpu.ProcessIdentity, 'read', identities.get)
+    monkeypatch.setattr(gpu, '_belongs_to_launcher', lambda identity, launcher: True)
+    guard.check_exclusive(99)
+    identities.pop(99)
+    monkeypatch.setattr(gpu, '_belongs_to_launcher', lambda identity, launcher: False)
+    guard.check_exclusive(99)
+    # Rank PID reuse with launcher still absent must not reuse ownership proof.
+    identities[123] = ProcessIdentity(123, 1000, 88, 123, 123)
+    with pytest.raises(InfraFailure, match='interference'):
+        guard.check_exclusive(99)
+
+
+def test_timing_guard_waits_for_stale_gpu_exit_records(monkeypatch):
+    from greedylore_autoresearch_grader import gpu
+
+    stale = GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0)
+    idle = GpuDevice(0, 'GPU-0', 'A100', 0, 0, (), 0)
+    samples = iter([stale, stale, stale, idle])
+    guard = gpu.GpuReservation((idle,), [], 'topology', inventory_provider=lambda:
+                               GpuInventory((next(samples),), 'topology'))
+    monkeypatch.setattr(gpu.ProcessIdentity, 'read', lambda pid: None)
+    monkeypatch.setattr(gpu.time, 'sleep', lambda duration: None)
+    guard.check_exclusive(99)
+
+
+def test_timing_guard_reports_persistent_unknown_identity(monkeypatch):
+    from greedylore_autoresearch_grader import gpu
+
+    stale = GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0)
+    guard = gpu.GpuReservation((stale,), [], 'topology', inventory_provider=lambda:
+                               GpuInventory((stale,), 'topology'))
+    monkeypatch.setattr(gpu.ProcessIdentity, 'read', lambda pid: None)
+    ticks = iter(range(100))
+    monkeypatch.setattr(gpu.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(gpu.time, 'sleep', lambda duration: None)
+    with pytest.raises(InfraFailure, match='identity unconfirmed'):
+        guard.check_exclusive(99)
+
+
+def test_timing_guard_discards_proof_for_reused_launcher_pid(monkeypatch):
+    from greedylore_autoresearch_grader import gpu
+    from greedylore_autoresearch_grader.runtime import ProcessIdentity
+
+    launcher = ProcessIdentity(99, 1000, 1, 99, 99)
+    rank = ProcessIdentity(123, 1000, 77, 123, 123)
+    device = GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0, (rank,))
+    guard = gpu.GpuReservation((device,), [], 'topology', inventory_provider=lambda:
+                               GpuInventory((device,), 'topology'))
+    monkeypatch.setattr(gpu.ProcessIdentity, 'read', lambda pid: launcher if pid == 99 else rank)
+    monkeypatch.setattr(gpu, '_belongs_to_launcher', lambda identity, pid: True)
+    guard.check_exclusive(99)
+    launcher = ProcessIdentity(99, 1000, 2, 99, 99)
+    # Even a valid descendant of the replacement launcher is unrelated.
+    with pytest.raises(InfraFailure, match='launcher identity changed'):
+        guard.check_exclusive(99)
+
+
+def test_timing_unknown_identity_becoming_foreign_is_rejected(monkeypatch):
+    from greedylore_autoresearch_grader import gpu
+    from greedylore_autoresearch_grader.runtime import ProcessIdentity
+
+    idle = GpuDevice(0, 'GPU-0', 'A100', 0, 0, (), 0)
+    unknown = GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0)
+    foreign = ProcessIdentity(123, 2000, 77, 123, 123)
+    samples = iter([unknown, GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0, (foreign,))])
+    guard = gpu.GpuReservation((idle,), [], 'topology', inventory_provider=lambda:
+                               GpuInventory((next(samples),), 'topology'))
+    monkeypatch.setattr(gpu.ProcessIdentity, 'read', lambda pid: None)
+    monkeypatch.setattr(gpu, '_belongs_to_launcher', lambda identity, pid: False)
+    monkeypatch.setattr(gpu.time, 'sleep', lambda duration: None)
+    with pytest.raises(InfraFailure, match='interference'):
+        guard.check_exclusive(99)
+
+
+def test_timing_guard_rejects_launcher_reuse_during_inventory(monkeypatch):
+    from greedylore_autoresearch_grader import gpu
+    from greedylore_autoresearch_grader.runtime import ProcessIdentity
+
+    identities = {99: ProcessIdentity(99, 1000, 1, 99, 99)}
+    rank = ProcessIdentity(123, 1000, 77, 123, 123)
+    device = GpuDevice(0, 'GPU-0', 'A100', 100, 20, (123,), 0, (rank,))
+
+    def inventory():
+        identities[99] = ProcessIdentity(99, 1000, 2, 99, 99)
+        return GpuInventory((device,), 'topology')
+
+    guard = gpu.GpuReservation((device,), [], 'topology', inventory_provider=inventory)
+    monkeypatch.setattr(gpu.ProcessIdentity, 'read', lambda pid: identities.get(pid, rank))
+    monkeypatch.setattr(gpu, '_belongs_to_launcher', lambda identity, pid: True)
+    with pytest.raises(InfraFailure, match='launcher identity changed'):
+        guard.check_exclusive(99)

@@ -241,16 +241,32 @@ class GpuReservation:
         self._on_event = on_event
         self._inventory_provider = inventory_provider or GpuInventory.from_nvidia_smi
         self._request = None
+        self._launcher_identity = None
+        self._launcher_pid = None
+        self._owned_identities: set[ProcessIdentity] = set()
 
     def check_exclusive(self, session_pid: int | None = None) -> None:
-        """Allow compute only from this launcher or its live rank descendants."""
-        for attempt in range(2):
+        """Verify ownership, allowing bounded NVML/procfs exit skew.
+
+        Ownership proofs survive launcher exit, but never a changed process
+        identity. Unknown processes must disappear or become identifiable.
+        """
+        launcher = ProcessIdentity.read(session_pid) if session_pid is not None else None
+        if (session_pid == self._launcher_pid and launcher is not None
+                and self._launcher_identity is not None and launcher != self._launcher_identity):
+            raise InfraFailure(f"timing launcher identity changed: PID {session_pid}")
+        if session_pid != self._launcher_pid:
+            self._owned_identities.clear()
+            self._launcher_pid = session_pid
+            self._launcher_identity = launcher
+        deadline = time.monotonic() + 3.0
+        while True:
             try:
                 sample = self._inventory_provider()
             except Exception as exc:
                 raise InfraFailure(f"timing inventory unavailable: {exc}") from exc
             by_uuid = {device.uuid: device for device in sample.devices}
-            unstable = False
+            unresolved = None
             for uuid in self.uuids:
                 device = by_uuid.get(uuid)
                 if device is None:
@@ -262,16 +278,33 @@ class GpuReservation:
                     # An identified foreign process is interference even if it
                     # exits immediately. Only ambiguous/vanished ranks get a retry.
                     external = session_pid is None or any(
-                        identity is not None and not _belongs_to_launcher(identity, session_pid)
+                        identity is not None
+                        and identity not in self._owned_identities
+                        and not _belongs_to_launcher(identity, session_pid)
                         for identity in (owner, current)
                     )
-                    if external or (attempt == 1 and (owner is None or current != owner)):
+                    if external:
                         raise InfraFailure(f"timing interference: {uuid} PID {pid}, "
                                            f"UID {owner.uid if owner else 'unknown'}")
                     if owner is None or current != owner:
-                        unstable = True
-            if not unstable:
+                        unresolved = (uuid, pid)
+                    else:
+                        self._owned_identities.add(current)
+            # Inventory and ancestry checks are separate procfs snapshots. A
+            # launcher replacement during either must not authenticate a new job.
+            latest_launcher = (ProcessIdentity.read(session_pid)
+                               if session_pid is not None else None)
+            if latest_launcher is not None:
+                if (self._launcher_identity is not None
+                        and latest_launcher != self._launcher_identity):
+                    raise InfraFailure(f"timing launcher identity changed: PID {session_pid}")
+                self._launcher_identity = latest_launcher
+            if unresolved is None:
                 return
+            if time.monotonic() >= deadline:
+                uuid, pid = unresolved
+                raise InfraFailure(f"timing GPU identity unconfirmed: {uuid} PID {pid}")
+            time.sleep(0.1)
 
     def __enter__(self) -> GpuReservation:
         return self
