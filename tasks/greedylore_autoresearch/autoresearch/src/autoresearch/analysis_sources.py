@@ -135,12 +135,21 @@ def seal_sources(authored, evidence, context, version):
             if reference.startswith('records/'):
                 reference = f'diagnostics/{task_id}/{reference}'
             if reference not in allowed:
+                # Nested log directories are readable in the snapshot but only
+                # their files carry frozen hashes. Expand from that manifest,
+                # never from a fresh filesystem walk after the model returns.
+                children = sorted(r.path for r in evidence.evidence_records
+                                  if r.status == 'present'
+                                  and r.path.startswith(reference + '/')) if reference.startswith('eval_logs/') else []
+                if children:
+                    canonical.extend(children)
+                    continue
                 if reference.startswith(('code/', 'diagnostics/')):
                     add(reference)
                 else:
                     raise ArtifactValidationError(f'handover evidence_ref is not in the frozen evidence: {original}')
             canonical.append(reference)
-        document['handover']['evidence_refs'] = canonical
+        document['handover']['evidence_refs'] = list(dict.fromkeys(canonical))
     from .diagnostics import DiagnosticTask
 
     task = DiagnosticTask(context.coral_dir, task_id)

@@ -77,6 +77,41 @@ def test_frozen_directory_reference_keeps_a_valid_canonical_alias(context, prefi
     assert load_document(result.analysis_path)['handover']['evidence_refs'] == [ref]
 
 
+@pytest.mark.parametrize('prefix', ['', 'evidence/'])
+def test_nested_formal_directory_expands_only_frozen_files_and_recovers(context, prefix):
+    sha = context.attempts[0].commit_hash
+    directory = f'eval_logs/{sha}/run-{sha}/efficiency'
+    refs = [directory + '/bf16/all_results.json', directory + '/fp32/config.json']
+    for ref in refs:
+        path = context.log_root / ref.removeprefix('eval_logs/')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"measured":1}')
+
+    def runner(*args):
+        # A post-snapshot file must never become part of a directory citation.
+        (path.parent / 'late.json').write_text('{"unfrozen":1}')
+        return runner_with([prefix + directory, refs[0]])(*args)
+
+    result = analyze('N001', 'research', context=context, runner=runner,
+                     publisher=_publisher(context.notes_root))
+    doc = load_document(result.analysis_path)
+    assert doc['handover']['evidence_refs'] == refs
+    (path.parent / 'late.json').unlink()
+    recovered = analyze('N001', 'research', context=context,
+                        runner=lambda *_: pytest.fail('published report must recover'),
+                        publisher=_publisher(context.notes_root))
+    assert load_document(recovered.analysis_path) == doc
+
+
+def test_nested_directory_with_no_frozen_files_is_rejected(context):
+    sha = context.attempts[0].commit_hash
+    ref = f'eval_logs/{sha}/run-{sha}/quality'
+    (context.log_root / sha / f'run-{sha}/quality').mkdir(parents=True)
+    with pytest.raises(ValueError, match='not in the frozen evidence'):
+        analyze('N001', 'research', context=context, runner=runner_with([ref]),
+                publisher=_publisher(context.notes_root))
+
+
 def test_fixed_code_is_sealed_from_git_and_ignores_worktree_changes(context):
     sha = context.attempts[0].commit_hash
     ref = f'code/{sha}/model.py'

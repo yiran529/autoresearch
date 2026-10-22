@@ -100,7 +100,7 @@ You are an **independent Research Analyzer**, not a Researcher. Diagnose this fr
 ### Evidence citations
 
 - Give persistent `evidence_refs` from the supplied evidence inventory (`spec.md` and `evaluation.md` are valid). Cite the selected Research SHA and relevant candidate SHAs, formal evidence paths and any real diagnostic IDs.
-- **Formal logs:** canonical `eval_logs/...` paths; staged `evidence/eval_logs/...` aliases are accepted.
+- **Formal logs:** prefer specific files from the frozen inventory at `eval_logs/...`; staged `evidence/eval_logs/...` aliases are accepted. Nested log directory citations expand only to their already-frozen files.
 - **Code:** regular files under `code/<supplied fixed SHA>/...`.
 - **New diagnostics:** this Analysis task's managed files at `diagnostics/<task-id>/records/<request-id>/...`; local `records/...` aliases are accepted.
 - **Supplied attachments:** `diagnostics/.../attachments/...` files in the fixed evidence are agent-provided self-check materials, not host-verified executions. Cite their supplied evidence-relative paths and preserve this distinction.
