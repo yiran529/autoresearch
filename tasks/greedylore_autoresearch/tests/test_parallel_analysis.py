@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import yaml
-from autoresearch.lifecycle import run_worker
+from autoresearch.lifecycle import _run_node, run_worker
 from autoresearch.state import WorkflowStore
 from test_analysis_recovery import _fake_code_snapshot
 from test_workflow_state import _research_request
@@ -59,6 +59,37 @@ def test_two_node_analyzers_run_concurrently(root_run):
     assert result['errors'] == {}
     assert set(result['completed']) == {'research-N001', 'research-N002'}
     assert store.is_node_completed('N001') and store.is_node_completed('N002')
+
+
+@pytest.mark.parametrize('error', [
+    'HTTP 503 Service Unavailable', 'HTTP 500 Internal Server Error',
+    'Selected model is at capacity',
+])
+def test_analyzer_server_errors_back_off_without_blocking_or_charging_attempts(root_run, error):
+    store = ready_nodes(root_run)
+    attempts = {p: p.read_bytes() for p in (root_run / 'public/attempts').glob('*.json')}
+
+    def failed_runner(*_):
+        raise RuntimeError(error)
+
+    clock = 1000
+    for delay in [60, 120, 240, 480]:
+        result = _run_node(store, 'N001', failed_runner, _fake_code_snapshot, lambda: clock)
+        assert result['errors']['research-N001'] == error
+        job = json.loads(store.state_path.read_text())['nodes']['N001']['analysis']
+        assert job['status'] == 'pending'
+        assert job.get('validation_failures', 0) == 0
+        assert job['next_retry_at'] == clock + delay
+        # No model call is made before the persisted retry deadline.
+        deferred = _run_node(store, 'N001',
+            lambda *_: pytest.fail('must honor retry deadline'), _fake_code_snapshot, lambda: clock)
+        assert deferred['status'] == 'deferred'
+        clock += delay
+    recovered = _run_node(store, 'N001', lambda *args: response(args[-1]),
+                          _fake_code_snapshot, lambda: clock)
+    assert recovered['completed'] == ['research-N001']
+    assert store.is_node_completed('N001')
+    assert {p: p.read_bytes() for p in (root_run / 'public/attempts').glob('*.json')} == attempts
 
 
 def test_retry_can_finish_while_other_node_analyzer_is_still_busy(root_run):

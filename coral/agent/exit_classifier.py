@@ -63,14 +63,19 @@ def claude_code_has_result(log_path: Path) -> bool:
 
 
 def claude_code_log_has_session_error(log_path: Path) -> bool:
-    """Return True iff the log indicates a Claude Code session-not-found error.
+    """Recognize explicit missing-session errors from Claude Code and Codex.
 
     This happens when resuming on a different machine where the Claude Code
-    session does not exist locally. Lives next to `claude_code_has_result` so
+    session does not exist locally. The manager also uses this legacy-named
+    helper for Codex recovery. Lives next to `claude_code_has_result` so
     the runtime classifier does not have to reach back into `manager.py`.
     """
     try:
-        content = log_path.read_text(encoding="utf-8")
-        return "No conversation found" in content
+        content = log_path.read_text(encoding="utf-8").lower()
+        return any(message in content for message in (
+            'no conversation found', 'no saved session found with id ',
+            'no rollout found for conversation id ', 'no rollout found for thread id ',
+            'no thread with id: ',
+        ))
     except (OSError, UnicodeDecodeError):
         return False

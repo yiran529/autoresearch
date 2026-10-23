@@ -12,6 +12,17 @@ from coral.agent import model_retry
     (['workspace routing discovery failed'] * 4, 3),
     (['401 Unauthorized: request timed out'], 1),
     (['invalid configuration'], 1),
+    (['ERROR: unexpected status 503 Service Unavailable', None], 2),
+    (['ERROR: HTTP 500 Internal Server Error', None], 2),
+    (['ERROR: HTTP 502 Bad Gateway', None], 2),
+    (['ERROR: HTTP 504 Gateway Timeout', None], 2),
+    (['ERROR: server_error: upstream failed', None], 2),
+    (['ERROR: Selected model is at capacity. Please try a different model.', None], 2),
+    (['ERROR: HTTP 429 Too Many Requests', None], 2),
+    (['ERROR: HTTP 503 Service Unavailable'] * 4, 3),
+    (['ERROR: HTTP 401 Unauthorized; upstream returned HTTP 503'], 1),
+    (['ERROR: HTTP 403 Forbidden; request timed out'], 1),
+    (['ERROR: HTTP 429 insufficient_quota'], 1),
 ])
 def test_shared_connection_retry_limits_and_permanent_errors(monkeypatch, errors, starts):
     times, waits = [], []
@@ -55,7 +66,10 @@ def test_connection_retry_never_resets_overall_timeout(monkeypatch):
         model_retry.retry_model_connection(invoke, timeout=10)
 
 
-def test_standalone_worker_retries_real_process_and_keeps_input(tmp_path, monkeypatch):
+@pytest.mark.parametrize('error', [
+    'workspace routing discovery failed', 'unexpected status 503 Service Unavailable',
+])
+def test_standalone_worker_retries_real_process_and_keeps_input(tmp_path, monkeypatch, error):
     import sys
 
     from coral.grader.trusted_worker import run_workflow_model
@@ -67,7 +81,7 @@ def test_standalone_worker_retries_real_process_and_keeps_input(tmp_path, monkey
         f'p=Path({str(marker)!r}); '
         'n=int(p.read_text()) if p.exists() else 0; p.write_text(str(n+1)); '
         'data=sys.stdin.read(); '
-        'print("ERROR: workspace routing discovery failed" if n == 0 else "", file=sys.stderr); '
+        f'print({("ERROR: " + error)!r} if n == 0 else "", file=sys.stderr); '
         'print(data); sys.exit(1 if n == 0 else 0)'
     )
     result = run_workflow_model([sys.executable, '-c', code], input='same fixed task', timeout=120)

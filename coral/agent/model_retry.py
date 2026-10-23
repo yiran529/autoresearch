@@ -1,6 +1,7 @@
 """Bounded connection recovery for standalone model subprocesses."""
 
 import logging
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ def check_connection_failure(result) -> None:
     if any(value in text for value in (
         'unauthorized', 'invalid api key', 'authentication failed', 'forbidden',
         'invalid configuration', 'error loading config',
+        'insufficient_quota', 'exceeded your current quota', 'payment required',
     )):
         return
     # Do not mistake an earlier MCP/tool warning for the model's terminal error.
@@ -27,7 +29,13 @@ def check_connection_failure(result) -> None:
         'workspace routing discovery failed', 'request timed out',
         'connection reset', 'connection refused', 'error sending request',
         'stream disconnected before completion',
-    )):
+        'server_error', 'internal server error', 'service unavailable',
+        'bad gateway', 'gateway timeout', 'selected model is at capacity',
+        'too many requests',
+    )) or re.search(
+        r'\b(?:http(?:/\d(?:\.\d)?)?|status(?:_code)?)\s*[:=]?\s*'
+        r'(?:429|500|502|503|504)\b', terminal,
+    ):
         raise ModelConnectionError((result.stderr or '').strip()[-2000:])
 
 

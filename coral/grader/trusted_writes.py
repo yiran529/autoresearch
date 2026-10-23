@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import re
 import socket
@@ -27,6 +28,7 @@ from coral.hub.checkpoint import checkpoint
 from coral.types import BUDGET_CLASS_REAL, BUDGET_CLASS_TUNE, Attempt
 
 PROTOCOL_VERSION = 1
+logger = logging.getLogger(__name__)
 MAX_REQUEST_BYTES = 64 * 1024
 WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
@@ -446,6 +448,7 @@ class TrustedWriteService:
         self._workflow_process = None
         self._memory_process = None
         self._workflow_stopping = False
+        self._workflow_recovery_error: str | None = None
         self._workflow_lifecycle_lock = threading.Lock()
 
     def stop_workflow(self) -> None:
@@ -587,11 +590,26 @@ class TrustedWriteService:
                 if entrypoint and not self._workflow_stopping and (
                     self._workflow_process is None or self._workflow_process.poll() is not None
                 ):
-                    from coral.grader.trusted_worker import start_task_worker
-
-                    self._workflow_process = start_task_worker(
-                        self.coral_dir, entrypoint, log_name="workflow_worker.err"
+                    from coral.grader.trusted_worker import (
+                        WorkflowRecoveryPendingError,
+                        start_task_worker,
                     )
+
+                    try:
+                        self._workflow_process = start_task_worker(
+                            self.coral_dir, entrypoint, log_name="workflow_worker.err"
+                        )
+                    except WorkflowRecoveryPendingError as exc:
+                        # Keep returning assignments so the manager and grader
+                        # survive. Its normal reconcile cadence retries recovery.
+                        message = str(exc)
+                        if message != self._workflow_recovery_error:
+                            logger.warning("Workflow recovery deferred: %s", message)
+                        self._workflow_recovery_error = message
+                        result["workflow_recovery_pending"] = True
+                        result["workflow_error"] = message
+                    else:
+                        self._workflow_recovery_error = None
                 memory_entry = configured.get("trusted_memory_worker")
                 if result.get("memory_due") and memory_entry and not self._workflow_stopping and (
                     self._memory_process is None or self._memory_process.poll() is not None

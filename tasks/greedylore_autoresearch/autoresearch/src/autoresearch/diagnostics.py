@@ -84,21 +84,30 @@ class DiagnosticTask:
         self.records = self.root / 'records'
 
     @contextmanager
-    def locked(self, timeout=None):
+    def locked(self, timeout=None, *, recovery_timeout=None):
         self.private.mkdir(parents=True, mode=0o700, exist_ok=True)
-        with (self.private / 'task.lock').open('a+b') as stream:
-            if timeout is None:
-                fcntl.flock(stream, fcntl.LOCK_EX)
-            else:
-                deadline = time.monotonic() + timeout
-                while True:
-                    try:
-                        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        if time.monotonic() >= deadline:
-                            raise TimeoutError('diagnostic task is still draining') from None
-                        time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+        deadline = None if timeout is None else time.monotonic() + timeout
+        recovery_deadline = (deadline if recovery_timeout is None
+                             else time.monotonic() + recovery_timeout)
+        # Shared admission includes newly created task paths: a workflow restart
+        # holds the exclusive gate until its stopping marker has been cleared.
+        # Always acquire the gate before task.lock and share one timeout budget.
+        gate_path = self.coral_dir / 'private/workflow-recovery.lock'
+        with gate_path.open('a+b') as gate, (self.private / 'task.lock').open('a+b') as task:
+            for stream, mode, lock_deadline in (
+                (gate, fcntl.LOCK_SH, recovery_deadline), (task, fcntl.LOCK_EX, deadline),
+            ):
+                if lock_deadline is None:
+                    fcntl.flock(stream, mode)
+                else:
+                    while True:
+                        try:
+                            fcntl.flock(stream, mode | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            if time.monotonic() >= lock_deadline:
+                                raise TimeoutError('diagnostic task is still draining') from None
+                            time.sleep(min(0.02, max(0, lock_deadline - time.monotonic())))
             yield
 
     def read(self):

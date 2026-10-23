@@ -146,6 +146,29 @@ def test_finish_rejects_running_diagnostic(engineer, engineering_ready):
         {'coral_dir': str(coral), 'peer_pid': os.getpid()}, executor=execute)
 
 
+def test_finish_waits_for_brief_workflow_recovery_without_reporting_active_diagnostic(
+    engineer, engineering_ready,
+):
+    import fcntl
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeoutError
+
+    coral, _, _, agent, _ = engineer
+    store, _, body = _engineer_with_attempts(engineering_ready, count=1)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with (coral / 'private/workflow-recovery.lock').open('a+b') as gate:
+            fcntl.flock(gate, fcntl.LOCK_EX)
+            future = pool.submit(store.submit_engineering_analysis, agent, body)
+            try:
+                with pytest.raises(FutureTimeoutError):
+                    future.result(timeout=0.05)
+            finally:
+                fcntl.flock(gate, fcntl.LOCK_UN)
+        future.result(timeout=5)
+    state = json.loads(store.state_path.read_text())
+    assert state['engineering_workers'][agent]['finish_requested'] is True
+
+
 def test_candidate_snapshot_preserves_executable_helpers(engineer):
     coral, repo, _, _, scripts = engineer
     helper = repo / 'helper.sh'

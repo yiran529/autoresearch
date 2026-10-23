@@ -879,6 +879,9 @@ class AgentManager:
         if not _log_has_session_error(old_handle.log_path):
             # Try to extract session_id from the old log for resumption
             session_id = self._runtime_for(agent_id).extract_session_id(old_handle.log_path)
+            # A resumed CLI may fail before emitting thread.started. Keep its
+            # already-known session unless the server explicitly rejected it.
+            session_id = session_id or getattr(old_handle, "session_id", None)
 
         if session_id:
             logger.info(f"Resuming {agent_id} with session {session_id}")

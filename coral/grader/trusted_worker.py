@@ -11,11 +11,16 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
 from coral.grader.timeouts import TRUSTED_WORKER_TIMEOUT
 from coral.workspace.grader_env import grader_python_path
+
+
+class WorkflowRecoveryPendingError(TimeoutError):
+    """A diagnostic must release its resources before workflow recovery can finish."""
 
 
 def workflow_model_environment(environment=None):
@@ -140,11 +145,43 @@ def _model_registry_path(coral_dir: str | Path, token: str) -> Path:
     return Path(coral_dir) / 'private/workflow_models' / f'{token}.json'
 
 
-def stop_workflow_worker(coral_dir: str | Path, *, drain_timeout: float = 5) -> None:
+def stop_workflow_worker(
+    coral_dir: str | Path, *, drain_timeout: float = 5, cancel_diagnostics: bool = True,
+) -> None:
     """Recover a previous service's worker and orphan model before starting anew."""
     private = Path(coral_dir) / "private"
     if not private.exists():
         return
+    with ExitStack() as guards:
+        held = set()
+        if not cancel_diagnostics:
+            gate = guards.enter_context((private / 'workflow-recovery.lock').open('a+b'))
+            try:
+                fcntl.flock(gate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise WorkflowRecoveryPendingError(
+                    'diagnostic admission is active; workflow restart deferred'
+                ) from None
+            # Routine worker rotation must not revoke another Node's active
+            # diagnostic. Hold idle-task locks until recovery finishes, so those
+            # tasks cannot start between this check and the stopping marker.
+            for path in sorted(private.glob("diagnostics/*/task.lock")):
+                stream = guards.enter_context(path.open("a+b"))
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise WorkflowRecoveryPendingError(
+                        f"diagnostic {path.parent.name} is active; workflow restart deferred"
+                    ) from None
+                held.add(path)
+        _stop_workflow_worker(private, drain_timeout=drain_timeout, held=held)
+        if not cancel_diagnostics:
+            # Let diagnostics acquire the shared gate only after cancellation
+            # has been lifted, including tasks created during the lock scan.
+            (private / 'workflow_stopping').unlink(missing_ok=True)
+
+
+def _stop_workflow_worker(private: Path, *, drain_timeout: float, held: set[Path]) -> None:
     (private / "workflow_stopping").touch()
     # Models have their own session so worker death cannot hide live descendants.
     def stop_registered(path):
@@ -168,6 +205,8 @@ def stop_workflow_worker(coral_dir: str | Path, *, drain_timeout: float = 5) -> 
     # queued/running. Revocation is visible without acquiring the held lock.
     deadline = time.monotonic() + drain_timeout
     for path in private.glob("diagnostics/*/task.lock"):
+        if path in held:
+            continue
         with path.open("a+b") as stream:
             while True:
                 try:
@@ -175,7 +214,9 @@ def stop_workflow_worker(coral_dir: str | Path, *, drain_timeout: float = 5) -> 
                     break
                 except BlockingIOError:
                     if time.monotonic() >= deadline:
-                        raise TimeoutError("diagnostic execution is still draining; workflow registration retained") from None
+                        raise WorkflowRecoveryPendingError(
+                            "diagnostic execution is still draining; workflow registration retained"
+                        ) from None
                     time.sleep(0.02)
     for path in paths:
         path.unlink(missing_ok=True)
@@ -316,8 +357,7 @@ def start_task_worker(
     environment = workflow_model_environment()
     workflow = log_name == "workflow_worker.err"
     if workflow:
-        stop_workflow_worker(coral_dir)
-        (coral_dir / "private/workflow_stopping").unlink(missing_ok=True)
+        stop_workflow_worker(coral_dir, cancel_diagnostics=False)
         environment["CORAL_WORKFLOW_CORAL_DIR"] = str(coral_dir)
     else:
         environment.pop("CORAL_WORKFLOW_CORAL_DIR", None)

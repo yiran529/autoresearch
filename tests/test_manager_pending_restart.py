@@ -81,6 +81,74 @@ def _ticks(manager, monkeypatch, count, after_tick=None):
     manager.monitor_loop(check_interval=0)
 
 
+@pytest.mark.parametrize('role', ['research', 'engineering'])
+@pytest.mark.parametrize('session_error', [
+    None,
+    'No conversation found with session id saved-session',
+    'No saved session found with ID saved-session',
+    'no rollout found for conversation id saved-session',
+    'no rollout found for thread id saved-session',
+    'no thread with id: saved-session',
+])
+def test_server_error_restart_retains_role_session_and_evaluation_budget(
+    tmp_path, monkeypatch, role, session_error,
+):
+    from coral.agent.assignments import AgentSpec
+
+    manager, _, _ = _manager(tmp_path, monkeypatch, exit_code=1)
+    manager.specs_by_id['agent-1'] = AgentSpec(
+        agent_id='agent-1', runtime='codex', model='test', workflow_role=role, node_id='N017',
+    )
+    old = manager.handles[0]
+    old.session_id = 'saved-session'
+    old.stop = lambda: None
+    old.log_path.write_text(
+        'ERROR: ' + session_error + '\n' if session_error else
+        '{"type":"error","message":"HTTP 503 Service Unavailable"}\n'
+    )
+    attempt_path = manager.paths.coral_dir / 'public/attempts' / ('a' * 40 + '.json')
+    original = attempt_path.read_bytes()
+    starts = []
+
+    def launch(agent_id, **kwargs):
+        starts.append((agent_id, kwargs))
+        return SimpleNamespace(agent_id=agent_id, alive=True, log_path=old.log_path)
+
+    monkeypatch.setattr(manager, '_setup_and_start_agent', launch)
+    monkeypatch.setattr(manager, '_restart_agent', AgentManager._restart_agent.__get__(manager))
+    _ticks(manager, monkeypatch, 1)
+    assert len(starts) == 1
+    assert starts[0][1]['resume_session_id'] == (None if session_error else 'saved-session')
+    assert manager.specs_by_id['agent-1'].workflow_role == role
+    assert attempt_path.read_bytes() == original
+
+
+@pytest.mark.parametrize('role', ['research', 'engineering'])
+def test_repeated_server_errors_pause_then_resume_without_charging_evaluations(
+    tmp_path, monkeypatch, role,
+):
+    from coral.agent.assignments import AgentSpec
+
+    manager, _, starts = _manager(tmp_path, monkeypatch, exit_code=1)
+    manager.specs_by_id['agent-1'] = AgentSpec(
+        agent_id='agent-1', runtime='codex', model='test', workflow_role=role, node_id='N017',
+    )
+    manager.handles[0].log_path.write_text('ERROR: HTTP 503 Service Unavailable\n')
+    handle = manager.handles[0]
+    monkeypatch.setattr(manager, '_restart_agent', lambda *args, **kwargs: starts.append(role) or handle)
+    attempt_path = manager.paths.coral_dir / 'public/attempts' / ('a' * 40 + '.json')
+    original = attempt_path.read_bytes()
+    _ticks(manager, monkeypatch, 5)
+    assert starts == [role, role]
+    assert manager._is_paused('agent-1')
+    assert manager._pause_count['agent-1'] == 1
+    manager._paused_until['agent-1'] = 0
+    _ticks(manager, monkeypatch, 1)
+    assert starts == [role, role, role]
+    assert not manager._is_paused('agent-1')
+    assert attempt_path.read_bytes() == original
+
+
 @pytest.mark.parametrize("dynamic", [False, True])
 def test_pending_feedback_does_not_report_failure(dynamic):
     config = CoralConfig.from_dict(

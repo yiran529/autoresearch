@@ -173,6 +173,107 @@ def test_incomplete_drain_retains_recovery_registration(tmp_path):
     assert not registry.exists()
 
 
+@pytest.mark.parametrize('lock_name', ['diagnostics/task/task.lock', 'workflow-recovery.lock'])
+def test_reconcile_defers_restart_without_cancelling_active_diagnostic(
+    tmp_path, monkeypatch, lock_name,
+):
+    import fcntl
+
+    from coral.grader.trusted_writes import TrustedWriteService
+
+    coral = tmp_path / '.coral'
+    private = coral / 'private'
+    task_lock = private / lock_name
+    task_lock.parent.mkdir(parents=True)
+    registry = private / 'workflow_process.json'
+    registry.write_text(json.dumps({'pid': 0, 'start_time': None, 'pgid': 0}))
+    worker_module = tmp_path / 'recovery_worker.py'
+    worker_module.write_text(
+        'import time\n'
+        'def run(root):\n'
+        '    time.sleep(60)\n'
+        '    return {}\n'
+    )
+    monkeypatch.setenv('PYTHONPATH', str(tmp_path))
+    monkeypatch.setattr('coral.grader.trusted_worker.grader_python_path',
+                        lambda _: Path(sys.executable))
+    config = SimpleNamespace(grader=SimpleNamespace(args={
+        'trusted_workflow_worker': 'recovery_worker:run',
+    }))
+    assignment = {'agent_id': 'research-N017'}
+    service = TrustedWriteService(coral, config,
+        workflow_handler=lambda *_: {'assignments': [assignment]})
+    try:
+        with task_lock.open('a+b') as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            for _ in range(2):
+                result = service.handle('reconcile_workflow', {}, os.getppid())
+                assert result['assignments'] == [assignment]
+                assert result['workflow_recovery_pending'] is True
+                assert registry.exists()
+                assert not (private / 'workflow_stopping').exists()
+                assert service._workflow_process is None
+        result = service.handle('reconcile_workflow', {}, os.getppid())
+        assert not result.get('workflow_recovery_pending')
+        process = service._workflow_process
+        assert process is not None and process.poll() is None
+        assert json.loads(registry.read_text())['pid'] == process.pid
+        service.handle('reconcile_workflow', {}, os.getppid())
+        assert service._workflow_process is process
+    finally:
+        service.stop_workflow()
+
+
+def test_reconcile_does_not_hide_unrelated_worker_launch_errors(tmp_path, monkeypatch):
+    from coral.grader.trusted_writes import TrustedWriteService
+
+    config = SimpleNamespace(grader=SimpleNamespace(args={
+        'trusted_workflow_worker': 'task:worker',
+    }))
+    service = TrustedWriteService(tmp_path / '.coral', config,
+        workflow_handler=lambda *_: {'assignments': []})
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('broken worker configuration')
+
+    monkeypatch.setattr('coral.grader.trusted_worker.start_task_worker', unavailable)
+    with pytest.raises(RuntimeError, match='broken worker configuration'):
+        service.handle('reconcile_workflow', {}, os.getppid())
+
+
+def test_reconcile_keeps_assignments_when_diagnostic_cleanup_times_out(tmp_path, monkeypatch):
+    import fcntl
+
+    from coral.grader.trusted_worker import stop_workflow_worker
+    from coral.grader.trusted_writes import TrustedWriteService
+
+    coral = tmp_path / '.coral'
+    private = coral / 'private'
+    task_lock = private / 'diagnostics/task/task.lock'
+    task_lock.parent.mkdir(parents=True)
+    registry = private / 'workflow_process.json'
+    registry.write_text(json.dumps({'pid': 0, 'start_time': None, 'pgid': 0}))
+    config = SimpleNamespace(grader=SimpleNamespace(args={
+        'trusted_workflow_worker': 'task:worker',
+    }))
+    service = TrustedWriteService(coral, config,
+        workflow_handler=lambda *_: {'assignments': [{'agent_id': 'research-N017'}]})
+
+    def recover(root, *args, **kwargs):
+        stop_workflow_worker(root, drain_timeout=0.02)
+
+    monkeypatch.setattr('coral.grader.trusted_worker.start_task_worker', recover)
+    with task_lock.open('a+b') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        result = service.handle('reconcile_workflow', {}, os.getppid())
+    assert result['assignments'] == [{'agent_id': 'research-N017'}]
+    assert result['workflow_recovery_pending'] is True
+    assert registry.exists()
+    assert (private / 'workflow_stopping').exists()
+    stop_workflow_worker(coral)
+    assert not registry.exists()
+
+
 def test_failed_model_registration_still_reaps_model(tmp_path, monkeypatch):
     from coral.grader import trusted_worker
 

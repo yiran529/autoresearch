@@ -145,7 +145,9 @@ def publication_guard(store, agent_id):
         raise WorkflowError('Engineering summary owner was not found')
     task = DiagnosticTask(store.coral_dir, f'{node}-{agent_id}')
     try:
-        with task.locked(timeout=0):
+        # Routine recovery briefly holds an exclusive admission gate. Wait for
+        # that gate, but still reject an actually running diagnostic immediately.
+        with task.locked(timeout=0, recovery_timeout=5):
             yield
     except TimeoutError as exc:
         raise WorkflowError('wait for the running Engineering diagnostic before finishing') from exc

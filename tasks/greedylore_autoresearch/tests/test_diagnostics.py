@@ -31,6 +31,21 @@ def execute(task, payload, cancelled):
     return {'status': 'completed', 'started': True, 'exit_code': 0}
 
 
+def test_new_diagnostic_obeys_recovery_gate_and_lock_timeout(task):
+    import fcntl
+
+    gate = task.coral_dir / 'private/workflow-recovery.lock'
+    with gate.open('a+b') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        with pytest.raises(TimeoutError):
+            with task.locked(timeout=0.02):
+                pass
+    # A waiting diagnostic was not executed or charged; it can run after recovery.
+    assert task.read()['executions'] == 0
+    assert task.run(request(), os.getpid(), execute)['status'] == 'completed'
+    assert task.read()['executions'] == 1
+
+
 def test_five_runs_share_persistent_budget(task):
     for number in range(5):
         assert task.run(request(f'run-{number}'), os.getpid(), execute)['status'] == 'completed'
@@ -223,6 +238,8 @@ def test_analyzer_timeout_rejects_unbounded_or_invalid_configuration(tmp_path, m
     (['workspace routing discovery failed'] * 4, 3),
     (['401 Unauthorized: request timed out'], 1),
     (['invalid configuration'], 1),
+    (['ERROR: unexpected status 503 Service Unavailable', None], 2),
+    (['ERROR: Selected model is at capacity'] * 4, 3),
 ])
 def test_model_connection_retries_preserve_diagnostics(task, monkeypatch, errors, expected_starts):
     from pathlib import Path
