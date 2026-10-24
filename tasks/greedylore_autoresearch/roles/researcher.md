@@ -21,11 +21,22 @@ Inspect your Node's README, Spec, Attempts and Worktree. If a Spec exists, conti
    - **REFINE:** extend, challenge or deepen a supported gap or unresolved parent question. Reference the parent's current finding (`Nxxx:current`) or an available follow-up question (`Nxxx:Q1`/`Nxxx:Q2`).
    - **EXPLORE:** choose a question suited to investigating a substantively different mechanism or interaction; an independent question may use a null problem reference.
 
-4. **Design.** Use the Parent's method, fixed-version code, Evaluation, Analyses and `handover.json` to understand the evidence and remaining uncertainty around the selected question. Handover questions and discriminating experiments inform the research; they are not a prescribed algorithm or mandatory experiment checklist. Consult relevant construction patterns, examples and original papers in `notes/toolkit/references/algorithm_construction.md` as needed. Diagnostic references are optional for a specific mechanism check, not a default experiment checklist.
+4. **Design.**
 
-   Start from relevant limitations, unexpected observations or untested assumptions. Form a plausible explanation and use it to construct the method. Identify the mechanism that changes—for example, communication representation, selection rule, feedback state or synchronization policy—explain why it could address the selected problem, and derive a testable prediction. **Prefer new, well-motivated mechanisms with a credible path to addressing the problem, using a simple design that tests the core idea.** Existing methods may serve as building blocks; do not add unsupported complexity merely to appear novel.
+   - **Understand the evidence.** Read the Parent's method, fixed-version code, Evaluation, Analyses and `handover.json` to understand the selected question and remaining uncertainty. Handover questions and discriminating experiments are guidance, not prescribed algorithms or a mandatory checklist.
 
-   Use the Parent's Research SHA as the code base. Use Engineering findings to decide which optimizations to reuse or defer, and identify potential confounds.
+   - **Consult references as needed.** Optionally, use effective methods and evidence-supported findings summarized in the Research Summary as building blocks or inspiration, considering their applicability and limitations. Consult construction patterns, examples and original papers in `notes/toolkit/references/algorithm_construction.md` as needed. Diagnostic references are optional for specific mechanism checks.
+
+   - **Construct the mechanism and prediction.** Make the reasoning chain explicit:
+
+     1. **Evidence:** Identify a specific limitation, unexpected observation or untested assumption. Cite the supporting evidence and distinguish observations from interpretations.
+     2. **Explanation:** Adopt a relevant mechanism explanation from existing Analyses, citing its source and supporting evidence, or propose or refine one where needed. Explain its applicability to the selected question, distinguish supported findings from hypotheses, and consider uncertainties or alternative explanations that would change the design.
+     3. **Design response:** Explain which part of the proposed method addresses that mechanism, how it is expected to help, and under what assumptions. Identify relevant tradeoffs or possible confounds.
+     4. **Prediction:** Derive a testable prediction that connects the change to the explanation used in the design. State what result would support or weaken that explanation, beyond an overall score improvement.
+
+     **Prefer NEW, well-motivated mechanisms with a credible path to addressing the problem, using a simple design that tests the core idea.** Do not add unsupported complexity merely to appear novel.
+
+   - **Set the implementation base.** Use the Parent's Research SHA as the code base. Use Engineering findings to decide which optimizations to reuse or defer, and identify potential confounds.
 
 5. **Compare.** Compare the substantive differences from the Parent, registered methods and closest prior work. Direct transfer, simple combinations or routine tuning do not by themselves establish novelty; parameter studies should answer an unresolved mechanism question. Check relevant precedents before claiming novelty and revise duplicated mechanisms before registration.
 
