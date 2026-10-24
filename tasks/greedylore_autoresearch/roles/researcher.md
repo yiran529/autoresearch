@@ -13,13 +13,12 @@ Inspect your Node's README, Spec, Attempts and Worktree. If a Spec exists, conti
 1. **Acquire.** Run `autoresearch node planning acquire --wait` before choosing a Parent or developing a method. Keep the returned token. While another Researcher owns selection, wait rather than choose against stale records. A historical host returning `disabled` uses legacy initialization without a token.
 2. **Read.** While holding the lock, read the returned registry through shared `notes/tree.md`, registered Specs including in-progress Nodes, and available Research/Engineering Summaries. Inspect candidate Parents' Evaluation, Analyses and `handover.json`. Read fixed code with `git show <SHA>:<file>`.
 3. **Choose.** Choose one completed eligible code Parent and a research question; other Nodes may serve as knowledge references. Consider:
-   - **Research value and evidence:** favor questions grounded in existing results whose resolution could yield improvement or new knowledge.
-   - **Exploration coverage and lineage depth:** consider how extensively the current research lineage has been explored. Favor shallower lineages with fewer successive extensions, avoiding continued concentration on the same branch.
+   - **Research value and continuity:** Prioritize important unresolved questions and informative next steps, considering accumulated evidence rather than favoring shallower lineages.
    - **Current research priorities:** prioritize low-rank compression and sparsification paths.
 
    Do not choose on speed or U alone. Follow the host mode (default REFINE if absent; never draw it yourself):
    - **REFINE:** extend, challenge or deepen a supported gap or unresolved parent question. Reference the parent's current finding (`Nxxx:current`) or an available follow-up question (`Nxxx:Q1`/`Nxxx:Q2`).
-   - **EXPLORE:** choose a question suited to investigating a substantively different mechanism or interaction; an independent question may use a null problem reference.
+   - **EXPLORE:** Use a substantively different mechanism or method to address an important unresolved problem identified in existing Analyses or Summaries. Cite the problem's source and explain why the new approach could help.
 
 4. **Design.**
 
