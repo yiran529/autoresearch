@@ -60,7 +60,7 @@ def validate_body(body):
     return body
 
 
-def validate_intent(value, parent, mode):
+def validate_intent(value, parent, mode, *, allow_property_start=False):
     if not isinstance(value, dict) or set(value) != _INTENT_FIELDS:
         raise ValueError("research_intent has an invalid schema")
     for field in _INTENT_FIELDS - {"problem_ref"}:
@@ -70,7 +70,7 @@ def validate_intent(value, parent, mode):
     available.update(f"{parent['node_id']}:{q['id']}" for q in parent.get("follow_up_questions", []))
     if reference is not None and (not isinstance(reference, str) or reference not in available):
         raise ValueError("research_intent problem_ref does not identify a parent question")
-    if mode == "REFINE" and reference is None and not parent.get("legacy", True):
+    if mode == "REFINE" and reference is None and not parent.get("legacy", True) and not allow_property_start:
         raise ValueError("REFINE research_intent requires a parent problem_ref")
     return value
 
@@ -87,7 +87,7 @@ def _safe_file(notes, relative):
     return path
 
 
-def freeze_parent(notes, parent_node, intent, mode):
+def freeze_parent(notes, parent_node, intent, mode, *, allow_property_start=False):
     relative = f"nodes/{parent_node}/handover.json"
     path = _safe_file(notes, relative)
     parent = {"node_id": parent_node, "legacy": True, "follow_up_questions": []}
@@ -101,7 +101,7 @@ def freeze_parent(notes, parent_node, intent, mode):
     if intent is None and not parent.get("legacy", True):
         raise ValueError("research_intent is required to respond to this parent handover")
     if intent is not None:
-        validate_intent(intent, parent, mode)
+        validate_intent(intent, parent, mode, allow_property_start=allow_property_start)
     return snapshot
 
 

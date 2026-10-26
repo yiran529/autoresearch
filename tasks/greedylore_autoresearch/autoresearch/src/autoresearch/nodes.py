@@ -90,7 +90,9 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
     from .handover import freeze_parent
 
     intent = request.get("research_intent")
-    parent_handover = freeze_parent(notes_root, parent_node, intent, spec.get("research_mode", "REFINE"))
+    parent_handover = freeze_parent(
+        notes_root, parent_node, intent, spec.get("research_mode", "REFINE"),
+        allow_property_start=spec.get("research_origin_version") == 3)
     if intent is not None:
         spec["research_intent"] = intent
     if parent_handover is not None:
