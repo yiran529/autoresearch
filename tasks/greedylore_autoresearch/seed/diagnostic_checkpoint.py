@@ -1,4 +1,4 @@
-"""One final training-state checkpoint for bounded diagnostics, not data-stream replay.
+"""Distributed training checkpoints for diagnostics and opt-in exact stream replay.
 
 Load only trusted, recorded checkpoints. Use the matching code snapshot and world
 size. DDP bucket order must match the saved order before reusing bucket-indexed
@@ -97,12 +97,35 @@ def register_checkpoint_hook(model, state, hook):
     model.register_comm_hook(state, recorded_hook)
 
 
+def capture_rng_state():
+    numpy = np.random.get_state()
+    return {
+        'torch_rng': torch.get_rng_state(),
+        'cuda_rng': torch.cuda.get_rng_state() if torch.cuda.is_initialized() else None,
+        'python_rng': random.getstate(),
+        'numpy_rng': (numpy[0], numpy[1].tolist(), *numpy[2:]),
+    }
+
+
+def restore_rng_state(state, device=None):
+    torch.set_rng_state(state['torch_rng'].cpu())
+    if state['cuda_rng'] is not None:
+        if (device is not None and torch.device(device).type != 'cuda') or not torch.cuda.is_available():
+            raise ValueError('CUDA RNG restoration requires CUDA; use restore_rng=False for CPU inspection')
+        torch.cuda.set_rng_state(state['cuda_rng'].cpu(), device if device is not None else 'cuda')
+    random.setstate(state['python_rng'])
+    numpy = state['numpy_rng']
+    np.random.set_state((numpy[0], np.array(numpy[1], dtype=np.uint32), *numpy[2:]))
+
+
 def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, config,
-                          update_step, batch=None, min_free_bytes=1024**3):
+                          update_step, batch=None, min_free_bytes=1024**3,
+                          training_state=None, data_stream_state=None):
     """All ranks participate. File failures disable diagnostics, not quality scoring.
 
     One model file plus per-rank state; manifest is the final completion marker.
-    There is deliberately no checkpoint deletion or periodic checkpoint series.
+    Optional training/data-stream state enables staged continuation. Legacy final
+    diagnostic callers retain the original API and unavailable-on-error behavior.
     """
     root = Path(root)
     distributed = dist.is_initialized()
@@ -123,14 +146,14 @@ def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, conf
             'state': _pack({key: value for key, value in vars(hook_state).items()
                             if key not in excluded}),
         }
-        numpy = np.random.get_state()
+        if training_state is not None and training_state.get('update_step') != update_step:
+            raise ValueError('training_state update_step mismatch')
         state = {
             'optimizer_class': _identity(optimizer), 'optimizer': optimizer.state_dict(),
             'scheduler_class': _identity(scheduler), 'scheduler': scheduler.state_dict(),
-            'hook': hook, 'batch': batch, 'torch_rng': torch.get_rng_state(),
-            'cuda_rng': torch.cuda.get_rng_state() if next(model.parameters()).is_cuda else None,
-            'python_rng': random.getstate(),
-            'numpy_rng': (numpy[0], numpy[1].tolist(), *numpy[2:]),
+            'hook': hook, 'batch': batch, **capture_rng_state(),
+            'training_state': _pack(training_state),
+            'data_stream_state': _pack(data_stream_state),
         }
         items = {f'rank-{rank}.pt': state}
         if rank == 0:
@@ -154,8 +177,11 @@ def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, conf
         'contract_hash': config.get('contract_hash', ''),
         'config': config, 'model_layout': _layout(model),
         'files': {} if errors else {name: info for item in ranks for name, info in item['files'].items()},
-        'limitations': ['No original dataloader position is saved; not exact training-stream replay.',
-                        'Use matching code, world size and DDP bucket layout.'],
+        'data_stream_replay': 'exact' if data_stream_state is not None else 'unavailable',
+        'limitations': (['Replay requires unchanged deterministic data, tokenizer, code and workers=0.']
+                         if data_stream_state is not None else
+                         ['No original dataloader position is saved; not exact training-stream replay.'])
+                        + ['Use matching code, world size and DDP bucket layout.'],
         'errors': errors,
     }
     if rank == 0:
@@ -171,11 +197,13 @@ def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, conf
 
 
 def load_checkpoint(root, model, optimizer=None, scheduler=None, hook_state=None, *,
-                    contract_hash=None, rank=None, world_size=None, restore_rng=True):
+                    contract_hash=None, rank=None, world_size=None, restore_rng=True,
+                    data_stream=None, expected_config=None):
     """Strict restoration; optional optimizer/hook objects must match saved classes.
 
-    Returns the manifest and saved per-rank diagnostic batch. No implicit EF reset,
-    world-size conversion, download, formal Attempt, or training is performed.
+    Returns manifest, paired batch and optional full training/stream state. If a
+    data_stream is supplied, replay its position before restoring main RNG. No
+    implicit EF reset, world-size conversion or formal Attempt is performed.
     """
     root = Path(root)
     manifest = json.loads((root / 'manifest.json').read_text())
@@ -187,6 +215,8 @@ def load_checkpoint(root, model, optimizer=None, scheduler=None, hook_state=None
         raise ValueError('checkpoint world size/rank mismatch')
     if contract_hash is not None and manifest['contract_hash'] != contract_hash:
         raise ValueError('checkpoint contract mismatch')
+    if expected_config is not None and manifest['config'] != expected_config:
+        raise ValueError('checkpoint code/config mismatch')
     if manifest['model_layout'] != _layout(model):
         raise ValueError('checkpoint model layout mismatch')
     expected = {'model.pt', *(f'rank-{i}.pt' for i in range(world))}
@@ -218,13 +248,58 @@ def load_checkpoint(root, model, optimizer=None, scheduler=None, hook_state=None
         vars(hook_state).update(restored)
         if '_checkpoint_bucket_layout' in restored:
             hook_state._checkpoint_expected_layout = restored['_checkpoint_bucket_layout'].copy()
+    training_state = state.get('training_state')
+    stream_state = state.get('data_stream_state')
+    if training_state is not None and training_state.get('update_step') != manifest['update_step']:
+        raise ValueError('checkpoint training_state update_step mismatch')
+    if data_stream is not None:
+        if stream_state is None:
+            raise ValueError('checkpoint has no training stream state')
+        data_stream.load_state_dict(stream_state)
     if restore_rng:
-        torch.set_rng_state(state['torch_rng'].cpu())
-        if state['cuda_rng'] is not None:
-            if device.type != 'cuda':
-                raise ValueError('CUDA RNG restoration requires CUDA; use restore_rng=False for CPU inspection')
-            torch.cuda.set_rng_state(state['cuda_rng'].cpu(), device)
-        random.setstate(state['python_rng'])
-        numpy = state['numpy_rng']
-        np.random.set_state((numpy[0], np.array(numpy[1], dtype=np.uint32), *numpy[2:]))
-    return {'manifest': manifest, 'batch': state['batch'], 'hook_state': hook}
+        restore_rng_state(state, device=device)
+    return {'manifest': manifest, 'batch': state['batch'], 'hook_state': hook,
+            'training_state': training_state, 'data_stream_state': stream_state}
+
+
+def prepare_ddp_for_resume(root, model, *, contract_hash=None, expected_config=None):
+    """Establish the fresh reducer's stable buckets before registering its hook.
+
+    DDP rebuilds buckets after its first backward. Two zero-loss backwards use
+    only the saved paired batch, perform no optimizer updates, and do not advance
+    the training stream. The caller then registers the compressor hook and calls
+    load_checkpoint again to restore model, optimizer, compressor, stream and RNG.
+    The saved bucket-layout guard rejects incompatible layouts on the next hook.
+    """
+    if not isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        raise ValueError('prepare_ddp_for_resume requires a DDP model')
+    restored = load_checkpoint(root, model, contract_hash=contract_hash,
+                               expected_config=expected_config, restore_rng=False)
+    batch = restored['batch']
+    if batch is None or 'labels' not in batch:
+        raise ValueError('DDP resume requires a paired training batch')
+    stabilize_ddp_buckets(model, batch)
+
+
+def stabilize_ddp_buckets(model, batch):
+    """Two zero-loss backwards establish stable buckets without a trained prefix.
+
+    Used before the first staged update as well as on restart, so even a pause at
+    update 1 has the same bucket order. Preserve RNG and buffers and clear grads;
+    no optimizer/scheduler or training-stream progress occurs here. The caller
+    must register the compressor hook afterwards.
+    """
+    rng = capture_rng_state()
+    buffers = {name: tensor.clone() for name, tensor in model.named_buffers()}
+    try:
+        model.train()
+        for _ in range(2):
+            (model(**batch).loss * 0).backward()
+            model.zero_grad(set_to_none=True)
+    finally:
+        restore_rng_state(rng)
+        with torch.no_grad():
+            for name, tensor in model.named_buffers():
+                if name in buffers:
+                    tensor.copy_(buffers[name])
+        model.zero_grad(set_to_none=True)

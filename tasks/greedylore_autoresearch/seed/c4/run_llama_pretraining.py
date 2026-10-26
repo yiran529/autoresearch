@@ -4,6 +4,8 @@ import json
 import math
 import random
 import argparse
+import hashlib
+from pathlib import Path
 import numpy as np
 
 import torch
@@ -123,6 +125,15 @@ def parse_args(args):
     parser.add_argument("--save_dir", type=str, default=None)
     parser.add_argument("--diagnostic_checkpoint", type=str, default=None,
                         help="Save one final distributed state for diagnostics; no periodic saves.")
+    parser.add_argument("--checkpoint_root", type=str, default=None,
+                        help="Enable staged checkpoints and deterministic replay (forces workers=0).")
+    parser.add_argument("--checkpoint_interval_steps", type=int, default=1000,
+                        help="Positive optimizer-update checkpoint period, supplied by the host.")
+    parser.add_argument("--resume_checkpoint", type=str, default=None)
+    parser.add_argument("--pause_after_steps", type=int, default=None,
+                        help="Absolute optimizer update at which to end this segment without final scoring.")
+    parser.add_argument("--training_metrics", type=str, default=None,
+                        help="Append local per-update training metrics to this JSONL file.")
     parser.add_argument("--tags", type=str, default=None)
     parser.add_argument("--dtype", type=str, default="bfloat16" if torch.cuda.is_bf16_supported() else "float32")
     parser.add_argument("--workers", type=int, default=4)
@@ -158,6 +169,12 @@ def parse_args(args):
     
     args = parser.parse_args(args)
 
+    if args.checkpoint_interval_steps <= 0:
+        raise ValueError("checkpoint_interval_steps must be positive")
+    if (args.resume_checkpoint or args.pause_after_steps is not None) and not args.checkpoint_root:
+        raise ValueError("resume_checkpoint/pause_after_steps require checkpoint_root")
+    if args.checkpoint_root and args.continue_from:
+        raise ValueError("staged replay cannot reuse a legacy/dense continue_from prefix")
     args = args_utils.check_args_torchrun_main(args)
 
     supported_optimizers = ['adamw','galore_adamw','golore_adamw','muon']
@@ -224,8 +241,51 @@ def warmup_linear(x, warmup=0.002):
         return x / warmup
     return 1.0 - x
 
+def staged_checkpoint_config(args, model_config, world_size):
+    """Reject changed training code/config, while allowing new segment destinations."""
+    operational = {'checkpoint_root', 'checkpoint_interval_steps', 'resume_checkpoint',
+                   'pause_after_steps', 'training_metrics', 'diagnostic_checkpoint',
+                   'output_dir', 'save_dir', 'save_every', 'wandb_project', 'wandb_job_type',
+                   'wandb_run_name', 'name', 'tags'}
+    config = {key: value for key, value in vars(args).items() if key not in operational}
+    seed_root = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha256()
+    for path in sorted(seed_root.rglob('*.py')):
+        digest.update(str(path.relative_to(seed_root)).encode())
+        digest.update(path.read_bytes())
+    config.update(code_sha256=digest.hexdigest(), model=model_config.to_dict(),
+                  world_size=world_size, effective_workers=0,
+                  torch_version=str(torch.__version__), datasets_version=datasets.__version__,
+                  transformers_version=transformers.__version__)
+    # Local config/tokenizer files are small and identify preprocessing content.
+    assets = {}
+    for asset in (Path(args.model_config), Path(args.tokenizer_path)):
+        paths = [asset] if asset.is_file() else (
+            sorted(path for path in asset.rglob('*') if path.is_file()) if asset.is_dir() else [])
+        for path in paths:
+            assets[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    config['asset_sha256'] = assets
+    return config
+
+
+def append_training_metrics(path, record):
+    if path is not None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a') as stream:
+            stream.write(json.dumps(record, allow_nan=False) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+
+
 def main(args):
-    target_steps = training_target_steps(args.num_training_steps, args.stop_after_steps)
+    final_target_steps = training_target_steps(args.num_training_steps, args.stop_after_steps)
+    target_steps = final_target_steps
+    if args.pause_after_steps is not None:
+        if not 0 < args.pause_after_steps <= final_target_steps:
+            raise ValueError("pause_after_steps must be between 1 and the final training target")
+        target_steps = args.pause_after_steps
+    staged = args.checkpoint_root is not None
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
@@ -303,7 +363,11 @@ def main(args):
         return batch
 
     dataset = PreprocessedIterableDataset(data, tokenizer, batch_size=args.batch_size, max_length=args.max_length)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=None, num_workers=args.workers)
+    effective_workers = 0 if staged else args.workers
+    if staged and args.workers != 0:
+        logger.warning(f"Staged exact replay forces workers=0 (requested {args.workers}); "
+                       "worker prefetch/order replay is unsupported")
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=None, num_workers=effective_workers)
 
     model_config = AutoConfig.from_pretrained(args.model_config)
     if args.use_hf_model:
@@ -421,6 +485,7 @@ def main(args):
         scheduler.load_state_dict(checkpoint['scheduler'])
         logger.info(f"Scheduler state loaded from {checkpoint_path}")
 
+    checkpoint_config = staged_checkpoint_config(args, model_config, world_size) if staged else None
     hook_state = None
     if not args.single_gpu:
         model: LlamaForCausalLM = torch.nn.parallel.DistributedDataParallel(
@@ -429,6 +494,23 @@ def main(args):
             output_device=local_rank,
             broadcast_buffers=False,
         )
+        if args.resume_checkpoint is not None:
+            from diagnostic_checkpoint import prepare_ddp_for_resume
+            prepare_ddp_for_resume(args.resume_checkpoint, model, contract_hash=args.contract_hash,
+                                   expected_config=checkpoint_config)
+        elif staged:
+            from diagnostic_checkpoint import capture_rng_state, restore_rng_state, stabilize_ddp_buckets
+            setup_rng = capture_rng_state()
+            try:
+                # Read the first deterministic batch on a separate iterator for
+                # reducer setup; the original stream starts from batch zero.
+                setup_batch = next(iter(dataloader))
+                setup_batch = {key: value.to(device) for key, value in setup_batch.items()}
+                setup_labels = setup_batch['input_ids'].clone()
+                setup_labels[setup_labels == tokenizer.pad_token_id] = -100
+                stabilize_ddp_buckets(model, {**setup_batch, 'labels': setup_labels})
+            finally:
+                restore_rng_state(setup_rng)
         process_group = dist.distributed_c10d._get_default_group()
         hook_state = register_comm_hook_for_ddp_model(model, process_group, args)
 
@@ -447,13 +529,72 @@ def main(args):
 
     torch.cuda.reset_peak_memory_stats()
 
-    batches = training_batches(dataloader, args.repeat_training_data,
-                               args.batch_size if args.repeat_training_data else None)
-    for batch_idx, batch in enumerate(batches):
+    batch_factory = lambda: training_batches(
+        dataloader, args.repeat_training_data,
+        args.batch_size if args.repeat_training_data else None)
+    checkpoint_schedule = None
+    checkpoint_path = None
+    checkpoint_status = None
+    last_training_batch = None
+    if staged:
+        from training_stream import CheckpointSchedule, ReplayTrainingStream
+        from diagnostic_checkpoint import load_checkpoint, save_final_checkpoint
 
-        if update_step >= target_steps:
-            logger.info(f"Reached max number of update steps ({target_steps}). Stopping training.")
-            print(f"Rank {global_rank} stopping training.")
+        checkpoint_schedule = CheckpointSchedule(args.checkpoint_root, args.checkpoint_interval_steps)
+        batches = ReplayTrainingStream(batch_factory, identity={
+            'rank': global_rank, 'world_size': world_size, 'batch_size': args.batch_size,
+            'workers': effective_workers, 'requested_workers': args.workers,
+            'seed': args.seed, 'shuffle_seed': seed_for_shuffle,
+            'repeat': args.repeat_training_data, 'dataset_path': args.dataset_path,
+            'tokenizer_path': args.tokenizer_path, 'max_length': args.max_length,
+            'gradient_accumulation': args.gradient_accumulation,
+        })
+        if args.resume_checkpoint is not None:
+            restored = load_checkpoint(
+                args.resume_checkpoint, model, optimizer, scheduler, hook_state,
+                contract_hash=args.contract_hash, expected_config=checkpoint_config, data_stream=batches)
+            state = restored['training_state']
+            if state is None:
+                raise ValueError("staged resume requires complete training_state")
+            global_step, update_step = state['global_step'], state['update_step']
+            tokens_seen, tokens_seen_before = state['tokens_seen'], state['tokens_seen_before']
+            best_eval_loss, best_eval_step = state['best_eval_loss'], state['best_eval_step']
+            last_training_batch = restored['batch']
+            if global_step != update_step * args.gradient_accumulation:
+                raise ValueError("checkpoint is not at a safe optimizer-update boundary")
+            if update_step >= target_steps:
+                raise ValueError("resume checkpoint must precede this segment's target")
+            beginning_step = global_step
+            if global_rank == 0:
+                pbar.reset(total=target_steps - update_step)
+    else:
+        batches = iter(batch_factory())
+
+    def save_staged_checkpoint(terminal=False):
+        nonlocal checkpoint_status, checkpoint_path
+        if checkpoint_schedule is None or not checkpoint_schedule.due(update_step, terminal=terminal):
+            return
+        root = checkpoint_schedule.path(update_step)
+        checkpoint_status = save_final_checkpoint(
+            root, model, optimizer, scheduler, hook_state, config=checkpoint_config,
+            update_step=update_step, batch=last_training_batch,
+            training_state={
+                'global_step': global_step, 'update_step': update_step,
+                'tokens_seen': tokens_seen, 'tokens_seen_before': tokens_seen_before,
+                'best_eval_loss': best_eval_loss, 'best_eval_step': best_eval_step,
+                'scheduler_position': scheduler.last_epoch,
+            }, data_stream_state=batches.state_dict())
+        if checkpoint_status['status'] != 'complete':
+            raise RuntimeError(f"Staged checkpoint unavailable: {checkpoint_status}")
+        checkpoint_schedule.mark_saved(update_step)
+        checkpoint_path = str(root)
+
+    # Check the update limit BEFORE requesting another batch, preserving the actual
+    # last input/labels pair and replay position at a terminal boundary.
+    while update_step < target_steps:
+        try:
+            batch = next(batches)
+        except StopIteration:
             break
 
         global_step += 1
@@ -462,6 +603,7 @@ def main(args):
         batch = {k: v.to(device) for k, v in batch.items()}
         labels = batch["input_ids"].clone()
         labels[labels == pad_idx] = -100
+        last_training_batch = {**batch, 'labels': labels}
         tokens_seen += (batch["input_ids"] != pad_idx).sum().item() * world_size
 
         loss = model(**batch, labels=labels).loss
@@ -575,6 +717,13 @@ def main(args):
                 },
                 step=global_step,
             )
+        if global_rank == 0:
+            append_training_metrics(args.training_metrics, {
+                'update_step': update_step, 'global_step': global_step,
+                'loss': loss.item(), 'lr': lr, 'tokens_seen': tokens_seen,
+                'update_time_seconds': update_time,
+            })
+        save_staged_checkpoint()
         update_time = time.time()
 
     # ##############################
@@ -611,14 +760,24 @@ def main(args):
     #     with open(f"{current_model_directory}/training_state.json", "w") as f:
     #         json.dump(training_state_checkpoint, f, indent=4)
 
+    # A paused segment has a valid resumable checkpoint, never a final quality score.
+    save_staged_checkpoint(terminal=True)
+    if update_step < final_target_steps:
+        if global_rank == 0 and args.output_dir is not None:
+            os.makedirs(args.output_dir, exist_ok=True)
+            with open(os.path.join(args.output_dir, "all_results.json"), 'w') as stream:
+                json.dump({'status': 'paused', 'update_step': update_step,
+                           'checkpoint_path': checkpoint_path, 'contract_hash': args.contract_hash,
+                           'world_size': world_size}, stream)
+        return
+
     # Final evaluation
-    checkpoint_status = None
     if args.diagnostic_checkpoint is not None:
         from diagnostic_checkpoint import save_final_checkpoint
 
         checkpoint_status = save_final_checkpoint(
             args.diagnostic_checkpoint, model, optimizer, scheduler, hook_state,
-            config=run_config, update_step=update_step, batch={**batch, 'labels': labels},
+            config=run_config, update_step=update_step, batch=last_training_batch,
         )
         if checkpoint_status['status'] != 'complete':
             logger.warning(f"Final diagnostic checkpoint unavailable: {checkpoint_status}")
@@ -658,6 +817,9 @@ def main(args):
                 wandb_link=wandb_run_url(wandb.run),
             )
             all_results['diagnostic_checkpoint'] = checkpoint_status
+            if staged:
+                all_results['checkpoint_path'] = checkpoint_path
+            os.makedirs(args.output_dir, exist_ok=True)
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump(all_results, f)
 

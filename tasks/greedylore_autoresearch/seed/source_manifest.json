@@ -1,8 +1,8 @@
 {
   "adaptations": {
     "c4/run_llama_pretraining.py": {
-      "reason": "offline tokenizer, formal quality evidence schema, and final diagnostic checkpoint",
-      "seed_sha256": "a49d3c72feb0a16a459ff51474436f527a179382dc9b6683d798aaf530be0d25"
+      "reason": "offline tokenizer and formal quality evidence; opt-in staged periodic checkpoints, exact deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches",
+      "seed_sha256": "edaaf5db4d2b61675d66a5557e447df6b9d173e1a91562146bca3a00f70073d1"
     },
     "c4/table_v_timing.py": {
       "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
@@ -13,8 +13,8 @@
       "seed_sha256": "d91d67ba24e144b40bf37e787249e030b71e342c7c49584bcb9b5e08c49fef46"
     },
     "comm_hooks/utils.py": {
-      "reason": "return hook state and enable quality-only checkpoint bucket recording; timing hooks unchanged",
-      "seed_sha256": "06a0376f0dc5fd4652d82af9a92f7aa6681f227a348f3cd8738ec9602fe47e78"
+      "reason": "return hook state and record/check checkpoint bucket layouts for final diagnostics and staged checkpoint roots; timing registration unchanged",
+      "seed_sha256": "0dc924cfdcdb5d910a03934758318dd335c3b14fd1f907b7ed3875be37bfecac"
     },
     "tests/test_c4_model_setup.py": {
       "reason": "quality entrypoint regression coverage",
@@ -512,7 +512,10 @@
   "source_repository": "/home/wyr/greedy_lore",
   "task_files": {
     "diagnostic_checkpoint.py": {
-      "sha256": "a6e0ce781264c1688642a77e1e89b53268c9a8727d09e5c1628c1d17f32200d2"
+      "sha256": "058d5a179ff89288ae0fc4f8dbe1978028c3af4546bc20d0bf50fb2dcfabb1d4"
+    },
+    "training_stream.py": {
+      "sha256": "3b6244102eee4cfc486c2efcad8899482e1fb4d1fc1fd99886862236974871c7"
     }
   }
 }

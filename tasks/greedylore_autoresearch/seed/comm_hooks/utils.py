@@ -136,7 +136,8 @@ def get_uncompress_names(ddp_model):
 
 def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None):
     def register(state, hook):
-        if getattr(args, 'diagnostic_checkpoint', None):
+        if (getattr(args, 'diagnostic_checkpoint', None)
+                or getattr(args, 'checkpoint_root', None)):
             from diagnostic_checkpoint import register_checkpoint_hook
             register_checkpoint_hook(model, state, hook)
         else:

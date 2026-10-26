@@ -22,7 +22,9 @@ def _value(value: Any) -> str:
 
 def build_quality_command(
     profile: Mapping[str, Any], candidate: str | Path, output: str | Path,
-    gpus: Sequence[int],
+    gpus: Sequence[int], *, checkpoint_root: str | Path | None = None,
+    checkpoint_interval_steps: int = 1000, resume_checkpoint: str | Path | None = None,
+    pause_after_steps: int | None = None, training_metrics: str | Path | None = None,
 ) -> ProcessSpec:
     candidate = Path(candidate).resolve()
     output = Path(output).resolve()
@@ -69,7 +71,21 @@ def build_quality_command(
     ]
     # Old fixed-SHA candidates predate the diagnostic save API. Do not make an
     # otherwise valid historical evaluation fail on an unknown CLI argument.
-    if (candidate / "diagnostic_checkpoint.py").is_file():
+    if checkpoint_root is not None:
+        if type(checkpoint_interval_steps) is not int or checkpoint_interval_steps <= 0:
+            raise ValueError('checkpoint_interval_steps must be a positive integer')
+        if pause_after_steps is not None and (type(pause_after_steps) is not int
+                or not 0 < pause_after_steps <= profile['stop_after_steps']):
+            raise ValueError('pause_after_steps must be within the fixed training budget')
+        command += ['--checkpoint_root', str(checkpoint_root),
+                    '--checkpoint_interval_steps', str(checkpoint_interval_steps)]
+        if resume_checkpoint is not None:
+            command += ['--resume_checkpoint', str(resume_checkpoint)]
+        if pause_after_steps is not None:
+            command += ['--pause_after_steps', str(pause_after_steps)]
+        if training_metrics is not None:
+            command += ['--training_metrics', str(training_metrics)]
+    elif (candidate / "diagnostic_checkpoint.py").is_file():
         command += ["--diagnostic_checkpoint", str(output.parent.parent / "checkpoints" / output.name)]
     if profile["activation_checkpointing"]:
         command.append("--activation_checkpointing")
