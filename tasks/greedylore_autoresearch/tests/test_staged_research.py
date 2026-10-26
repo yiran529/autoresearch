@@ -1,9 +1,22 @@
 """Exercise the real staged controller with only expensive execution replaced."""
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 from test_research_record import design, initialize, record
+
+
+def timing_result(contract_hash='fixed'):
+    from coral.types import Score, ScoreBundle
+    bundle = ScoreBundle(scores={
+        'bf16_timing_mean': Score(.1, 'bf16_timing_mean'),
+        'bf16_timing_spread': Score(.01, 'bf16_timing_spread'),
+        'fp32_timing_mean': Score(.1, 'fp32_timing_mean'),
+        'fp32_timing_spread': Score(.01, 'fp32_timing_spread'),
+    }, aggregated=1.0, metadata={'performance_eligible': True, 'comparability': 'comparable',
+        'contract_hash': contract_hash, 'failure_class': None})
+    return {'status': 'completed', 'performance_eligible': True, 'bundle': bundle.to_dict()}
 
 
 class Backend:
@@ -12,6 +25,10 @@ class Backend:
         self.fail_transfer = False
     def run(self, host, job):
         self.calls.append((job['kind'], job.get('sha'), job.get('pause_after_steps')))
+        if job['kind'] == 'timing':
+            result = timing_result(job['canonical'].get('contract_hash'))
+            result['bundle']['metadata']['timing_protocol'] = job['timing_context']['plan']
+            return result
         if job['kind'] == 'transfer' and self.fail_transfer:
             raise ValueError('simulated candidate failure')
         return {'status': 'paused' if job.get('pause_after_steps') else 'completed',
@@ -27,10 +44,12 @@ def host(tmp_path):
     from autoresearch.staged_research import StagedResearch
     r = record(tmp_path)
     initialize(r)
+    source = Path(__file__).resolve().parents[1] / 'taskdata/eval_contract.yaml'
+    (r.store.coral_dir / 'private/eval_contract.yaml').write_text(source.read_text())
     backend = Backend()
     result = StagedResearch(r.store, r.agent_id, r.node_id, backend=backend)
     # validate_candidate is a git/submission boundary; controller ownership and budgets stay real.
-    result.validate_candidate = lambda sha: {'commit_hash': sha}
+    result.validate_candidate = lambda sha: {'commit_hash': sha, 'contract_hash': 'fixed'}
     return result, r, backend
 
 

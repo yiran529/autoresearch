@@ -55,3 +55,5 @@ def test_staged_workflow_simulation(tmp_path, scenario):
     assert report['post_freeze_rejected']
     assert report['transfer_runs'] == (0 if scenario == 'no_eligible' else 1)
     assert report['budget_enforced'] == (scenario == 'no_eligible')
+    assert report['independent_timing'] and report['no_timing_on_resume']
+    assert report['timing_executions'] == 1 and report['timing_evidence_survives']

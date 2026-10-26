@@ -148,7 +148,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     research = commands.add_parser('research', help='host-controlled staged research (opt-in)')
-    research.add_argument('action', choices=('register', 'design', 'decision', 'train', 'diagnostic', 'finish', 'status', 'recover'))
+    research.add_argument('action', choices=('register', 'design', 'decision', 'train', 'timing', 'diagnostic', 'finish', 'status', 'recover'))
     research.add_argument('--node', required=True)
     research.add_argument('--file', type=Path, help='JSON action data; status/recover need no file')
     research.add_argument('--request-id', default=None, help='reuse after timeout for idempotency')

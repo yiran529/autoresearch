@@ -266,7 +266,9 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 | `research_checkpoint_interval_steps` | `1000` | optimizer update 保存周期；正整数，仅宿主可调整 |
 | `dynamic_artifact_root` | `/dev/shm/wyr_tmp` | 本 run/node 的 tensor、训练/诊断副本和缓存根 |
 | `dynamic_artifact_min_free_bytes` | `1073741824` | 开始 GPU 工作前要求的剩余空间；不足明确报错 |
-| `research_infra_retry_limit` | `2` | 同一轨迹/冻结迁移候选的基础设施重试上限 |
+| `research_infra_retry_limit` | `2` | 同一轨迹、timing SHA 或冻结迁移候选的基础设施重试上限 |
+| `research_timing_success_limit` | `5` | 每 Node 独立 timing 完成次数上限，跨恢复累计 |
+| `research_timing_total_limit` | `15` | 每 Node 独立 timing 总执行上限，含失败/重试 |
 每个动作使用 `autoresearch research <action> --node N001 --file <data.json> --request-id <唯一ID>`。`status`、`recover` 无需文件。执行请求立即返回排队状态，使用 `status` 读取结果；通道超时重用同一 ID，不能为同一操作换 ID 后盲目重试。宿主重启后的 `recover` 负责收尾中断请求与重放已完成结果的发布。
 
 | action | JSON data |
@@ -274,12 +276,13 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 | `register` | `origin`：问题/假设/证据/Parent 与父证据回应；`design`：`method/mechanism/predictions/tests`；顶层可带 planning controls |
 | `design` | 下一轮 `method/mechanism/predictions/tests`；追加后不能覆盖上一轮 |
 | `train` | `iteration`、完整 `sha`、可选绝对更新端点 `pause_after_steps` |
+| `timing` | `iteration`、完整 `sha`、可选非空 `repeat_reason`；独立固定协议测时，默认复用匹配结果 |
 | `diagnostic` | `iteration`、`argv`、`timeout`、`scripts_dir`；串行复用已持有的 4 卡 |
 | `decision` | `iteration`、`action`（`continue/revise/stop`）、`reason` |
 | `finish` | `selected_iteration`（可为 null）、`reason`；从未训练时另提供已提交的 `sha` 作为未执行代码证据 |
 | `status/recover` | 空对象 |
 注册仍遵守原 Parent、选题租约、Spec/提交自检与 timing declaration 约束。`research.json` 是可演进设计与证据的权威投影，旧 Spec 保留为初始来源兼容快照；不新增 Researcher 终稿。第三条轨迹是硬上限，不会自动替 Researcher 选定候选。主动结束前须显式终止尚处于计划/暂停/基础设施失败状态的轨迹。没有合格候选时跳过 60M；即使从未启动训练，也必须有明确标记未执行的已提交代码供独立分析，不伪造质量成绩。
-130M 暂停结果不计为正式成绩，恢复沿用原 SHA、固定数据流和训练上限；完成后沿用原 timing 协议检查资格。冻结后，单个候选的 60M 不接受改方法或切换候选。迁移算法失败和基础设施重试耗尽都终止迁移并保留失败分析；发布失败可以恢复，不重跑已完成的迁移。
+130M 暂停结果不计为正式成绩，恢复沿用原 SHA、固定数据流和训练上限；完成后保存质量结果，不自动测时；最终通过已有或补齐的固定协议 timing 检查资格。冻结后，单个候选的 60M 不接受改方法或切换候选。迁移算法失败和基础设施重试耗尽都终止迁移并保留失败分析；发布失败可以恢复，不重跑已完成的迁移。
 4 卡由独立宿主 keeper 持有，借用任务不再次排队。Agent/宿主身份变化、显式取消或迁移终态会释放自己的进程和 reservation；它是同 UID 的 CORAL 调度锁，不阻止其他用户直接启动 CUDA。长开发节点应由操作者配置足够的 Agent 总超时，避免原 `agents.timeout` 提前终止 Researcher。独立 Analyzer 和 Engineer 后续单独申请资源。
 完整节点终态才清理动态目录。保留小型 JSON/曲线/脚本/日志、checkpoint manifest、原始证据索引和最终 Analysis；大文件、超额文本明确标记未保留。Analyzer/Engineer 的临时诊断目录也进入本节点动态根，引用使用持久化的小型证据。数据流恢复保持契约规定的 worker 数（当前为 4），使用确定性、按序交付的 DataLoader 回放；恢复时校验 worker、预取等设置，并在回放后恢复训练 RNG。需要固定 C4 内容、顺序与确定性预处理，不承诺任意随机数据变换的恢复；tmpfs 不能提供重启后的 tensor 持久性。
 模拟验证保留真实 CLI、可信 PID 身份、状态、SHA 冻结、Analysis 哈希、Engineering 收尾和节点清理，替换耗时训练/GPU 边界。另用真实跨进程 flock 验证持卡，以及真实 PyTorch CPU/Gloo 验证恢复。当前不声称验证 CUDA/NCCL 等价或算法收益；缺少 bubblewrap 时诊断明确返回 unavailable，单独的 CPU 执行器测试验证借卡而不重新申请资源。
@@ -308,3 +311,15 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 - 通信中断重发相同 ID/SHA/flags 只取原执行；明确的同 SHA 基础设施恢复增加 `--retry` 并使用新 ID。宿主在私有目录绑定不可变请求，随 Attempt 变更原子保存请求 ID，避免丢回复、进程恢复或重试再次失败后重复执行。失败、pending、基础设施恢复仍按原预算计数。
 - profiling、微基准和诊断继续使用受控 diagnostic 入口，不成为正式 timing 成绩。独立 Analyzer 的权限、Engineer 自写 Analysis、无需等待 Research Analysis，以及 GPU/大产物的宿主管理职责均不变。共享规则中的旧 `research intent` 表述改为 `origin.engineering_review`。
 - 验证：150 项定向回归与四个 staged 完整流程模拟通过；覆盖 Root/开发节点交接被改写时拒绝、选中轮次非最后一轮、真实 CLI 测时与同 ID 重放、三次成功后第四次被拒、基础设施重试幂等，以及发布和清理。Ruff 与 diff 检查通过；`gpt-5.6-sol high` review 后无剩余重要问题。模拟产物在 `/tmp/coral-engineer-timing-20261026-final/`，未调用真实模型或 GPU，不据此声称算法性能已改善。
+
+## 19. Researcher 按需 timing（2026-10-26）
+- Researcher 可在训练前、暂停后或完成后，通过 `autoresearch research timing` 测量已提交候选；timing 与训练/诊断串行借用已持有四卡，固定评估协议、checkpoint 及外部产物清理边界不变。首次接收测量或训练即绑定 design/SHA，改方法须追加设计；训练前淘汰也计入三轮设计限制。
+- Timing 从训练完成后的固定步骤拆出。默认复用同 SHA、契约、声明及宿主测量设置下的最新完成结果；主动复测须填写 `repeat_reason`。保留全部测量，不以最快一次作为最终成绩。
+- 独立预算默认最多 5 次完成、15 次总执行；失败和重试均计入，缓存取回不计，不消耗 diagnostic 的 5/15/600 额度。候选错误通过新 design/SHA 修复；基础设施恢复沿用宿主两次重试上限。最终缺失补测使用同一额度，不允许 finish 绕过预算。
+- 训练记录和 `timings[]` 分开，测量不推进或重置训练。最终提名已完成且质量合格的 130M 候选；宿主复用/补齐 timing、核验资格后冻结，再执行一次 60M。测时失败、证据不合格或预算不足时不冻结、不进入迁移，Researcher 根据证据作下一步决定。
+- 复用持久任务队列与证据归档；权威 timing 结果缓存在宿主私有目录，校验 SHA、有效测量协议、摘要、指标和资格，工作目录中的 JSON 只作公开投影。记录发布中断只重放已有结果；宿主中断保留失败记录，不能使已完成测量重复占卡。冻结 Analysis 包含全部 timing 证据，节点清理保留小型记录。
+- Researcher 正文将 timing 放在“观察/诊断”之后、“解释结果”之前，允许其用于决定是否训练及是否修改算法。新增质量–效率权衡、算法固有成本/实现开销/测量不确定性的区分；独立短程测时不等同完整训练速度。Engineer 和 Analyzer 职责不变。
+
+既有 staged 档案若仅保存旧式嵌入 timing，其执行仍计入预算；无法证明测量上下文一致时不作为新请求的缓存复用。已经冻结的历史节点保留原始测量与发布语义。
+
+本次验证：任务与框架相关回归 808 passed、2 skipped（缺少 bubblewrap）；最终恢复补丁后专项 55 passed，四个完整 staged 模拟 4 passed。Ruff 与 diff 检查通过。`gpt-5.6-sol` high review 的缓存校验、归档/发布中断及配额问题已修复，复查无剩余阻塞/高/中等级问题。报告、时间线及日志位于 `/tmp/coral-research-timing-20261026/`；没有执行真实 GPU 或模型调用，模拟不证明实际算法速度与 CUDA/NCCL 等价。

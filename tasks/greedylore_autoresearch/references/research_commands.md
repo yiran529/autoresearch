@@ -8,6 +8,7 @@ Staged actions use `autoresearch research <action> --node Nxxx --file /absolute/
 | `register` | `origin`, `design`; optional `planning_token`, `overlap_review` | Save origin and first design from a clean Worktree |
 | `design` | `method`, `mechanism`, `predictions`, `tests` | Append next design after previous trajectory ends |
 | `train` | `iteration`, `sha`; optional `pause_after_steps` | Start or continue that iteration at its fixed full SHA |
+| `timing` | `iteration`, `sha`; optional `repeat_reason` | Independent fixed-protocol timing; default reuse for matching evidence |
 | `diagnostic` | `iteration`, `argv`, `timeout`, `scripts_dir` | Managed diagnostic for a paused/completed trajectory |
 | `decision` | `iteration`, `action`, `reason` | Append `continue/revise/stop` and evidence-based judgment |
 | `finish` | `selected_iteration`, `reason`; optional `sha` | Freeze selection (or null) and conditionally run 60M |
@@ -40,7 +41,19 @@ Registration example (replace example text and token with actual values):
 }
 ```
 Follow the host-assigned mode: REFINE builds on the Parent method/mechanism; EXPLORE uses a substantively different mechanism. Handover is navigation, not a required source of ideas; property/mechanism starts are valid in both modes. The host freezes the initial design hash before publication, so recovery cannot substitute a different design.
-## 2. Example: pause, inspect, continue, finish
+## 2. Optional timing at any development stage
+After implementing, checking and committing a design, write `/tmp/timing1.json`:
+```json
+{"iteration": 1, "sha": "FULL_COMMIT_SHA"}
+```
+```bash
+autoresearch research timing --node N001 --file /tmp/timing1.json --request-id n001-timing1
+```
+The request queues a separate timing experiment; read `research status` after the normal long wait. Timing can run before training, while paused, or after completion. It neither launches training nor modifies its state/checkpoint. The first admitted timing or training pins the design's SHA; a changed candidate needs an appended design, including timing-only screening within the existing three-design limit.
+The fixed experiment uses 130M AdamW BF16/FP32, the existing repetitions and complete-cycle policy; it does not time a restored training checkpoint or measure quality. Results and evidence links appear in `research.json` under the iteration's `timings[]` and in job status. Use measured conditions and relevant state/event coverage when interpreting them.
+The same SHA and host timing context reuse the latest completed measurement by default, even with a new request ID; reuse consumes no execution slot. To deliberately repeat, include a nonempty `repeat_reason` with a new ID. All repeats remain visible; final scoring uses the latest completed matching measurement, not the fastest. Failed measurements retain their evidence. Infrastructure recovery is limited by the host (default 2 retries per SHA); fix candidate failures through a new design/SHA.
+The independent host limits default to 5 completed and 15 total timing executions per Node (`research_timing_success_limit`, `research_timing_total_limit`), across all iterations/resumes, separate from diagnostics. A completed ineligible timing still counts as completed; failures count toward total. Missing final timing uses this same budget, so reserve capacity. If final timing is missing, `finish` supplies it before checking eligibility/freezing; failure or budget exhaustion returns evidence without starting 60M. Inspect status and decide whether to revise or finish with null.
+## 3. Example: pause, inspect, continue, finish
 Assume N001 is registered and the first design implemented, checked and committed. Replace `FULL_COMMIT_SHA` with the actual 40-character commit SHA. Filenames and request IDs are examples.
 1. Write `/tmp/train1.json`:
 ```json
@@ -99,18 +112,18 @@ Implement, check and commit; then write `/tmp/train2.json` with that new SHA and
 autoresearch research train --node N001 --file /tmp/train2.json --request-id n001-train2
 ```
 `design` only records the design; it does not change code or train. Normal actions of a fixed adaptive policy are not revisions. A core hypothesis change requires another Node.
-5. Once all work is terminal and iteration 1 is completed/eligible, write `/tmp/finish.json`:
+5. Once all work is terminal and iteration 1 has completed passing 130M quality, write `/tmp/finish.json`:
 ```json
 {"selected_iteration": 1, "reason": "Selection rationale against frozen criteria"}
 ```
 ```bash
 autoresearch research finish --node N001 --file /tmp/finish.json --request-id n001-finish
 ```
-The host freezes and runs 60M for the selected candidate. Use null if none qualifies; if no candidate ever ran, also provide a committed representative `sha` as unexecuted evidence. Do not switch candidates after freeze.
-## 3. State, recovery and evidence
-The host appends execution observations and keeps diagnostics; there is no observation-write action. Put interpretation, evidence links and continue/revise/stop reasoning in `decision.reason`. `design` never edits code or runs training; `finish` never starts another 130M search.
+The host reuses matching timing or supplies it within budget, checks eligibility, then freezes and runs 60M for the selected candidate. Training completion itself does not launch timing. Use null if none qualifies; if no candidate ever ran, also provide a committed representative `sha` as unexecuted evidence. Do not switch candidates after freeze.
+## 4. State, recovery and evidence
+The host appends execution observations and `timings[]`, and keeps diagnostics; there is no observation-write action. Put interpretation, evidence links and continue/revise/stop reasoning in `decision.reason`. `design` never edits code or runs training; `finish` never starts another 130M search.
 After a communication timeout reuse the same request ID and unchanged payload; it retrieves/replays the original operation. A deliberate new execution, including pause continuation or a corrected diagnostic, uses a new ID and consumes its applicable budget. Inspect status and use `recover` for interrupted jobs before resubmission. Only host-classified infrastructure failure allows same-iteration/SHA `train` recovery; 60M recovery uses `finish` with the same frozen selection. Default infrastructure retry cap is 2; publication replay must not rerun completed work. Diagnose failures and preserve records rather than blindly repeating them.
-Use `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log` before managed experiments when later Analysis needs those self-checks. Use the returned public-relative references. Uploads are agent-provided evidence, not certified executions; record actual commands/inputs/limits. Do not cite temporary paths. Commit existing submission fields; `research train` binds iteration/design to SHA, so do not invent a submission iteration field.
-## 4. Host-managed resources
-Training and diagnostics serially borrow the four-GPU reservation held through staged development and 60M finalization. Do not submit off-path GPU jobs or reacquire a group yourself. Diagnostic and retry limits remain those in the role/host contract.
+Use `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log` before managed experiments when later Analysis needs those self-checks. Use the returned public-relative references. Uploads are agent-provided evidence, not certified executions; record actual commands/inputs/limits. Do not cite temporary paths. Commit existing submission fields; the first admitted `research train` or `research timing` binds iteration/design to SHA, so do not invent a submission iteration field.
+## 5. Host-managed resources
+Training, timing and diagnostics serially borrow the four-GPU reservation held through staged development and 60M finalization. Do not submit off-path GPU jobs or reacquire a group yourself. Diagnostic and retry limits remain those in the role/host contract.
 The host controls `research_checkpoint_interval_steps` (default 1000 optimizer updates), with saves at requested pauses and training end. Periodic saving alone does not pause training. Use host-provided checkpoint/artifact locations under `dynamic_artifact_root` (default `/dev/shm/wyr_tmp`), organized by run/Node. Do not copy large tensors to the root filesystem, choose arbitrary host paths or alter retention; report space/recovery failures rather than falling back. Small records/logs persist; large artifacts are cleaned by the host after the whole Node finishes. Temporary memory storage is not a promise of tensor recovery after a machine restart.

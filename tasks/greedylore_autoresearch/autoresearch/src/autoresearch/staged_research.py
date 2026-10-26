@@ -58,8 +58,9 @@ class StagedResearch:
                 raise PermissionError('candidate SHA belongs to another assignment')
         return canonical
 
-    def enqueue(self, kind, data, request_id, context):
+    def enqueue(self, kind, data, request_id, context, *, _parent_finish=None):
         fields = {'train': ({'iteration', 'sha'}, {'pause_after_steps'}),
+                  'timing': ({'iteration', 'sha'}, {'repeat_reason'}),
                   'finish': ({'selected_iteration', 'reason'}, {'sha'}),
                   'diagnostic': ({'iteration', 'argv', 'timeout', 'scripts_dir'}, set())}
         if kind not in fields or not isinstance(data, dict):
@@ -71,7 +72,10 @@ class StagedResearch:
             raise ValueError('invalid research execution request ID')
         digest = hashlib.sha256(json.dumps([kind, data], sort_keys=True).encode()).hexdigest()
         # Candidate validation precedes reservation/budget mutation.
-        canonical = self.validate_candidate(data['sha']) if kind in {'train', 'finish'} and data.get('sha') else None
+        canonical = self.validate_candidate(data['sha']) if kind in {'train', 'timing', 'finish'} and data.get('sha') else None
+        if kind == 'timing' and 'repeat_reason' in data:
+            if not isinstance(data['repeat_reason'], str) or not data['repeat_reason'].strip() or len(data['repeat_reason']) > 4000:
+                raise ValueError('repeat_reason must be bounded nonempty text')
         if kind == 'train':
             pause = data.get('pause_after_steps')
             if pause is not None and (type(pause) is not int or pause <= 0):
@@ -90,17 +94,23 @@ class StagedResearch:
                 raise ValueError('research record is frozen')
             if document['frozen'] and data['selected_iteration'] != document['selected_iteration']:
                 raise ValueError('frozen candidate cannot change')
-            if any(j['status'] in {'queued', 'running'} for j in state['jobs'].values()):
+            if any((j['status'] in {'queued', 'running'} or (
+                    j['kind'] == 'timing' and 'result' in j and not j.get('reused_from') and not j.get('record_published'))) and not (
+                    j['request_id'] == _parent_finish and j['kind'] == 'finish') for j in state['jobs'].values()):
                 raise ValueError('another research job is active; recover or wait')
             if kind == 'finish' and not any(row['code_sha'] for row in document['iterations']) and not data.get('sha'):
                 raise ValueError('finish without training requires a committed representative sha')
-            if kind == 'train':
+            if kind in {'train', 'timing'}:
                 row = ResearchRecord._row(document, data['iteration'])
-                if row['status'] not in {'planned', 'paused', 'infra_failed'}:
+                if kind == 'train' and row['status'] not in {'planned', 'paused', 'infra_failed'}:
                     raise ValueError('append a new design to restart')
+                if row['status'] == 'running':
+                    raise ValueError('another research job is active; recover or wait')
+                if kind == 'timing' and row['status'] not in {'planned', 'paused', 'completed'}:
+                    raise ValueError('timing requires a planned, paused or completed trajectory')
                 if row['code_sha'] and row['code_sha'] != data['sha']:
                     raise ValueError('resume must keep candidate SHA')
-                if pause is not None and row['observations'] and pause <= row['observations'][-1].get('update_step', 0):
+                if kind == 'train' and pause is not None and row['observations'] and pause <= row['observations'][-1].get('update_step', 0):
                     raise ValueError('pause must advance the existing trajectory')
             if kind == 'diagnostic':
                 row = ResearchRecord._row(document, data['iteration'])
@@ -123,6 +133,16 @@ class StagedResearch:
             job = {'kind': kind, **copy.deepcopy(data), 'request_id': request_id,
                    'digest': digest, 'status': 'queued', 'context': copy.deepcopy(context),
                    'canonical': canonical}
+            if kind == 'timing':
+                from .staged_timing import check_budget, latest_timing, timing_context
+                job['timing_context'] = timing_context(self, canonical)
+                cached = latest_timing(row, job['timing_context'])
+                if cached and 'repeat_reason' not in data:
+                    job.update(status='completed', result=cached['result'], reused_from=cached['request_id'])
+                else:
+                    check_budget(self, state, data['sha'])
+            if kind in {'train', 'timing'}:
+                self.record.bind_candidate(data['iteration'], data['sha'], request_id + '.bind', _already_locked=True)
             state['jobs'][request_id] = job
             self._save(state)
             return copy.deepcopy(job)
@@ -135,7 +155,9 @@ class StagedResearch:
                 state = self._read()
                 job = state['jobs'][request_id]
                 publication = (job['kind'] == 'finish' and state['transfer_terminal']
-                               and not state.get('publication_complete'))
+                               and not state.get('publication_complete')) or bool(job.get('retry_publication'))
+                if job['kind'] == 'timing' and 'result' in job and not job.get('reused_from'):
+                    publication = not job.get('record_published')
                 if job['status'] not in {'queued', 'running'} and not publication:
                     continue
                 owner = self.record._owner()
@@ -144,10 +166,18 @@ class StagedResearch:
                     self._save(state)
                     self.backend.release()
                     continue
+                if job['kind'] == 'timing':
+                    try:
+                        self._execute_timing(job)
+                    except Exception as exc:
+                        state = self._read()
+                        state['jobs'][request_id].update(status='failed', error=f'{type(exc).__name__}: {exc}')
+                        self._save(state)
+                    continue
                 # A complete result is written before publishing observations. On
                 # restart this branch never reruns a completed expensive segment.
-                if job['status'] == 'running' and 'result' not in job and not (job['kind'] == 'finish' and state['transfer'] is not None):
-                    result = {'status': 'infra_failed', 'reason': 'host job interrupted'}
+                if job['status'] == 'running' and 'result' not in job and job['kind'] != 'finish':
+                    result = {'status': 'infra_failed', 'reason': 'host job interrupted', **self._failure_evidence(job)}
                     if job['kind'] == 'train':
                         self.record.begin(job['iteration'], job['sha'], request_id + '.begin')
                         self.record.observe(job['iteration'], result, request_id + '.observation')
@@ -155,6 +185,7 @@ class StagedResearch:
                     self._save(state)
                     continue
                 job['status'] = 'running'
+                job.pop('retry_publication', None)
                 self._save(state)
                 try:
                     if job['kind'] == 'finish':
@@ -179,7 +210,69 @@ class StagedResearch:
                 except Exception as exc:
                     state = self._read()
                     state['jobs'][request_id].update(status='failed', error=f'{type(exc).__name__}: {exc}')
+                    if job['kind'] == 'finish' and isinstance(exc, OSError):
+                        state['jobs'][request_id]['retry_publication'] = True
                     self._save(state)
+
+    def _record_timing(self, job, result):
+        self.record.add_timing(job['iteration'], {
+            'request_id': job['request_id'], 'sha': job['sha'], 'context': job['timing_context'],
+            'repeat_reason': job.get('repeat_reason'), 'result': result}, job['request_id'] + '.timing')
+
+    def _execute_timing(self, job):
+        state = self._read()
+        job = state['jobs'][job['request_id']]
+        if 'result' not in job:
+            if job['status'] == 'running':
+                recover = getattr(self.backend, 'recover_timing', None)
+                try:
+                    recovered = recover(job) if recover else None
+                    reason = 'host timing interrupted'
+                except Exception as exc:
+                    recovered, reason = None, f'{type(exc).__name__}: {exc}'
+                job['result'] = recovered or {'status': 'infra_failed', 'reason': reason, **self._failure_evidence(job)}
+            else:
+                job['status'] = 'running'
+                self._save(state)
+                try:
+                    job['result'] = self.backend.run(self, job)
+                except Exception as exc:
+                    from greedylore_autoresearch_grader.gpu import InfraFailure
+                    failure = exc
+                    recover = getattr(self.backend, 'recover_timing', None)
+                    try:
+                        recovered = recover(job) if recover else None
+                    except Exception as recovery_error:
+                        recovered = None
+                        failure = recovery_error
+                    job['result'] = recovered or {
+                        'status': 'infra_failed' if isinstance(failure, (InfraFailure, OSError)) else 'failed',
+                        'reason': f'{type(failure).__name__}: {failure}', **self._failure_evidence(job)}
+            self._save(state)
+        publisher = getattr(self.backend, 'publish_timing', None)
+        if publisher:
+            publisher(job, job['result'])
+        self._record_timing(job, job['result'])
+        job['record_published'] = True
+        job['status'] = 'completed' if job['result']['status'] == 'completed' else 'failed'
+        self._save(state)
+        return job['result']
+
+    def _ensure_timing(self, finish, row):
+        from .staged_timing import latest_timing, timing_context, validate_result
+        canonical = self.validate_candidate(row['code_sha'])
+        context = timing_context(self, canonical)
+        cached = latest_timing(row, context)
+        if cached is None:
+            request_id = 'finish-timing-' + hashlib.sha256(finish['request_id'].encode()).hexdigest()[:24]
+            job = self.enqueue('timing', {'iteration': row['id'], 'sha': row['code_sha']},
+                               request_id, finish['context'], _parent_finish=finish['request_id'])
+            self._execute_timing(job)
+            cached = latest_timing(self.record.read()['iterations'][row['id'] - 1], context)
+        if cached:
+            validate_result(cached['result'], context)
+        if not cached or not cached['result'].get('performance_eligible'):
+            raise ValueError('selected candidate requires eligible timing; inspect timing evidence before finishing')
 
     def _finish(self, job):
         state = self._read()
@@ -188,7 +281,17 @@ class StagedResearch:
         if not document['frozen'] and not any(row['code_sha'] for row in document['iterations']):
             document = self.record.bind_unrun(job['sha'], job['request_id'] + '.unrun')
         if not document['frozen']:
+            if any(row['status'] in {'running', 'paused', 'infra_failed', 'planned'} for row in document['iterations']):
+                raise ValueError('all trajectories must end before freeze')
+            if selected is not None:
+                row = ResearchRecord._row(document, selected)
+                if row['status'] != 'completed' or not row['observations'][-1].get('quality_pass', row['observations'][-1].get('eligible')):
+                    raise ValueError('selected iteration must have completed passing 130M quality evidence')
+                self._ensure_timing(job, row)
+                state = self._read()
             document = self.record.freeze(selected, job['reason'], job['request_id'] + '.freeze')
+        else:
+            document = self.record.publish()
         transfer = state['transfer']
         if transfer is None or transfer.get('status') == 'infra_failed':
             if selected is None:
@@ -268,7 +371,7 @@ def handle_action(store, owner, payload, context):
         if set(data) != {'iteration', 'action', 'reason'}:
             raise ValueError('decision requires iteration, action, reason')
         return host.record.decide(data['iteration'], data['action'], data['reason'], request_id)
-    if action not in {'train', 'diagnostic', 'finish', 'recover'}:
+    if action not in {'train', 'timing', 'diagnostic', 'finish', 'recover'}:
         raise ValueError('unknown research action')
     if action == 'recover':
         result = host.status()

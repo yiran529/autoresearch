@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import re
+from contextlib import nullcontext
 
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 
@@ -43,11 +44,11 @@ class ResearchRecord:
         self._owner()
         return copy.deepcopy(json.loads(self.private.read_text())['document'])
 
-    def _change(self, request_id, operation, payload, update, *, initial=None):
+    def _change(self, request_id, operation, payload, update, *, initial=None, _already_locked=False):
         if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,96}', request_id):
             raise ValueError('invalid research request ID')
         digest = hashlib.sha256(json.dumps([operation, payload], sort_keys=True).encode()).hexdigest()
-        with trusted_writes_lock(self.store.coral_dir):
+        with (nullcontext() if _already_locked else trusted_writes_lock(self.store.coral_dir)):
             owner = self._owner()
             state = json.loads(self.private.read_text()) if self.private.exists() else {
                 'document': initial, 'requests': {}}
@@ -93,7 +94,42 @@ class ResearchRecord:
     @staticmethod
     def _iteration(index, design):
         return {'id': index, 'design': design, 'status': 'planned', 'code_sha': None,
-                'observations': [], 'decisions': [], 'runs': []}
+                'observations': [], 'decisions': [], 'runs': [], 'timings': []}
+
+    def _require_idle(self):
+        path = self.store.coral_dir / 'private/research_staged' / f'{self.node_id}.json'
+        jobs = json.loads(path.read_text())['jobs'] if path.exists() else {}
+        if any(job['status'] in {'queued', 'running'} or (
+                job['kind'] == 'timing' and 'result' in job and not job.get('reused_from') and not job.get('record_published'))
+                for job in jobs.values()):
+            raise ValueError('another research job is active; recover or wait')
+
+    def publish(self):
+        """Replay the public projection, including a privately committed freeze."""
+        with trusted_writes_lock(self.store.coral_dir):
+            document = self.read()
+            _atomic_json(self.public, document, mode=0o644)
+            return document
+
+    def bind_candidate(self, iteration, sha, request_id, *, _already_locked=False):
+        """The first admitted measurement or training pins this design's code."""
+        if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}', sha):
+            raise ValueError('candidate SHA must be a full commit hash')
+        def update(value):
+            row = self._row(value, iteration)
+            if row['code_sha'] is not None and row['code_sha'] != sha:
+                raise ValueError('candidate SHA is fixed; append a new design to change it')
+            row['code_sha'] = sha
+        return self._change(request_id, 'bind_candidate', [iteration, sha], update,
+                            _already_locked=_already_locked)
+
+    def add_timing(self, iteration, entry, request_id):
+        def update(value):
+            row = self._row(value, iteration)
+            if row['code_sha'] != entry['sha']:
+                raise ValueError('timing SHA does not match the fixed candidate')
+            row.setdefault('timings', []).append(copy.deepcopy(entry))
+        return self._change(request_id, 'timing', [iteration, entry], update)
 
     @staticmethod
     def _row(value, iteration):
@@ -105,6 +141,7 @@ class ResearchRecord:
         design = validate_design(design)
 
         def update(value):
+            self._require_idle()
             if len(value['iterations']) >= 3:
                 raise ValueError('research budget is at most 3 trajectories')
             if value['iterations'][-1]['status'] not in {'completed', 'failed', 'stopped'}:
@@ -155,6 +192,7 @@ class ResearchRecord:
             raise ValueError('decision requires continue/revise/stop and a reason')
 
         def update(value):
+            self._require_idle()
             row = self._row(value, iteration)
             if row['status'] == 'running':
                 raise ValueError('cannot decide while training is running')
@@ -176,7 +214,8 @@ class ResearchRecord:
                 raise ValueError('all trajectories must end before freeze')
             if selected is not None:
                 row = self._row(value, selected)
-                if row['status'] != 'completed' or not row['observations'][-1].get('eligible'):
+                from .staged_timing import eligible
+                if not eligible(row):
                     raise ValueError('selected iteration must have completed eligible 130M evidence')
             value.update(selected_iteration=selected, selection_rationale=reason, frozen=True)
 

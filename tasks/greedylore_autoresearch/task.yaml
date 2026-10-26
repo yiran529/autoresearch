@@ -20,6 +20,8 @@ grader:
     dynamic_artifact_root: /dev/shm/wyr_tmp
     dynamic_artifact_min_free_bytes: 1073741824
     research_infra_retry_limit: 2
+    research_timing_success_limit: 5
+    research_timing_total_limit: 15
     pretraining_allow_other_users: false
     gpu_lock_dir: null
     gpu_poll_interval_seconds: 5

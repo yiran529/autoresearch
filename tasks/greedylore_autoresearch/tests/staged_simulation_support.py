@@ -82,9 +82,13 @@ def quality_process(spec, **kwargs):
 
 def timing_formal(grader, contract, mode, refs):
     from greedylore_autoresearch_grader.grader import score_results
+    from greedylore_autoresearch_grader.timing_policy import plan_timing
+    sim.event('timing_execution', mode=mode, code=str(grader.codebase_path))
+    plan = plan_timing(grader.tasks[0].metadata.get('timing_declaration', {'period_steps': contract.raw['compressor']['update_gap']}),
+        minimum=contract.raw['efficiency']['measured_iterations'], maximum=800)
     return score_results('engineering', {}, {name: {'mean': .1, 'relative_spread': .01}
         for name in refs['efficiency']['cells']}, refs, contract_hash=contract.contract_hash,
-        comparable=True, evidence_paths=[], timing_protocol={'simulated': True})
+        comparable=True, evidence_paths=[], timing_protocol={**plan, 'simulated': True})
 
 
 def driver(output, scenario):
@@ -270,6 +274,26 @@ def driver(output, scenario):
                 host = StagedResearch(store, aid, node)
                 host.drain()
                 return host
+            def timing_count():
+                return sum(e['event'] == 'timing_execution' and e['mode'] == 'timing' for e in sim.events())
+            timing_phase = 'before_training' if scenario in {'success', 'no_eligible'} else (
+                'paused' if scenario == 'transfer_quality_failed' else 'finish_fallback')
+            if timing_phase == 'before_training':
+                action('timing', {'iteration': 1, 'sha': sha}, 'pre-timing')
+                host = drain()
+                row = host.record.read()['iterations'][0]
+                assert row['status'] == 'planned' and not row['runs'] and not row['observations']
+                assert timing_count() == 1
+                result = host.status()['jobs']['pre-timing']['result']
+                assert result['bundle']['metadata']['quality_source'] == 'not_measured'
+                assert 'quality_gate' not in result['bundle']['scores']
+                action('timing', {'iteration': 1, 'sha': sha}, 'pre-timing')
+                drain()
+                action('timing', {'iteration': 1, 'sha': sha}, 'reuse-timing')
+                drain()
+                assert timing_count() == 1
+                rejected_sha = action('train', {'iteration': 1, 'sha': 'f'*40}, 'changed-sha', check=False)
+                assert rejected_sha.returncode != 0
             action('train', {'iteration': 1, 'sha': sha, 'pause_after_steps': 1000}, 'pause')
             host = drain()
             assert host.record.read()['iterations'][0]['status'] == 'paused', host.status()
@@ -284,9 +308,15 @@ def driver(output, scenario):
             action('diagnostic', {'iteration': 1, 'argv': ['python', '/workspace/experiments/probe.py'],
                     'timeout': 5, 'scripts_dir': str(scripts)}, 'probe')
             drain()
+            if timing_phase == 'paused':
+                action('timing', {'iteration': 1, 'sha': sha}, 'paused-timing')
+                host = drain()
+                assert host.record.read()['iterations'][0]['status'] == 'paused'
+            timing_before_resume = timing_count()
             action('train', {'iteration': 1, 'sha': sha}, 'resume')
             host = drain()
             assert host.record.read()['iterations'][0]['status'] == 'completed', host.status()
+            assert timing_count() == timing_before_resume  # Quality completion never starts timing.
             budget = False
             if scenario == 'no_eligible':
                 for i in (2, 3):
@@ -302,6 +332,7 @@ def driver(output, scenario):
             action('finish', finish, 'finish')
             host = drain()
             assert host.status()['transfer_terminal'], host.status()
+            assert timing_count() == 1
             action('finish', finish, 'finish')
             drain()
             frozen_rejected = action('design', design, 'late', check=False).returncode != 0
@@ -322,6 +353,9 @@ def driver(output, scenario):
             records = sealed['evidence_manifest']['evidence_records']
             assert any(item['path'] == f'notes/nodes/{node}/research.json' for item in records)
             assert any(item['path'].startswith(f'research_diagnostics/{node}/probe/') for item in records)
+            timings = host.record.read()['iterations'][0]['timings']
+            assert len(timings) == 1
+            assert any(item['path'].startswith(timings[0]['result']['evidence_path'] + '/') for item in records)
             assert not list((paths.coral_dir / 'public').rglob('*.pt'))
             assert sum(e['workload'] == 'llama130m_muon' for e in segments) == 2
             report = dict(simulated=True, scenario=scenario, authenticated_cli=True, staged_prompt_delivery=True,
@@ -333,6 +367,9 @@ def driver(output, scenario):
                 post_freeze_rejected=frozen_rejected, transfer_runs=sum(e['workload']=='llama60m_adamw' for e in segments),
                 budget_enforced=budget, limitations=['GPU ownership, quality and timing are simulated.',
                     'Diagnostic may be unavailable when bubblewrap is absent; no sandbox execution claim.'])
+            report.update(timing_phase=timing_phase, timing_executions=timing_count(),
+                independent_timing=True, no_timing_on_resume=True,
+                timing_evidence_survives=(paths.coral_dir / 'public' / timings[0]['result']['evidence_path']).exists())
             (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         finally:
             server.stop()

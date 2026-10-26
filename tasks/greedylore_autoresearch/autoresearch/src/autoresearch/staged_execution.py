@@ -1,6 +1,7 @@
 """Expensive execution boundary for the trusted staged controller."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -82,13 +83,15 @@ class Execution:
         contract = EvalContract.load(self.coral / 'private/eval_contract.yaml')
         if job['kind'] == 'diagnostic':
             return self._diagnostic(job, code, work, public, row)
+        if job['kind'] == 'timing':
+            return self._timing(job, code, work, public, contract)
         name = 'llama60m_adamw' if job['kind'] == 'transfer' else 'llama130m_muon'
         profile = contract.quality[name]
         target = job.get('pause_after_steps') or profile['stop_after_steps']
         if target > profile['stop_after_steps']:
             raise ValueError('pause endpoint exceeds fixed training budget')
         output = work / 'quality' / name
-        # A segment result cache prevents a crash during timing/publication from
+        # A segment result cache prevents a crash during publication from
         # rerunning already-completed quality training.
         cache = work / 'quality-result.json'
         if not cache.exists() and job['kind'] == 'train':
@@ -145,22 +148,67 @@ class Execution:
         observation = {**payload, 'run_id': run_id, 'evidence_path': public.relative_to(self.coral / 'public').as_posix(),
                        'eligible': False}
         if payload['status'] == 'completed' and job['kind'] == 'train':
-            timing_cache = work / 'timing-bundle.json'
-            if timing_cache.exists():
-                bundle = ScoreBundle.from_dict(json.loads(timing_cache.read_text()))
-            else:
-                grader = self._grader(code, work / 'timing', job['canonical'])
-                reference = grader._load_references(contract.contract_hash)
-                bundle = grader._formal(contract, 'engineering', reference)
-                _atomic_json(timing_cache, bundle.to_dict())
             reference = self._grader(code, work, {})._load_references(contract.contract_hash)
             passed = quality_gate(payload['final_eval_loss'],
                 reference['quality']['workloads'][name]['final_eval_loss'],
                 max_relative=contract.raw['quality']['max_relative_eval_loss'])
-            observation.update(timing=bundle.to_dict(), eligible=bool(passed and bundle.metadata.get('performance_eligible')),
-                               quality_pass=passed)
+            observation.update(quality_pass=passed)
         self._archive(work, public)
         return observation
+
+    def recover_timing(self, job):
+        from greedylore_autoresearch_grader.gpu import InfraFailure
+
+        from .staged_timing import timing_context, validate_result
+        cache = self._timing_cache(job)
+        if not cache.exists():
+            return None
+        try:
+            saved = json.loads(cache.read_text())
+            result = saved['result']
+            digest = hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
+            if (saved.get('version') != 1 or saved.get('sha') != job['sha']
+                    or saved.get('context') != job['timing_context'] or saved.get('result_sha256') != digest
+                    or job['timing_context'] != timing_context(self.host, job['canonical'])):
+                raise ValueError('timing cache identity mismatch')
+            validate_result(result, job['timing_context'])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise InfraFailure(f'invalid durable timing cache: {exc}') from exc
+        return result
+
+    def _timing_cache(self, job):
+        return safe_path(self.coral / 'private/research_timing_results' / self.host.node_id / f"{job['request_id']}.json")
+
+    def publish_timing(self, job, result):
+        work = self.artifacts.path(self.host.node_id, f"runs/{job['request_id']}")
+        work.mkdir(parents=True, exist_ok=True)
+        public = self.coral / 'public/eval_logs' / job['sha'] / job['request_id']
+        result.setdefault('evidence_path', public.relative_to(self.coral / 'public').as_posix())
+        _atomic_json(work / 'timing-result.json', result, mode=0o644)
+        self._archive(work, public)
+
+    def _timing(self, job, code, work, public, contract):
+        recovered = self.recover_timing(job)
+        if recovered is not None:
+            return recovered
+        grader = self._grader(code, work / 'timing', job['canonical'])
+        reference = grader._load_references(contract.contract_hash)
+        bundle = grader._formal(contract, 'timing', reference)
+        # This is an efficiency measurement, not an Engineering Attempt or a
+        # provisional inherited-quality result. Final Research scoring is later.
+        bundle.scores = {key: value for key, value in bundle.scores.items()
+                         if key.endswith(('_timing_mean', '_timing_spread', '_speedup')) or key == 'efficiency_score'}
+        bundle.metadata.pop('utility', None)
+        bundle.metadata.update(measurement_kind='research_timing', quality_source='not_measured')
+        result = {'status': 'completed', 'bundle': bundle.to_dict(),
+                  'performance_eligible': bool(bundle.metadata.get('performance_eligible')),
+                  'evidence_path': public.relative_to(self.coral / 'public').as_posix()}
+        from .staged_timing import validate_result
+        validate_result(result, job['timing_context'])
+        _atomic_json(self._timing_cache(job), {'version': 1, 'sha': job['sha'],
+            'context': job['timing_context'], 'result': result,
+            'result_sha256': hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()})
+        return result
 
     def _environment(self, work):
         root = self.artifacts.node_root(self.host.node_id) / 'caches'
@@ -240,14 +288,25 @@ class Execution:
             canonical = jobs[0]['canonical']
             bundle = None
             if row['id'] == selected and state['transfer']['status'] == 'completed':
+                from .staged_timing import latest_timing, timing_context
                 observation = row['observations'][-1]
-                timing_bundle = ScoreBundle.from_dict(observation['timing'])
+                canonical = host.validate_candidate(sha)
+                timing_entry = latest_timing(row, timing_context(host, canonical))
+                if timing_entry is None and observation.get('timing'):
+                    # A Node frozen under the previous staged protocol retains
+                    # its original certified measurement; never relabel its context.
+                    timing_entry = {'result': {'bundle': observation['timing']}}
+                timing_bundle = ScoreBundle.from_dict(timing_entry['result']['bundle'])
                 timing = {cell: {'mean': timing_bundle.scores[f'{label}_timing_mean'].value,
                                 'relative_spread': timing_bundle.scores[f'{label}_timing_spread'].value}
                           for cell, label in [('130m_adamw_bf16','bf16'), ('130m_adamw_fp32','fp32')]}
                 reference = self._grader(self.artifacts.path(host.node_id, f'code/{sha}'),
                     self.artifacts.path(host.node_id, 'publication'), canonical)._load_references(contract.contract_hash)
                 metadata = timing_bundle.metadata
+                from greedylore_autoresearch_grader.timing_policy import reference_for_window
+                reference, _ = reference_for_window(reference,
+                    (metadata.get('timing_protocol') or {}).get('measured_iterations', contract.raw['efficiency']['measured_iterations']),
+                    contract.raw['efficiency']['measured_iterations'])
                 bundle = score_results('research', {'llama130m_muon': observation,
                     'llama60m_adamw': state['transfer']}, timing, reference,
                     contract_hash=contract.contract_hash,
