@@ -1,4 +1,4 @@
-# AutoResearch V1 — Shared Workflow Rules
+# AutoResearch — Shared Workflow Rules
 
 ## Read and write boundaries
 
@@ -6,36 +6,25 @@
 - Use task commands for shared records.
 - Do not edit Tree, Spec, Attempts, evaluation logs or historical Artifacts; private evaluation data and credentials are out of scope.
 
-## Research candidates and formal evaluation
-
-- Before choosing a new method, acquire `autoresearch node planning acquire --wait`. While holding the returned token, read registered Specs, choose a Parent and method, and judge overlap yourself. Register through `node initialize --planning-token <token> --overlap-review "<differences>"`; successful Spec publication releases the selection lock. Implement and train after release. Renew before expiry; after loss or expiry reacquire and reread before deciding. Existing initialized Nodes continue without acquiring this lock.
-- Each Research Node fixes one method hypothesis, one Parent/base_commit and its Spec; candidates may refine that method or meaningful parameters (for example refresh period or rank). A core mechanism or hypothesis change belongs in a child Node handled by a new Agent.
-- Smoke tests and ordinary commits are allowed; later candidates may descend from earlier candidates in the same Node. Record each change and rationale in the existing `change_summary` and `selection_rationale` fields.
-- Research allows at most 3 successful scored formal runs and 10 total formal runs, across resumes and archived Attempts. Valid scored regressions count as successful regardless of quality passing; failures and permitted same-SHA infrastructure retries count toward the total, and pending runs reserve capacity.
-- After the first terminal result, Researcher remains active: within budget continue justified refinement, rather than stopping merely because one result exists. Stop evaluating at either cap; finish earlier with `autoresearch node complete --mode research` when no justified refinement remains and all runs have ended.
-- Engineering optimizes the original Node without replacing its Research result.
-- Complete `submission.yaml` using the task template before `coral eval`.
-- Wait for evaluation and diagnostic results using 1800-second long waits (`yield_time_ms=1800000`) in `write_stdin` and any outer `functions.exec`/`functions.wait`.
-- Continue as soon as results return; do not use shorter polling loops or send periodic waiting updates.
-- Run and record the applicable checks in `semantic_criteria.md`; fix failed self-checks before submission.
-- Engineering must preserve algorithm semantics.
-- Do not alter the formal benchmark or include profiling/gradient instrumentation in formal timing.
+## Research development and evaluation
+- Research uses the host-enabled staged protocol. Before choosing a method, acquire `autoresearch node planning acquire --wait`; under the token read the current registry, choose one completed code Parent and judge overlap. Register through `autoresearch research register` with `origin`, first `design` and planning controls. Implement after successful registration releases the lock; renew before expiry, reacquire/reread after loss. Existing registered Nodes resume their saved stage without selecting again.
+- `origin` fixes Parent/base_commit, question, core hypothesis, evidence/selection rationale and response to parent/Engineering evidence. The host generates Spec and compatibility handover fields; do not author a separate research intent. Save each design before training; append revisions without overwriting earlier designs, predictions, observations or decisions. Core mechanism/hypothesis changes require a new Node; normal actions of a fixed adaptive policy do not.
+- Normally use two, at most three 130M candidate trajectories. Failed/stopped/restarted trajectories count, pending reserves capacity; exact same-SHA continuation stays in its original trajectory and restores complete state. Fixed steps/tokens/schedule and all budgets persist across pauses/restarts. Only host-classified infrastructure failures permit limited same-version recovery. Never bypass the staged entrypoint through `coral eval`, old initialization/completion or independent GPU work.
+- Researcher observes and diagnoses within its own context. Use managed `research diagnostic` only for a paused/completed trajectory and a decision-relevant uncertainty, within cumulative 5-success/15-total execution limits, at most 600 seconds each. Diagnostic branches must not contaminate candidate state or supply free training. The host holds four GPUs through development and 60M finalization; work borrows them serially.
+- Prepare and commit `submission.yaml` with the existing fields and run applicable `semantic_criteria.md` checks before training; fix self-check failures. Declare the full effective `timing.period_steps`, or null for nonperiodic methods (`requested_steps` alone is optional), and actual maintenance-event telemetry. No profiling/gradient instrumentation in formal timing; missing rare events or unmatched windows cannot establish long-run comparable efficiency. U is advisory, never a selection/quality gate.
+- Record interpretation/evidence and `continue/revise/stop` through `research decision`; the host appends observations. A decision does not execute the next action. Use `research finish` once all work is terminal, selecting one completed eligible iteration (or null); see `references/research_commands.md` and `templates/research_origin.json` for JSON/CLI examples.
+- The host freezes the entire record and selected SHA/policy before at most one 60M transfer, only after complete eligible 130M evidence. No candidate switches, tuning or reopening from 60M feedback; only bounded infrastructure recovery. No eligible candidate means explicit skip with failure evidence. Reused 60M feedback is transfer evidence, not independent campaign held-out.
+- Wait for managed evaluation/diagnostic results using 1800-second long waits (`yield_time_ms=1800000`) in `write_stdin` and outer `functions.exec`/`functions.wait`. Continue on return; no short polling, periodic log reads or waiting updates.
 
 ## Retries and evidence
-
-- Only infrastructure failures may use `autoresearch retry <sha>`: keep the same SHA and code, never create an empty commit to retry.
-- Candidate/algorithm failures are evidence.
-- Retain failed, regressed, incomparable and missing results honestly; CORAL's `improved` label does not prove quality passes.
+- Transport timeouts reuse the original request ID and payload; new executions use new IDs. Inspect failures, fix diagnostic causes and preserve failed records; do not blindly repeat or create empty commits for retries.
+- Keep failed, regressed, incomparable and unavailable evidence. `improved` alone does not establish quality passing; local mechanism success does not establish training/efficiency benefit. Do not rewrite predictions after results.
 
 ## Node lifecycle
-
-- The host advances at most two unfinished Nodes at a time, without separate Researcher or Engineer concurrency limits. A Node keeps its slot from Research through published Research Analysis and completed or legitimately skipped Engineering. When one Node finishes, the oldest waiting Node continues its existing work before a new Node is created; resume preserves its Spec, code, session and consumed budgets.
-- Research freezes after explicit early completion or either formal-run cap, once all runs have ended. The host selects the quality-passing, comparable candidate with valid score and highest efficiency, with deterministic ties; if none qualifies it retains a representative failure and skips Engineering.
-- Only after Research freezes does the host retire Researcher, refresh Evaluation and start independent Research Analysis over all Research Attempts and quality-gated Engineering at the selected fixed SHA.
-- Root bootstrap remains one fixed baseline Attempt A0; historical completed Nodes are not reopened.
-- The host binds one Engineer to each quality-passing Node, subject to the Engineer capacity; pending Engineering cannot be skipped for lack of capacity.
-- Research Analysis and Engineering do not wait for each other.
-- A Node (including Root N000) enables child expansion only after Research Analysis is published and Engineering is completed or explicitly skipped because quality failed or was unavailable.
+- The host admits at most two unfinished Nodes, retaining the slot through Research, published Research Analysis and completed/legitimately skipped Engineering. Waiting Nodes resume existing code/session/budgets before new Nodes are created.
+- After frozen 60M terminates or is explicitly skipped, the host releases the Research reservation, retires Researcher, refreshes Evaluation and starts one independent Research Analysis over all attempts and quality-gated Engineering at the selected fixed SHA. Researcher writes no separate final report.
+- Root bootstrap remains one fixed baseline Attempt A0; completed historical Nodes are not reopened. Research Analysis and Engineering proceed independently. Engineering pending for capacity cannot be skipped for that reason, and preserves algorithm semantics without replacing the Research result.
+- Child expansion requires published Research Analysis and completed Engineering, or explicit Engineering skip because quality failed or was unavailable. Complete Node termination triggers host cleanup of large dynamic artifacts, retaining small evidence and reports.
 
 ## Engineering runs and completion
 
@@ -61,10 +50,10 @@
 
 ## Supporting self-check files
 
-- Before each formal Research evaluation (the host may auto-retire at the cap), or before Engineering finish, archive any uncommitted candidate self-check script/log that later Analysis must cite: `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log`.
+- Before managed Research experiments, or before Engineering finish, archive any uncommitted candidate self-check script/log that later Analysis must cite: `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files /absolute/scratch/check.py /absolute/scratch/check.log`.
 - This copies small regular files (unique basenames, 32 KiB total per bundle, at most 64 bundles per assignment) into immutable public diagnostics attachments. Use managed diagnostics for larger execution records. Keep the returned public-relative paths; do not cite `/tmp` paths in final Analysis.
 - Attachments record the authenticated uploading Agent, an uploader-declared code-context SHA and content hashes. The host checks that the SHA exists, but does not certify that those bytes were executed. These are agent-provided evidence, not host-verified executions or formal scores. Document commands, inputs and limitations in the attached log.
-- Research attachments must be archived before each formal evaluation while the assignment is active; Engineering attachments before finish. The host includes them in the role-appropriate frozen evidence manifest. Unneeded scratch need not be preserved.
+- Research attachments must be archived before managed experiments while the assignment is active; Engineering attachments before finish. The host includes them in the role-appropriate frozen evidence manifest. Unneeded scratch need not be preserved.
 
 ## Subagents
 
@@ -77,5 +66,5 @@
 - New contracts use a 5% dense-relative final-loss gate on both workloads; read the recorded contract for historical runs. U is optional advice, never a gate for exploration, Parent choice or candidate selection.
 - New methods declare `timing.period_steps` in committed `submission.yaml`: a full fixed cycle, or null if none. Only `requested_steps` is optional; legacy submissions may omit `timing`. The host measures complete fixed cycles or a default window for nonperiodic methods, normally 400 and at most 800 steps. Invalid event evidence or unmatched reference windows cannot establish comparable performance.
 - Before implementation, Researcher reads available Engineering Summary and parent Engineering Analysis, then records applicability/reuse decisions or report-unavailability reasons in the research intent.
-- REFINE links a parent problem; EXPLORE may ask an independent question. Freeze mechanism/practical criteria and the response to parent evidence with `node initialize --intent-file`.
+- A starting point may be an observation/problem, a desired property under a resource constraint, or a mechanism hypothesis; it need not come from handover or establish an existing defect. REFINE builds on the Parent method/mechanism; EXPLORE uses a substantively different mechanism. Cite an addressed parent question, otherwise use null and explain the connection in parent_response. Register origin and initial design once; the host derives compatibility criteria for existing Spec/handover consumers. The immutable first design and appended iteration designs supply the actual predictions and tests.
 - Independent Research Analysis answers those criteria and supplies bounded incremental findings/follow-up questions. The host derives `handover.json`; its source reports remain authoritative, and child Specs retain the original snapshot.

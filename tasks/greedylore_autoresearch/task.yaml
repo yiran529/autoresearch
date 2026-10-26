@@ -14,8 +14,8 @@ grader:
   timeout: 0
   direction: maximize
   args:
-    # New protocol is opt-in until the role prompts are updated.
-    staged_research: false
+    # New runs use staged Research; saved configurations keep their recorded protocol.
+    staged_research: true
     research_checkpoint_interval_steps: 1000
     dynamic_artifact_root: /dev/shm/wyr_tmp
     dynamic_artifact_min_free_bytes: 1073741824
@@ -64,7 +64,8 @@ agents:
   assignments:
   - role: research
     runtime_options:
-      role_file: ./roles/researcher.md
+      role_file: ./roles/researcher_legacy.md
+      staged_role_file: ./roles/researcher.md
   - role: engineering
     runtime_options:
       role_file: ./roles/engineer.md

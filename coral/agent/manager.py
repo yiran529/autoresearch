@@ -803,6 +803,7 @@ class AgentManager:
             prompt = prompt_for_assignment(
                 spec, instruction_file=instruction_file, shared_dir=shared_dir_name,
                 resuming=bool(resume_session_id), feedback=prompt,
+                staged_research=self.config.grader.args.get("staged_research") is True,
             )
             prompt_source = prompt_source or "workflow"
         handle = runtime.start(

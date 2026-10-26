@@ -6,8 +6,8 @@ New Research Nodes acquire a run-wide selection lock before reading registered
 methods and choosing their own. `autoresearch node planning acquire --wait`
 returns a token and the shared registry location (`notes/tree.md`, linking to
 canonical Specs). Hold the lock through reading, reasoning and overlap review;
-then register the method with `node initialize --planning-token <token>
---overlap-review "<substantive differences>"`. The host records the review in
+then register once through `autoresearch research register` with `origin`, first
+`design`, and top-level `planning_token` / `overlap_review` controls. The host records the review in
 the immutable Spec and releases the lock atomically with registration. Models
 judge semantic overlap; the host enforces exclusive ownership, not similarity.
 
@@ -62,12 +62,15 @@ the option to require the selection lock for their uninitialized Nodes.
   measurements. Root U references must also match the measured window.
 - Before implementation, Researcher reads available Engineering Summary and
   parent Engineering Analysis; record why either report is unavailable. Supply
-  `--intent-file` using
-  `templates/research_intent.json`: a question, parent response, mechanism and
-  practical criteria, and engineering applicability/reuse decisions. New Nodes
+  the `origin` in `templates/research_origin.json`: question, parent response,
+  evidence and Engineering reuse/defer decisions; initial predictions/tests live
+  in the first `design`. The host generates compatibility Spec/handover fields
+  without a separately authored intent object. New Nodes
   prioritize mechanisms; rank/width/gap sweeps refine a mechanism within its budget.
-- REFINE references `Nxxx:Q1`, `Nxxx:Q2` or `Nxxx:current`; EXPLORE may use null
-  and ask an independent question. The host freezes the parent handover snapshot
+- Either mode may begin from an observation, desired property or mechanism hypothesis.
+  REFINE builds on the Parent method/mechanism; EXPLORE uses a substantively
+  different mechanism. Reference a real parent problem when directly addressing
+  it; otherwise use null and explain the motivation/connection, without inventing a gap. The host freezes the parent handover snapshot
   and pins available Engineering Analysis alongside Research Analysis.
 - Analyzer returns separate mechanism/practical verdicts, persistent evidence
   references, incremental information (possibly empty) and at most two follow-up
@@ -85,11 +88,13 @@ Research Analysis remains an independent session. Choose applicable initial diag
 
 ## Node workflow
 
-Each Research Node fixes one method hypothesis, Parent/base_commit and Spec. Within the Node, candidates may refine the method or meaningful parameters such as refresh period or rank, and descend from earlier candidates. Core mechanism or hypothesis changes require a child Node. Record each candidate's change and rationale in `change_summary` and `selection_rationale`.
+New task configurations enable staged Research (`grader.args.staged_research: true`). The role, generated startup instructions, public workflow rules and command guide use the same protocol. `references/research_commands.md` provides full registration, pause/diagnose/resume, revision and finalization examples; `templates/research_origin.json` is the one registration request template.
 
-Research allows at most 3 successful scored formal runs and 10 total formal runs across resumes and archived Attempts. Valid scored regressions count as successful regardless of quality passing; failures and permitted same-SHA infrastructure retries count toward the total, and pending runs reserve capacity. The Researcher remains active after the first terminal result and continues justified refinement within budget. Finish earlier with `autoresearch node complete --mode research` when no justified refinement remains and all runs have ended; at either cap the host freezes Research after all runs end.
+Register `{origin, design}` plus planning controls. The origin fixes the Node's question/core hypothesis, Parent, evidence/selection rationale and parent/Engineering response. Each design states method, explanation, predictions and tests. The host supplies provenance, stores version-3 `research.json`, generates an immutable initial Spec with compatibility handover fields and the first-design hash, and appends runtime observations/decisions. Researcher submits no separate intent or final report. Existing version-2 records remain readable; fresh staged registrations cannot use the old registration shape or initialization command.
 
-The host selects the quality-passing, comparable candidate with a valid score and highest efficiency, using deterministic ties. If none qualifies, it retains a representative failure and skips Engineering. Only after Research freezes does the host retire the Researcher and start two independent branches: Research Analysis over all Attempts (including failures and regressions), and Engineering when the authoritative quality gate passes. Analysis distinguishes method gains from hyperparameter gains. The host binds each Engineer to a fixed Node and Research SHA; `autoresearch engineering claim Nxxx` confirms that assignment and prepares its Worktree, rather than selecting a target. In legacy scheduling without a Node limit, required Engineering waits in FIFO order when the separate Engineer capacity is occupied.
+Normally use two, at most three 130M trajectories, including failures/stops/restarts. Same-SHA exact continuation stays within its original fixed budget. Researcher uses managed diagnostics at meaningful pauses, judges predictions and records reasons before continuing/revising/stopping. When development ends, `research finish` freezes one completed eligible candidate (or none); the host performs at most one conditional 60M transfer, releases Research GPUs, retires Researcher and starts independent Analysis and quality-gated Engineering. Do not tune or reopen the Node from transfer feedback. Spec/record publication retries preserve the original design and do not repeat completed computation.
+
+Saved configurations retain their recorded protocol. Explicit non-staged configurations select the retained compatibility role/rules; new Researcher instructions contain only the staged workflow. No running experiment is automatically migrated.
 
 Formal timing still requires matching GPU counts/models and NCCL settings, with unique GPU UUIDs. Topology fingerprint differences, NUMA differences, and unavailable NUMA information produce a `cross_topology` warning and allow scoring and candidate selection. The host records baseline/candidate hardware and differences in `evaluation_context.json` and Attempt metadata, includes a feedback warning, and displays the status and warning in `evaluation.md`.
 
@@ -168,7 +173,7 @@ Each call requires only the trigger Node's Analyses, plus historical coverage mi
 
 The host draws a mode once when reserving a Research assignment, using trusted `grader.args.p_explore` (initially `0.20`). It persists the result in private workflow state, sends it through the authenticated roster and generated Agent instructions, and records it in new Node Specs. Resumes, same-SHA retries and duplicate reconcile/initialize requests retain the original mode even if the configured probability changes. Pre-upgrade assignments missing a mode use `REFINE`; existing immutable Specs are not rewritten.
 
-`REFINE` starts from supported gaps or important unresolved mechanisms in published analyses. `EXPLORE` prioritizes another communication mechanism or a falsifiable cross-mechanism interaction that the current evaluation contract can fairly evaluate. It does not relax the contract or quality gate. Researcher cannot set the mode in `node initialize`, draw it locally, or use multiple code Parents. The host-assigned mode is part of assignment context, not an additional Research initialization field.
+`REFINE` deepens or challenges the Parent method/mechanism, starting from evidence, a desired property or a testable mechanism; a listed handover problem is not required. `EXPLORE` prioritizes another communication mechanism or a falsifiable cross-mechanism interaction that the current evaluation contract can fairly evaluate; it may also start from a desired property rather than an existing finding. It does not relax the contract or quality gate. Researcher cannot set the mode in `node initialize`, draw it locally, or use multiple code Parents. The host-assigned mode is part of assignment context, not an additional Research initialization field.
 
 
 ## Prompt delivery audit

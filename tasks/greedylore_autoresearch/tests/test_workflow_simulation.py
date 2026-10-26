@@ -263,7 +263,8 @@ def _check_delivered_prompts(root, scenario):
     for capture in producers:
         aid = capture['agent_id']
         expected_role = 'researcher' if aid.startswith('research-') else 'engineer'
-        assert capture['role_text'] == (task / f'roles/{expected_role}.md').read_text()
+        role_file = 'researcher_legacy' if expected_role == 'researcher' else expected_role
+        assert capture['role_text'] == (task / f'roles/{role_file}.md').read_text()
         assert f'.codex/roles/{aid}.md' in capture['instructions']
         assert '.codex/notes/toolkit/' in capture['instructions']
         assert capture['startup_prompt']
@@ -271,7 +272,7 @@ def _check_delivered_prompts(root, scenario):
         assert f'.codex/roles/{aid}.md' in capture['startup_prompt']
         assert 'inspect the existing Spec, Evaluation/Attempts and Worktree first' in capture['startup_prompt']
         assert capture['argv'][0] == 'exec'
-        assert capture['resources']['workflow_rules.md'] == (task / 'roles/workflow_rules.md').read_text()
+        assert capture['resources']['workflow_rules.md'] == (task / 'roles/workflow_rules_legacy.md').read_text()
         assert capture['resources']['README.md'] == (task / 'README.md').read_text()
         for template in ('research_intent.json', 'submission.yaml'):
             assert capture['resources'][f'templates/{template}'] == (task / 'templates' / template).read_text()

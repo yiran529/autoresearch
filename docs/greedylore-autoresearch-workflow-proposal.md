@@ -1,6 +1,6 @@
 # GreedyLoRE AutoResearch 工作流修改方案
 
-更新：2026-10-26。状态：设计已更新，待实施；先补代码机制，暂不替换正式 prompt。
+更新：2026-10-26。状态：核心代码、知识整理及 Researcher 正式 prompt 已接入；评估 fidelity/efficiency 的进一步校准仍待进行。
 
 目标是在有限搜索预算下发现 quality 与 efficiency 更好的算法。保留 Researcher、独立 Analyzer、Engineer 三个角色；Researcher 在同一上下文中完成 130M 开发、按需诊断与少量迭代，每节点开发结束后对一个冻结且合格的候选做 60M 迁移检验。使用单一研究档案串联设计与证据，将 wisdom 与 summary 分开。先采用简单规则。
 
@@ -37,7 +37,7 @@ Researcher：训练 → 观察/按需诊断 → 判断预测
 
 ## 2. 单一研究档案
 
-新协议以宿主管理的 `research.json` 合并初始 Spec 与开发记录，避免分别维护工作笔记、实验反思和最终研究报告。代码、提交声明和原始证据仍按各自用途保存。
+新协议通过单一 `origin` 和首轮 `design` 注册，以宿主管理的 `research.json` 合并初始信息与开发记录，避免分别维护工作笔记、实验反思和最终研究报告。代码、提交声明和原始证据仍按各自用途保存。
 
 | 内容 | 要求 |
 | --- | --- |
@@ -51,11 +51,11 @@ Researcher：训练 → 观察/按需诊断 → 判断预测
 
 Researcher 通过宿主入口提交档案变更，不能直接修改公开档案。全部开发与诊断运行终态后冻结整份记录，供独立 Analyzer 使用。Analyzer 只提交一份结构化 Analysis；其 Markdown 展示和 `handover.json` 由宿主生成。质量结果、Attempt、日志和 Evaluation 也由系统维护，不重复撰写。
 
-**待实现标记：**`[RESEARCH_RECORD_NOT_IMPLEMENTED]`。注册、追加、提交与设计快照关联、冻结、证据封装需一起支持。旧节点保留不可变 Spec 与既有记录，不直接修改历史协议。
+现已实现：新注册请求为 `{origin, design, planning_token?, overlap_review?}`。不再要求 Researcher 独立填写 `research_intent`；初始预测/检验只写首轮设计。宿主生成现有 Spec/handover 消费者需要的兼容字段，引用首轮设计路径与哈希；新研究档案版本为 3，旧版本不迁移。
 
 ## 3. 方法构造与探索空间
 
-保留一个代码 Parent，允许引用其他分支的机制、证据和构件。选择方法时，按相关性考虑父方法内部限制、其他机制的互补作用，以及不同状态是否适合不同动作；不强制组合或 adaptive，不要求实现多个方向。
+保留一个代码 Parent，允许引用其他分支的机制、证据和构件。研究可从已有观察、明确资源约束下的期望性质或待检验机制出发，不必来自 handover，也不要求先证明缺陷。Handover 用于候选导航，选定方向后核查相关 Analysis。新协议两种模式均允许在无直接父问题时使用 `problem_ref: null` 并说明动机/Parent 联系；REFINE 深化父方法，EXPLORE 使用不同机制。选择方法时，按相关性考虑父方法内部限制、其他机制的互补作用，以及不同状态是否适合不同动作；不强制组合或 adaptive，不要求实现多个方向。
 
 设计写清“证据 → 解释及相关竞争解释 → 设计回应与副作用 → 可证伪预测”。说明被改组件原本的有用功能，并回应相关反例。有动机的组合、迁移和参数研究有效，但组合已有构件本身不能证明创新。
 
@@ -81,7 +81,7 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 在有意义的 checkpoint 检查即可，不要求每轮重复完整机制实验，也不在机制尚未触发时仅凭早期 loss 淘汰。修正后返回实现、自检和提交阶段，再开始下一条轨迹。
 
-**待实现标记：**`[EVAL_V2_NOT_IMPLEMENTED]`。新权威入口需区分暂停、完成、失败与取消；部分训练不算完成的质量成绩。新轨迹预算与旧“三次成功计分、十次正式执行”口径不同，需版本化实施，不能只改 prompt 或绕过旧双 workload 评估。
+现有权威入口已区分暂停、完成、失败与取消；部分训练不算完成的质量成绩。新轨迹预算与旧“三次成功计分、十次正式执行”不同，宿主按启用协议执行。Researcher 正文不再混用两套入口。
 
 ## 5. Checkpoint：固定周期保存与可靠恢复
 
@@ -259,7 +259,7 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 
 ## 15. 首批实现的配置与入口
 
-代码机制以 `grader.args.staged_research: true` 显式启用；默认 `false`，不迁移运行中的旧 run。宿主配置如下：
+新任务配置默认 `grader.args.staged_research: true`；已保存配置保留原值，不迁移运行中的旧 run。角色、启动消息、共享规则按同一配置选择协议。宿主配置如下：
 
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -271,7 +271,7 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 
 | action | JSON data |
 | --- | --- |
-| `register` | `registration`：原初始化字段；`design`：`method/mechanism/predictions/tests` |
+| `register` | `origin`：问题/假设/证据/Parent 与父证据回应；`design`：`method/mechanism/predictions/tests`；顶层可带 planning controls |
 | `design` | 下一轮 `method/mechanism/predictions/tests`；追加后不能覆盖上一轮 |
 | `train` | `iteration`、完整 `sha`、可选绝对更新端点 `pause_after_steps` |
 | `diagnostic` | `iteration`、`argv`、`timeout`、`scripts_dir`；串行复用已持有的 4 卡 |
@@ -292,4 +292,11 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 - Astra medium review 发现的中断恢复、发布重放、档案引用、路径越界和失败证据问题均已修复并复查。
 - 模拟报告、时间线和日志：`/tmp/coral-staged-implementation-20261026/simulation-final/`。训练/GPU 边界是模拟，不能据此声称 CUDA/NCCL 等价或算法收益；诊断借卡的真实 CPU 进程测试通过，实际 bubblewrap namespace 隔离仍需在具备依赖的宿主验证。
 
-代码提交：`aeb0d21`（checkpoint/恢复）、`23616cd`（档案/产物归属）、`cee6ec8`（持续持卡）、`eed52eb`（分阶段工作流/交接清理）、`b0ececd`（保持原 worker 数据协议）。正式 prompt 未修改。后续 review 按用户要求使用 `gpt-5.6-sol`、`high`。
+代码提交：`aeb0d21`（checkpoint/恢复）、`23616cd`（档案/产物归属）、`cee6ec8`（持续持卡）、`eed52eb`（分阶段工作流/交接清理）、`b0ececd`（保持原 worker 数据协议）。首批未改正式 prompt；现已接入新的 Researcher 正文和命令参考。后续 review 按用户要求使用 `gpt-5.6-sol`、`high`。
+
+
+## 17. 统一研究起点与正式 prompt 交付（2026-10-26）
+新注册使用 `origin`、首轮 `design` 和选题控制字段，不再要求 Researcher 独立填写 `research_intent`。宿主生成兼容 Spec/handover 字段并固定首轮设计哈希；新档案版本为 3。接口提交为 `84d24f5`，从期望性质/机制出发且无需匹配父 handover 问题的支持为 `a5a137e`。
+正式 Researcher 正文已同步简洁的中英文草稿，逐步标明实际命令，保留观察、诊断与证据解释指引。研究起点包括 Research/Engineering 发现、资源约束下的期望性质与机制假设；handover 用于导航，选定方向后核查相关 Analysis。没有直接对应父问题时可用 null，并说明动机与 Parent 联系。
+英文命令说明为 `references/research_commands.md`，自动进入 `notes/toolkit/references/`；origin 注册模板同时交付。实际 AgentManager/CodexRuntime 的首次启动和恢复均核对角色、启动消息、AGENTS、共享规则、英文说明和模板，未调用真实模型或 GPU。新配置默认启用 staged；显式旧配置选择保留的兼容角色与规则，新正文不混入旧操作流程。
+本次提交前定向检查为 75 passed，包含四个 staged 完整流程模拟（正常、迁移质量失败、迁移执行失败、无合格候选）以及启动/恢复交付检查；修改的 Python 文件通过 Ruff，diff 检查通过。完整复核与全量回归按用户要求暂停，不能据此声称已完成全量验收。

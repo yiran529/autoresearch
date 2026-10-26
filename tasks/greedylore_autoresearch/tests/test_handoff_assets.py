@@ -1,9 +1,12 @@
+# ruff: noqa: S101
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
 
+from coral.agent.dynamic import DynamicAssignment, spec_for_assignment
+from coral.config import CoralConfig
 
 TASK_ROOT = Path(__file__).resolve().parents[1]
 
@@ -11,9 +14,14 @@ TASK_ROOT = Path(__file__).resolve().parents[1]
 def test_task_has_two_distinct_codex_roles():
     config = yaml.safe_load((TASK_ROOT / "task.yaml").read_text())
     assignments = config["agents"]["assignments"]
-    assert [item["runtime_options"]["role_file"] for item in assignments] == [
-        "./roles/researcher.md",
-        "./roles/engineer.md",
+    parsed = CoralConfig.from_dict(config)
+    assert parsed.grader.args['staged_research'] is True
+    identities = (
+        DynamicAssignment('research-N001', 'research', 'N001', 'active'),
+        DynamicAssignment('engineer-E0001', 'engineering', 'N001', 'active'),
+    )
+    assert [spec_for_assignment(parsed, item).runtime_options['role_file'] for item in identities] == [
+        './roles/researcher.md', './roles/engineer.md',
     ]
     assert all(item.get("count", 1) == 1 for item in assignments)
     assert config["agents"]["heartbeat_enabled"] is False
@@ -35,6 +43,8 @@ def test_required_handoff_assets_exist_and_are_nonempty():
         "roles/engineer.md",
         "prompts/research_analysis.md",
         "references/algorithm_construction.md",
+        "references/research_commands.md",
+        "templates/research_origin.json",
         "references/engineer_runtime.md",
         "references/semantic_criteria.md",
         "templates/node_spec.md",

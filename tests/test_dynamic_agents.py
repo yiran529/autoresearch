@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -344,3 +345,40 @@ def test_dynamic_roster_rejects_invalid_research_mode(tmp_path, mode):
     }]})
     with pytest.raises(ValueError, match='assignment'):
         client.reconcile()
+
+
+@pytest.mark.parametrize('resuming', [False, True])
+def test_staged_startup_and_generated_instructions_share_development_protocol(resuming):
+    config = _config()
+    config.grader.args['staged_research'] = True
+    assignment = DynamicAssignmentClient(
+        Path('/tmp/unused-coral'), request=lambda *_: {'assignments': [{
+            'agent_id': 'research-N001', 'role': 'research', 'node_id': 'N001', 'status': 'active',
+        }]},
+    ).reconcile()[0]
+    spec = spec_for_assignment(config, assignment)
+    startup = prompt_for_assignment(spec, instruction_file='AGENTS.md', shared_dir='.codex',
+                                    resuming=resuming, staged_research=True)
+    instructions = generate_coral_md(config, spec.agent_id, workflow_role='research', node_id=spec.node_id)
+    for content in (startup, instructions):
+        assert 'autoresearch research register' in content
+        assert 'origin' in content and 'design' in content
+        assert 'at most 3 candidate training trajectories' in content
+        assert '60M' in content and 'research.json' in content
+        assert 'autoresearch research finish' in content
+        assert '3 successful scored formal Research runs' not in content
+        assert '10 total formal Research runs' not in content
+        assert 'autoresearch node complete --mode research' not in content
+
+
+def test_staged_role_selection_uses_only_trusted_config_and_consumes_override():
+    config = _config()
+    config.agents.assignments[0].runtime_options.update(
+        role_file='researcher_legacy.md', staged_role_file='researcher.md')
+    from coral.agent.dynamic import DynamicAssignment
+    assignment = DynamicAssignment('research-N001', 'research', 'N001', 'active')
+    assert spec_for_assignment(config, assignment).runtime_options['role_file'] == 'researcher_legacy.md'
+    config.grader.args['staged_research'] = True
+    options = spec_for_assignment(config, assignment).runtime_options
+    assert options['role_file'] == 'researcher.md'
+    assert 'staged_role_file' not in options

@@ -46,6 +46,7 @@ def test_staged_workflow_simulation(tmp_path, scenario):
             stream.write(f'{scenario}:\n{log.read_text()}\n')
     assert report['simulated'] is True
     assert report['authenticated_cli'] and report['other_owner_rejected']
+    assert report['staged_prompt_delivery']
     assert report['analysis_count'] == 1
     assert report['engineering_status'] == ('completed' if scenario == 'success' else 'skipped')
     assert report['cleanup_status'] == 'done'

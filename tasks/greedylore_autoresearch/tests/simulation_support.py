@@ -527,6 +527,8 @@ def prepare():
         timeout=30,
         private=["taskdata/eval_contract.yaml"],
     )
+    # This driver explicitly covers the retained pre-staged compatibility protocol.
+    config["grader"]["args"]["staged_research"] = False
     config["grader"]["args"]["trusted_workflow_handler"] = "simulation_support:workflow_handler"
     config["grader"]["args"]["trusted_workflow_worker"] = "simulation_support:run_finalization"
     config["grader"]["args"]["trusted_memory_worker"] = "simulation_support:run_memory"
@@ -541,9 +543,9 @@ def prepare():
         2 if os.environ["CORAL_SIM_SCENARIO"] == "faults" else 1
     )
     for assignment in config["agents"]["assignments"]:
-        assignment["runtime_options"]["role_file"] = str(
-            TASK / assignment["runtime_options"]["role_file"]
-        )
+        for field in ("role_file", "staged_role_file"):
+            if field in assignment["runtime_options"]:
+                assignment["runtime_options"][field] = str(TASK / assignment["runtime_options"][field])
     cfg = CoralConfig.from_dict(config)
     cfg.task_dir = TASK
     with patch("coral.workspace.grader_env.setup_grader_env", offline_grader_env):

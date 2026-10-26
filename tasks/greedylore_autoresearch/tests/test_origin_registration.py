@@ -174,3 +174,31 @@ def test_origin_whitespace_normalization_is_replay_safe(staged):
     first = register(staged, payload)
     assert register(staged, payload) == first
     assert first['origin']['hypothesis'] == origin()['hypothesis']
+
+
+def test_staged_toolkit_delivers_origin_template_and_command_guide(staged):
+    toolkit = staged.notes_root / 'toolkit'
+    request = json.loads((toolkit / 'templates/research_origin.json').read_text())
+    from autoresearch.research_origin import registration_from_origin
+    registration, initial_design, authored_origin = registration_from_origin('N001', request)
+    assert authored_origin['question'] and initial_design['tests']
+    assert registration['research_intent']['question'] == authored_origin['question']
+    assert not (toolkit / 'templates/research_intent.json').exists()
+    guide = (toolkit / 'references/research_commands.md').read_text()
+    for command in ('research register', 'research diagnostic', 'research design', 'research train'):
+        # Registration's generic command appears in the role; guide explicitly
+        # exercises diagnostic/revision/continuation actions.
+        if command != 'research register':
+            assert command in guide
+    rules = (toolkit / 'workflow_rules.md').read_text()
+    assert 'Normally use two, at most three 130M' in rules
+    assert 'node initialize --intent-file' not in rules
+
+
+def test_staged_old_initialization_endpoint_cannot_bypass_origin(staged):
+    from autoresearch.state import handle_workflow
+    with pytest.raises(ValueError, match='origin and design'):
+        handle_workflow('initialize_research', {'node_id': 'N001'}, {
+            'coral_dir': str(staged.coral_dir), 'agent_id': 'research-N001',
+        })
+    assert not (staged.notes_root / 'nodes/N001/spec.md').exists()

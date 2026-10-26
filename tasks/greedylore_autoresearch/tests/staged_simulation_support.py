@@ -173,6 +173,34 @@ def driver(output, scenario):
             assignment = store.reconcile(1, 0)[0]
             aid, node = assignment.agent_id, assignment.node_id
             bind(aid)
+            # Actual AgentManager -> CodexRuntime -> test executable captures
+            # initial and resumed delivery. It performs no model/GPU work.
+            from coral.agent.dynamic import spec_for_assignment
+            from coral.agent.manager import AgentManager
+            manager = AgentManager(config, config_dir=sim.TASK)
+            manager.paths = paths
+            spec = spec_for_assignment(config, assignment)
+            manager.specs = [spec]
+            manager.specs_by_id[aid] = spec
+            manager.runtimes[aid] = manager.runtime
+            with patch.dict(os.environ, {'CORAL_SIM_CAPTURE_ONLY': '1'}):
+                for session in (None, f'simulation-{aid}'):
+                    handle = manager._setup_and_start_agent(aid, resume_session_id=session)
+                    assert handle.process.wait(timeout=20) == 0
+            captures = [json.loads(p.read_text()) for p in (output / 'prompt_audit').glob('*.json')]
+            delivered = [p for p in captures if p['role'] == 'researcher']
+            assert len(delivered) == 2 and {p['resumed'] for p in delivered} == {False, True}
+            for capture in delivered:
+                assert capture['role_text'] == (sim.TASK / 'roles/researcher.md').read_text()
+                assert capture['resources']['workflow_rules.md'] == (sim.TASK / 'roles/workflow_rules.md').read_text()
+                assert capture['resources']['references/research_commands.md'] == (sim.TASK / 'references/research_commands.md').read_text()
+                assert 'templates/research_origin.json' in capture['resources']
+                assert 'templates/research_intent.json' not in capture['resources']
+                for content in (capture['instructions'], capture['startup_prompt']):
+                    assert 'autoresearch research register' in content
+                    assert 'at most 3 candidate training trajectories' in content
+                    assert 'autoresearch node complete --mode research' not in content
+                    assert '3 successful scored formal Research runs' not in content
             sim.git(repo, 'reset', '--hard', store._terminal_research_unlocked('N000').commit_hash)
             mode = store._load_unlocked()['nodes'][node]['research']['research_mode']
             origin = dict(parent_node='N000', hypothesis='SIMULATED history helps',
@@ -249,7 +277,7 @@ def driver(output, scenario):
             assert any(item['path'].startswith(f'research_diagnostics/{node}/probe/') for item in records)
             assert not list((paths.coral_dir / 'public').rglob('*.pt'))
             assert sum(e['workload'] == 'llama130m_muon' for e in segments) == 2
-            report = dict(simulated=True, scenario=scenario, authenticated_cli=True,
+            report = dict(simulated=True, scenario=scenario, authenticated_cli=True, staged_prompt_delivery=True,
                 other_owner_rejected=rejected, analysis_count=len(analysis),
                 engineering_status=final['engineering_status'], cleanup_status=final['cleanup']['status'],
                 public_evidence_survives=all((paths.coral_dir / 'public' / ob['evidence_path']).exists()

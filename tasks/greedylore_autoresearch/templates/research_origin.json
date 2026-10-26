@@ -1,0 +1,22 @@
+{
+  "origin": {
+    "parent_node": "N000",
+    "problem_ref": null,
+    "question": "A falsifiable question from evidence, a desired property or a mechanism hypothesis",
+    "hypothesis": "The initial core hypothesis connecting the design to that question",
+    "selection_rationale": "Cite supporting evidence and explain why this question matters",
+    "delta": "Substantive method difference from the Parent and closest methods",
+    "risk": "Relevant side effects and confounds",
+    "falsification_criteria": "Results that would weaken the core hypothesis",
+    "parent_response": "Explain the Parent connection and motivation; cite a real parent question only when directly addressing it",
+    "engineering_review": "Applicable Engineering evidence and reuse/defer decisions, or unavailable reports"
+  },
+  "design": {
+    "method": "Method, communication and persistent state",
+    "mechanism": "Explanation, evidence and relevant rival",
+    "predictions": "Separate mechanism, quality and complete-cycle cost predictions",
+    "tests": "Matched comparator, observable discriminator and falsification conditions"
+  },
+  "planning_token": "TOKEN_RETURNED_BY_PLANNING",
+  "overlap_review": "Methods inspected and substantive differences"
+}

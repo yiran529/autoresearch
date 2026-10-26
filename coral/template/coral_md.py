@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from coral.agent.dynamic import staged_research_scope
 from coral.config import CoralConfig
 
 _TEMPLATE_PATH = Path(__file__).parent / "coral.md.template"
@@ -49,12 +50,14 @@ def generate_coral_md(
                 "Only then does it independently run Research Analysis over all Attempts and quality-gated "
                 "Engineering; their completion makes this Node an eligible Parent."
             )
+            if config.grader.args.get("staged_research") is True:
+                scope = staged_research_scope(node_id)
             mode = research_mode if research_mode is not None else "REFINE"
             if mode not in {"REFINE", "EXPLORE"}:
                 raise ValueError("invalid trusted research mode")
             scope += (f"\n- Your host-assigned research mode is `{mode}`, pinned to this "
                       "assignment across resumes and retries. Follow its definition in your role; "
-                      "do not resample or supply a mode to node initialize.")
+                      "do not resample or supply a mode during registration.")
         elif workflow_role == "engineering" and node_id:
             scope = (
                 f"- You own Engineering for Node `{node_id}`, bound by the host.\n"

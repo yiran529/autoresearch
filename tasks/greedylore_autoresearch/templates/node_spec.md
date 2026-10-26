@@ -31,11 +31,8 @@ parent_engineering_analysis: null                          # may arrive later
 ## Falsification criteria
 ...
 
-## Frozen research intent (provided via --intent-file)
-- `problem_ref`: parent `Nxxx:Q1`, `Nxxx:Q2`, or `Nxxx:current`; null is allowed for EXPLORE or legacy evidence.
-- `question`: the specific research question, with a substantive mechanism delta.
-- `mechanism_test`: comparator, predicted observable and falsification condition.
-- `practical_test`: separate quality and complete-cycle efficiency criteria.
-- `handover_response`: why continue, challenge, defer or choose another question.
-- `engineering_review`: relevant Engineering Summary/Analysis, applicability and reuse/defer decisions.
-- The host freezes available parent handover content and report references; do not edit generated Specs.
+## Host-generated research origin and initial design
+- Researcher registers once with `origin` and first `design`, using `templates/research_origin.json`; it does not write this Spec or a separate research-intent file.
+- `origin` records the question/hypothesis, evidence and selection rationale, parent problem response, risks/falsification and Engineering review.
+- The immutable first design records method, mechanism, predictions and tests. Host-generated compatibility criteria reference its exact path and hash; `research_origin_version: 3` identifies this protocol.
+- Later designs and observations/decisions append to `research.json`; they do not rewrite Spec or original predictions. The host freezes available parent handover and report references.

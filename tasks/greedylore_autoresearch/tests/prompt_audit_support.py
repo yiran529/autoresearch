@@ -67,7 +67,8 @@ def main() -> None:
                   'instructions': Path('AGENTS.md').read_text(),
                   'role_text': Path(f'.codex/roles/{aid}.md').read_text(), 'resources': resources})
         print(json.dumps({'type': 'thread.started', 'thread_id': sid}), flush=True)
-        agent(coral_dir, aid)
+        if os.environ.get("CORAL_SIM_CAPTURE_ONLY") != "1":
+            agent(coral_dir, aid)
         return
 
     prompt = sys.stdin.read()

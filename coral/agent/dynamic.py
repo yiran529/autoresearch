@@ -26,8 +26,26 @@ class DynamicAssignment:
     research_mode: str | None = None
 
 
+def staged_research_scope(node_id: str) -> str:
+    """One staged protocol for startup messages and generated instruction files."""
+    return (
+        f"- You own Research Node `{node_id}`. Read its `research.json` and resume the saved iteration/stage.\n"
+        "- Select under the planning lock; use `autoresearch research register` with one origin and first design. "
+        "Keep Parent/base_commit, main question and core hypothesis fixed; append designs rather than rewriting history.\n"
+        "- Normally use two and at most 3 candidate training trajectories on 130M, including failed/stopped/restarted ones. "
+        "Exact same-SHA continuation stays in its trajectory; resumes and retries do not reset budgets.\n"
+        "- Use managed training and diagnostics; verify mechanism predictions and practical effects yourself. "
+        "Do not wait for an Analyzer between iterations. Diagnostic caps are 5 successful/15 total executions, 600 seconds each.\n"
+        "- Finish when no justified refinement remains or the budget is exhausted. Use `autoresearch research finish` "
+        "after all development work ends, selecting one completed eligible iteration or none. The host freezes it and "
+        "runs one conditional 60M transfer; do not change candidates or tune from its feedback.\n"
+        "- After transfer completes or is explicitly skipped, the host retires you and starts independent Research Analysis "
+        "over all Attempts and quality-gated Engineering. Their completion makes this Node an eligible Parent."
+    )
+
+
 def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir: str,
-                          resuming: bool, feedback: str | None = None) -> str:
+                          resuming: bool, feedback: str | None = None, staged_research: bool = False) -> str:
     """Give finite workflow instructions in the actual initial/resumed user message."""
     if spec.workflow_role not in {"research", "engineering"} or not spec.node_id:
         raise ValueError("workflow prompt requires a role and a bound Node")
@@ -53,13 +71,16 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         "yourself.\n- Use the trusted Engineering finish command, then wait for publication and "
         "retirement; do not wait for Research Analysis before starting Engineering."
     )
+    if spec.workflow_role == "research" and staged_research:
+        scope = staged_research_scope(spec.node_id)
+    progress = "research.json, Spec, Evaluation/Attempts" if staged_research and spec.workflow_role == "research" else "Spec, Evaluation/Attempts"
     prompt = (
         f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`.\n\n"
         "## Read first\n\n"
         f"- Read `{instruction_file}` and your role at `{shared_dir}/roles/{spec.agent_id}.md` "
         "before acting, then follow that role's numbered steps and concrete work guidance.\n\n"
         "## Recover progress\n\n"
-        "- On start or resume, inspect the existing Spec, Evaluation/Attempts and Worktree first; "
+        f"- On start or resume, inspect the existing {progress} and Worktree first; "
         "continue from the recorded stage and preserve existing changes and frozen submissions.\n"
         "- Do not restart completed steps, choose another Node or reset the candidate count.\n\n"
         f"## Workflow limits and completion\n\n{scope}\n\n"
@@ -137,6 +158,9 @@ def spec_for_assignment(config: CoralConfig, assignment: DynamicAssignment) -> A
                 model = config.agents.model
         options = dict(config.agents.runtime_options)
         options.update(template.runtime_options)
+        staged_role = options.pop("staged_role_file", None)
+        if assignment.role == "research" and config.grader.args.get("staged_research") is True and staged_role:
+            options["role_file"] = staged_role
         return AgentSpec(
             agent_id=assignment.agent_id,
             runtime=runtime,
