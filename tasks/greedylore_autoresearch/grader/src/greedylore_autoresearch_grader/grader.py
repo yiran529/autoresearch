@@ -377,7 +377,17 @@ class Grader(TaskGrader):
                     self._check_cancelled()
                     output = evidence_root / "quality" / name
                     output.mkdir(parents=True, exist_ok=False)
-                    spec = build_quality_command(profile, candidate, output, reservation.indices)
+                    checkpoint_options = {}
+                    artifacts = None
+                    if self.args.get('staged_research') and self.tasks[0].metadata.get('node_id') == 'N000':
+                        from autoresearch.runtime_artifacts import RuntimeArtifacts
+                        artifacts = RuntimeArtifacts(Path(self.private_dir).parent)
+                        artifacts.require_space('N000')
+                        checkpoint_root = artifacts.path('N000', f'root/{evidence_root.name}/checkpoints/{name}')
+                        checkpoint_options = dict(checkpoint_root=checkpoint_root,
+                            checkpoint_interval_steps=self.args.get('research_checkpoint_interval_steps', 1000),
+                            training_metrics=output / 'training_metrics.jsonl')
+                    spec = build_quality_command(profile, candidate, output, reservation.indices, **checkpoint_options)
                     payload = self._completed_json(spec, output)
                     if profile['model'] == 'resnet18':
                         from .vision import validate_vision_result
@@ -390,6 +400,16 @@ class Grader(TaskGrader):
                             or payload.get("update_step") != profile["stop_after_steps"]
                             or not math.isfinite(float(payload.get("final_eval_loss", math.nan)))):
                         raise CandidateError(f"invalid quality result for {name}")
+                    if artifacts is not None:
+                        checkpoint_value = payload.get('checkpoint_path')
+                        if profile['model'] == 'resnet18' and (payload.get('diagnostic_checkpoint') or {}).get('status') == 'complete':
+                            checkpoint_value = str(checkpoint_root / f"step-{payload['update_step']:08d}")
+                        if checkpoint_value:
+                            checkpoint = Path(checkpoint_value).resolve()
+                            if not checkpoint.is_relative_to(checkpoint_root):
+                                raise CandidateError('Root checkpoint escapes owned artifact directory')
+                            artifacts.publish_checkpoint('N000', checkpoint,
+                                evidence_root / 'checkpoints' / name / 'manifest.json')
                     quality_results[name] = payload
                     evidence_paths.extend((
                         str(self.eval_logs_worktree_path(output)),

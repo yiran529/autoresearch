@@ -366,3 +366,5 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 - 保存 v3 模板；v1/v2/v3 历史契约继续使用130M测时与原 hash，不自动迁移。v4 须重新建立匹配的 dense／Root 参考，不能把旧130M秒数作为新基线。
 
 按用户要求仅做简单模拟、不进行独立复核：最终 **34 项定向检查通过**，包含一个完整 staged 成功场景，以及 Root 四次正式测时命令指向350M、350M评分与U、固定Root参照、旧v3仍用130M、拒绝混用旧参考。模拟发现并修复最终发布处旧cell标识残留；重跑通过。Ruff和diff检查通过。完整回归已主动中止，不作为本轮全量验收；无真实GPU训练或模型调用。模拟证据：`/tmp/coral-timing350-20261027/simple/`。
+
+正式启动前检查（2026-10-27）：实际 PyTorch checkpoint 在 `/dev/shm/wyr_tmp` 保存／读回成功。补齐 staged 新运行的固定 Root 正式质量评估：使用 RuntimeArtifacts 分配外部 checkpoint 目录，周期仍由入口参数控制（默认1000），只发布终态 manifest 并登记宿主路径；旧契约非 staged 路径保持原样。Root／外部产物定向检查14项通过。

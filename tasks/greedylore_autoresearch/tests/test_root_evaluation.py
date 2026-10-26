@@ -136,3 +136,21 @@ def test_root_non_object_vision_json_is_a_candidate_failure(tmp_path, monkeypatc
     assert bundle.metadata['failure_class'] == 'candidate'
     assert bundle.aggregated is None
     assert 'JSON object' in bundle.feedback
+
+
+def test_staged_root_checkpoints_use_external_artifact_root(tmp_path, monkeypatch):
+    import yaml
+    grader = root_grader(tmp_path, monkeypatch)
+    external = tmp_path / 'external'
+    grader.config.args.update(staged_research=True, research_checkpoint_interval_steps=1000)
+    coral = Path(grader.private_dir).parent
+    (coral / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {'dynamic_artifact_root': str(external)}}}))
+    bundle = grader.evaluate()
+    assert bundle.metadata['failure_class'] is None
+    commands = [cmd for cmd in grader.commands if '--stop_after_steps' in cmd or '--stop-after-steps' in cmd]
+    assert len(commands) == 3
+    for cmd in commands:
+        flag = '--checkpoint_root' if '--checkpoint_root' in cmd else '--checkpoint-root'
+        assert Path(cmd[cmd.index(flag) + 1]).is_relative_to(external)
+        interval = '--checkpoint_interval_steps' if '--checkpoint_interval_steps' in cmd else '--checkpoint-interval-steps'
+        assert cmd[cmd.index(interval) + 1] == '1000'
