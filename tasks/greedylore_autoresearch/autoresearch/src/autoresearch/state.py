@@ -628,8 +628,10 @@ class WorkflowStore:
 
     def initialize_research(
         self, agent_id: str, node_id: str, request: Mapping[str, Any],
-        *, owner_identity: Mapping[str, Any] | None = None,
+        *, owner_identity: Mapping[str, Any] | None = None, origin_version: int | None = None,
     ) -> dict[str, Any]:
+        if origin_version not in (None, 3):
+            raise WorkflowError("unsupported research origin version")
         required = {
             "parent_node", "hypothesis", "selection_rationale",
             "delta", "risk", "falsification_criteria",
@@ -658,6 +660,7 @@ class WorkflowStore:
             if target.exists():
                 fixed = yaml.safe_load(target.read_text())
                 if (not isinstance(fixed, dict) or fixed.get("node_id") != node_id
+                        or origin_version is not None and fixed.get("research_origin_version") != origin_version
                         or any(fixed.get(key) != value for key, value in request.items())
                         or overlap_review is not None and overlap_review != (
                             fixed.get('method_registration') or {}).get('overlap_review')):
@@ -707,6 +710,8 @@ class WorkflowStore:
                     if parent.get("engineering_status") == "completed" else None),
                 "publish": publish,
             }
+            if origin_version is not None:
+                evidence['research_origin_version'] = origin_version
             if self.research_planning_lease_seconds:
                 evidence['method_registration'] = {
                     'overlap_review': overlap_review,
@@ -1017,6 +1022,9 @@ def handle_workflow(
         from .staged_research import handle_action
         return handle_action(store, owner, payload, context)
     if operation == "initialize_research":
+        from .runtime_artifacts import settings
+        if settings(store.coral_dir).get("staged_research") is True:
+            raise WorkflowError("staged Research requires autoresearch research register with origin and design")
         node_id = payload["node_id"]
         request = {key: value for key, value in payload.items() if key != "node_id"}
         return store.initialize_research(owner, node_id, request, owner_identity=context)

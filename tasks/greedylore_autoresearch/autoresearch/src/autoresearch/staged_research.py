@@ -13,6 +13,8 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 
 from .research_record import ResearchRecord
@@ -234,11 +236,25 @@ def handle_action(store, owner, payload, context):
     node, action, data, request_id = (payload[k] for k in ('node_id', 'action', 'data', 'request_id'))
     host = StagedResearch(store, owner, node)
     if action == 'register':
-        if not isinstance(data, dict) or set(data) != {'registration', 'design'}:
-            raise ValueError('register requires registration and design')
-        store.initialize_research(owner, node, data['registration'], owner_identity=context)
-        spec = __import__('yaml').safe_load((store.notes_root / 'nodes' / node / 'spec.md').read_text())
-        result = host.record.initialize(spec, data['design'], request_id)
+        if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,96}', request_id):
+            raise ValueError('invalid research registration request ID')
+        from .research_record import validate_design
+        if isinstance(data, dict) and set(data) == {'registration', 'design'}:
+            # Only replay an already-published old registration. Fresh Nodes
+            # cannot bypass the unified origin by authoring a compatibility intent.
+            spec_path = store.notes_root / 'nodes' / node / 'spec.md'
+            if (not spec_path.is_file()
+                    or yaml.safe_load(spec_path.read_text()).get('research_origin_version') == 3
+                    or host.record.private.exists() and host.record.read().get('version', 2) >= 3):
+                raise ValueError('new registration requires origin and design')
+            registration, design, origin = data['registration'], validate_design(data['design']), None
+        else:
+            from .research_origin import registration_from_origin
+            registration, design, origin = registration_from_origin(node, data)
+        store.initialize_research(owner, node, registration, owner_identity=context,
+                                  origin_version=3 if origin is not None else None)
+        spec = yaml.safe_load((store.notes_root / 'nodes' / node / 'spec.md').read_text())
+        result = host.record.initialize(spec, design, request_id, origin=origin)
         with trusted_writes_lock(store.coral_dir):
             state = store._load_unlocked()
             state['nodes'][node]['research']['protocol'] = 'staged-v2'

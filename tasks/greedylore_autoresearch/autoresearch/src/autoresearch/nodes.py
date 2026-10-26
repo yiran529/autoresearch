@@ -78,6 +78,8 @@ def create_node(request: Mapping[str, Any], evidence: Mapping[str, Any]) -> Path
             "parent_engineering": evidence.get("engineering_analysis_ref"),
         },
     }
+    if "research_origin_version" in evidence:
+        spec["research_origin_version"] = evidence["research_origin_version"]
     if "research_mode" in evidence:
         mode = evidence["research_mode"]
         if mode not in {"REFINE", "EXPLORE"}:

@@ -175,16 +175,19 @@ def driver(output, scenario):
             bind(aid)
             sim.git(repo, 'reset', '--hard', store._terminal_research_unlocked('N000').commit_hash)
             mode = store._load_unlocked()['nodes'][node]['research']['research_mode']
-            intent = json.loads((sim.TASK / 'templates/research_intent.json').read_text())
-            intent.update(problem_ref=None if mode == 'EXPLORE' else 'N000:Q1',
-                          engineering_review='Read synthetic parent Engineering handover.',
-                          question='SIMULATED history mechanism question')
-            registration = dict(parent_node='N000', hypothesis='SIMULATED history helps',
+            origin = dict(parent_node='N000', hypothesis='SIMULATED history helps',
                 selection_rationale='Synthetic Root', delta='Synthetic marker', risk='Synthetic only',
-                falsification_criteria='Workflow fails', research_intent=intent)
+                falsification_criteria='Workflow fails',
+                question='SIMULATED history mechanism question',
+                problem_ref=None if mode == 'EXPLORE' else 'N000:Q1',
+                parent_response='Investigate synthetic Root mechanism.',
+                engineering_review='Read synthetic parent Engineering handover.')
             design = dict(method='Synthetic history', mechanism='retain history',
                           predictions='less distortion', tests='matched-state probe')
-            action('register', {'registration': registration, 'design': design})
+            registered = json.loads(action('register', {'origin': origin, 'design': design}).stdout)
+            assert registered['version'] == 3 and 'research_intent' not in registered['origin']
+            sim.event('origin_registered', question=registered['question'],
+                      initial_design_sha256=registered['origin']['initial_design_sha256'])
             sim.declaration(paths.coral_dir, node, 'research', sim.git(repo, 'rev-parse', 'HEAD'), 1)
             sim.git(repo, 'add', 'submission.yaml', 'simulation_marker.txt')
             sim.git(repo, 'commit', '-m', 'SIMULATED staged candidate')

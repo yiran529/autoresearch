@@ -69,11 +69,17 @@ class ResearchRecord:
             _atomic_json(self.public, document, mode=0o644)
             return copy.deepcopy(document)
 
-    def initialize(self, spec, design, request_id):
+    def initialize(self, spec, design, request_id, *, origin=None):
         design = validate_design(design)
-        origin = copy.deepcopy(spec)
-        document = {'version': 2, 'node_id': self.node_id, 'agent_id': self.agent_id,
-                    'question': (spec.get('research_intent') or {}).get('question', spec.get('hypothesis')),
+        unified = origin is not None
+        origin = copy.deepcopy(origin if unified else spec)
+        if unified:
+            origin['initial_design_sha256'] = hashlib.sha256(json.dumps(design, sort_keys=True).encode()).hexdigest()
+            origin.update({key: copy.deepcopy(spec[key]) for key in (
+                'node_id', 'parent_commit', 'base_commit', 'research_mode',
+                'analysis_refs', 'parent_handover') if key in spec})
+        document = {'version': 3 if unified else 2, 'node_id': self.node_id, 'agent_id': self.agent_id,
+                    'question': origin['question'] if unified else (spec.get('research_intent') or {}).get('question', spec.get('hypothesis')),
                     'origin': origin, 'iterations': [], 'selected_iteration': None,
                     'selection_rationale': None, 'frozen': False}
 
