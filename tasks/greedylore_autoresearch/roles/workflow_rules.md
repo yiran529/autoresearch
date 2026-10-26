@@ -28,6 +28,8 @@
 
 ## Engineering runs and completion
 
+- Engineering reads the claim's design source: the frozen selected iteration in `research.json` and matching Research SHA, or Root's fixed baseline Spec/A0. Required handover must be present and consistent. Preserve adaptive policy decisions, triggers and state semantics.
+- Commit candidates and measure only through `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`. The command waits and uses the existing timing contract. Same-SHA infrastructure recovery adds `--retry` with a new ID; a lost reply reuses the original ID/SHA/flags. Direct formal submission cannot bypass this entrypoint.
 - Engineering has at most 3 successful formal runs and 10 total formal runs per assignment, across all resumes.
 - A completed evaluation with a valid score counts as successful even when performance regresses.
 - Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions/retries reserve capacity.
@@ -65,6 +67,6 @@
 
 - New contracts use a 5% dense-relative final-loss gate on both workloads; read the recorded contract for historical runs. U is optional advice, never a gate for exploration, Parent choice or candidate selection.
 - New methods declare `timing.period_steps` in committed `submission.yaml`: a full fixed cycle, or null if none. Only `requested_steps` is optional; legacy submissions may omit `timing`. The host measures complete fixed cycles or a default window for nonperiodic methods, normally 400 and at most 800 steps. Invalid event evidence or unmatched reference windows cannot establish comparable performance.
-- Before implementation, Researcher reads available Engineering Summary and parent Engineering Analysis, then records applicability/reuse decisions or report-unavailability reasons in the research intent.
+- Before implementation, Researcher reads available Engineering Summary and parent Engineering Analysis, then records applicability/reuse decisions or report-unavailability reasons in `origin.engineering_review`.
 - A starting point may be an observation/problem, a desired property under a resource constraint, or a mechanism hypothesis; it need not come from handover or establish an existing defect. REFINE builds on the Parent method/mechanism; EXPLORE uses a substantively different mechanism. Cite an addressed parent question, otherwise use null and explain the connection in parent_response. Register origin and initial design once; the host derives compatibility criteria for existing Spec/handover consumers. The immutable first design and appended iteration designs supply the actual predictions and tests.
 - Independent Research Analysis answers those criteria and supplies bounded incremental findings/follow-up questions. The host derives `handover.json`; its source reports remain authoritative, and child Specs retain the original snapshot.

@@ -86,3 +86,14 @@ def test_cli_exposes_analyze_command(monkeypatch, capsys):
         "analysis_version": 2,
         "analysis_path": "/notes/nodes/N001/research_analysis_v2.md",
     }
+
+
+def test_engineer_timing_cli_sends_committed_sha_without_autocommitting(monkeypatch, capsys):
+    from autoresearch import cli
+
+    calls = []
+    monkeypatch.setattr(cli, '_coral_dir', lambda: Path('/run/.coral'))
+    monkeypatch.setattr(cli, 'request_trusted', lambda root, operation, payload: calls.append((operation, payload)) or {'status': 'regressed'})
+    cli.main(['engineering', 'timing', '--sha', 'a' * 40, '--request-id', 'timing-1', '--retry'])
+    assert calls == [('engineering_timing', {'sha': 'a' * 40, 'request_id': 'timing-1', 'retry': True})]
+    assert json.loads(capsys.readouterr().out)['status'] == 'regressed'

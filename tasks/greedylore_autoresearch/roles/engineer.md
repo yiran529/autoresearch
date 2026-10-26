@@ -13,6 +13,7 @@ Locate task resources in your shared `notes/toolkit/` directory:
 - Open shared `notes/tree.md` and your Node's `notes/nodes/Nxxx/README.md` for direct report, candidate-code and evidence links.
 - First read `workflow_rules.md`, shared `notes/wisdom.md` and `notes/engineering_summary.md` when available. Wisdom records reusable findings with boundaries; the summary locates implementation results and measured comparisons. Verify the cited report for claims you use; do not edit shared wisdom.
 - Inspect your assigned Node using its Spec/Evaluation, quality evidence for its fixed Research SHA, and published Research/Engineering Analyses when available.
+- Read the design source returned by `engineering claim`: for developed Nodes, the frozen `research.json` and its `selected_iteration` design, observations and results; the last iteration need not be selected. Match its SHA to the claim's Research SHA. Spec is the initial snapshot, not the final design. Root uses its fixed baseline Spec and evaluated SHA A0. Missing or inconsistent required handover is an error; do not infer a replacement.
 - Consult profiling, `engineer_runtime.md` when available, and `semantic_criteria.md` as needed.
 
 ## Workflow
@@ -28,6 +29,7 @@ Locate task resources in your shared `notes/toolkit/` directory:
 
 - Use profiling to distinguish algorithmic limits, implementation overhead and unverified attribution.
 - Make bounded optimizations and run available self-checks from `semantic_criteria.md`; record commands, results, coverage, failures and deviations.
+- Preserve adaptive decision rules, inputs, thresholds, triggering, state updates and relevant RNG/distributions, including dynamic rank, bitwidth or communication frequency. Optimize execution without changing the policy or replacing it with fixed choices. Check representative trigger/non-trigger cases and cross-step state against the Research implementation; state uncovered cases and numerical limits.
 
 ### 3. Diagnose when GPU evidence is missing
 
@@ -56,7 +58,7 @@ Use the controlled diagnostic entrypoint described in `references/engineer_runti
 
 **Candidate and anchor:**
 
-- Complete `submission.yaml` from the template with `mode: engineering`; both `base_commit` and `quality_anchor` always identify this Node's Research SHA. Run `coral eval`.
+- Complete `submission.yaml` from the template with `mode: engineering`; both `base_commit` and `quality_anchor` always identify this Node's Research SHA. Check and commit the candidate, then run `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`. It waits for the existing formal timing protocol and returns the Attempt; it does not stage or commit files. Use long tool waits as specified in the shared rules.
 - Each distinct formal candidate has its own Engineering commit/Attempt; later candidates may descend from the preceding Engineering Commit.
 - Quality is `inherited (provisional)`, not remeasured.
 - For Root N000, keep `node_type: seed` and use the evaluated Root Attempt SHA A0 as the Research anchor, not the source SHA S0; do not repeat Root bootstrap.
@@ -64,8 +66,8 @@ Use the controlled diagnostic entrypoint described in `references/engineer_runti
 **Counting and retries:**
 
 - At most **3 successful formal Engineering runs** and **10 total formal Engineering runs** per assignment. A successful run completes evaluation with a valid score, including a performance regression; success does not require a speedup.
-- Failed runs and permitted same-SHA infrastructure retries count toward the 10-run total. Only infrastructure failures may be retried under the existing retry policy; never create an empty commit to retry.
-- Use ordinary `coral eval`; Engineering does not support `--tune`, which cannot bypass these formal-run limits.
+- Failed runs and permitted same-SHA infrastructure retries count toward the 10-run total. Retry only host-classified infrastructure failure using the same timing command with `--retry` and a new request ID; never create an empty commit to retry. After a lost reply, repeat the original ID/SHA/flags to retrieve that execution, not to rerun it.
+- Use only `autoresearch engineering timing` for formal measurement. It provides no tuning mode and cannot bypass these formal-run limits. Profiling and microbenchmarks use managed diagnostics; their timings are not formal scores.
 - Count across pauses, resumes and crash restarts, including archived Attempts discarded by a rewind. Pending submissions and retries reserve run capacity; do not submit additional work around queued or running evaluations.
 
 **Stopping and reporting:**

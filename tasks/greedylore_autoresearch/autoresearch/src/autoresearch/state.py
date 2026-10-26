@@ -549,8 +549,46 @@ class WorkflowStore:
                 return {
                     "agent_id": agent_id, "node_id": node_id,
                     "status": "active", "research_sha": worker["research_sha"],
+                    **({'design_source': self._engineering_design_source(node_id, worker['research_sha'])}
+                       if self._staged_enabled() else {}),
                 }
             raise WorkflowError("Engineering assignment is not eligible for another Node; use the host-bound target")
+
+    def _staged_enabled(self) -> bool:
+        from .runtime_artifacts import settings
+
+        return settings(self.coral_dir).get('staged_research') is True
+
+    def _engineering_design_source(self, node_id: str, research_sha: str) -> dict[str, Any]:
+        # Root is a fixed baseline, not a developed candidate with iterations.
+        if node_id == 'N000':
+            from .bootstrap import _root_spec
+
+            try:
+                policy = json.loads((self.coral_dir / 'private/root_bootstrap.json').read_text())
+                spec = yaml.safe_load((self.notes_root / 'nodes/N000/spec.md').read_text())
+                expected = _root_spec(policy['source_commit'])
+            except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
+                raise WorkflowError('fixed Root baseline handover is required') from exc
+            if spec != expected:
+                raise WorkflowError('Root baseline Spec must match the fixed host baseline')
+            return {'path': 'notes/nodes/N000/spec.md', 'iteration': None}
+        try:
+            public = json.loads((self.notes_root / 'nodes' / node_id / 'research.json').read_text())
+            record = json.loads((self.coral_dir / 'private/research_records' / f'{node_id}.json').read_text())['document']
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise WorkflowError('frozen research record is required for Engineering') from exc
+        if not isinstance(record, dict) or public != record:
+            raise WorkflowError('research record must match the frozen host record')
+        selected = record.get('selected_iteration')
+        rows = record.get('iterations', [])
+        if (record.get('version') != 3 or record.get('frozen') is not True
+                or type(selected) is not int or not 1 <= selected <= len(rows)
+                or rows[selected - 1].get('id') != selected
+                or rows[selected - 1].get('status') != 'completed'
+                or rows[selected - 1].get('code_sha') != research_sha):
+            raise WorkflowError('frozen selected design must match the Engineering Research SHA')
+        return {'path': f'notes/nodes/{node_id}/research.json', 'iteration': selected}
 
 
     def cancel_assignment(self, agent_id: str) -> dict[str, Any]:
@@ -915,6 +953,11 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
     from .runtime_artifacts import settings
     if mode == 'research' and settings(store.coral_dir).get('staged_research') is True:
         raise WorkflowError('staged Research requires autoresearch research; coral eval cannot bypass it')
+    if mode == 'engineering' and store._staged_enabled():
+        if context.get('entrypoint') != 'engineering_timing':
+            raise WorkflowError('Engineering requires autoresearch engineering timing')
+        store._engineering_design_source(canonical['node_id'],
+                                         state['engineering_workers'][context['agent_id']]['research_sha'])
     iterative = mode == "research" and state["nodes"][canonical["node_id"]]["research"].get("iterative")
     if mode == "engineering" or iterative:
         label = "Research" if iterative else "Engineering"

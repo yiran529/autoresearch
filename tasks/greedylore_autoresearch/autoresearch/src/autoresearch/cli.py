@@ -210,6 +210,10 @@ def _parser() -> argparse.ArgumentParser:
     engineering_commands = engineering.add_subparsers(dest="engineering_command", required=True)
     claim = engineering_commands.add_parser("claim", help="atomically claim one Research Node")
     claim.add_argument("node_id")
+    timing = engineering_commands.add_parser('timing', help='submit committed Engineering code for formal timing')
+    timing.add_argument('--sha', required=True, help='full committed HEAD SHA; never auto-commits')
+    timing.add_argument('--request-id', required=True, help='reuse the same ID/payload after a lost reply')
+    timing.add_argument('--retry', action='store_true', help='explicit same-SHA infrastructure retry with a new ID')
     engineering_commands.add_parser("cancel", help="cancel an unbound Engineer assignment")
     finish = engineering_commands.add_parser("finish", help="submit your final Engineering Analysis")
     finish.add_argument("--analysis-file", type=Path, required=True,
@@ -309,6 +313,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         result = request_trusted(_coral_dir(), "cancel_assignment", {})
     elif args.command == "engineering" and args.engineering_command == "claim":
         result = _claim_engineering(args.node_id)
+    elif args.command == 'engineering' and args.engineering_command == 'timing':
+        coral_dir = _coral_dir()
+        result = request_trusted(coral_dir, 'engineering_timing', {
+            'sha': args.sha, 'request_id': args.request_id, 'retry': args.retry,
+        })
+        if result['status'] == 'pending':
+            from coral.hooks.post_commit import _poll_until_graded
+
+            result = _poll_until_graded(coral_dir, args.sha, timeout=None,
+                                        island_id=_workflow_context()[2]).to_dict()
     elif args.command == "engineering" and args.engineering_command == "cancel":
         result = request_trusted(_coral_dir(), "cancel_assignment", {})
     elif args.command == "engineering" and args.engineering_command == "finish":

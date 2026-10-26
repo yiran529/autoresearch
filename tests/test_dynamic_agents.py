@@ -382,3 +382,19 @@ def test_staged_role_selection_uses_only_trusted_config_and_consumes_override():
     options = spec_for_assignment(config, assignment).runtime_options
     assert options['role_file'] == 'researcher.md'
     assert 'staged_role_file' not in options
+
+
+@pytest.mark.parametrize('resuming', [False, True])
+def test_engineer_startup_and_generated_instructions_use_managed_timing(resuming):
+    from coral.agent.dynamic import DynamicAssignment
+
+    config = _config()
+    config.grader.args['staged_research'] = True
+    spec = spec_for_assignment(config, DynamicAssignment('engineer-E0001', 'engineering', 'N001', 'active'))
+    startup = prompt_for_assignment(spec, instruction_file='AGENTS.md', shared_dir='.codex',
+                                    resuming=resuming, staged_research=True)
+    instructions = generate_coral_md(config, spec.agent_id, workflow_role='engineering', node_id=spec.node_id)
+    for content in (startup, instructions):
+        assert 'autoresearch engineering timing' in content
+        assert '--retry' in content and 'design source' in content
+        assert 'adaptive policy semantics' in content

@@ -7,11 +7,17 @@
 ### Controlled GPU diagnostics
 
 - An active, non-finalizing Engineer claim may use `autoresearch diagnostic run`. The host authenticates the calling process and its Node binding; no additional Analyzer is launched. `engineer_diagnostics: false` disables this capability.
-- Commit tracked candidate changes first; an ordinary Git commit does not create a formal Attempt. Place scripts in your Worktree or `/tmp/<your-agent-id>/diagnostics/experiments/`. Prefer scratch so diagnostic instrumentation is not included by `coral eval`.
+- Commit tracked candidate changes first; an ordinary Git commit does not create a formal Attempt. Place scripts in your Worktree or `/tmp/<your-agent-id>/diagnostics/experiments/`. Prefer scratch so diagnostic instrumentation stays out of committed formal candidates.
 - Example: `autoresearch diagnostic run --scripts-dir /absolute/path/to/experiments --gpus 4 --timeout 600 -- python experiments/probe.py --output results/probe.json`. The host stages scripts as `experiments/` in a separate workspace, freezes committed HEAD as `code/<sha>/`, and sets `PYTHONPATH` and `CORAL_DIAGNOSTIC_CODE` to that code. Read data only from host-configured runtime roots. Use paths relative to the diagnostic workspace, not your live Worktree.
 - Only `experiments/`, `results/` and ephemeral sandbox `/tmp` are writable during execution. Put durable output in `results/`. The host retains the script/code snapshots, command, candidate/Research SHA, GPU identities, stdout/stderr and result files under `public/diagnostics/<node>-<agent-id>/records/<request-id>/`. These records are read-only to agents; the returned record and result paths identify them.
 - The separate diagnostic budget is 5 successful and 15 total executions across resumes, 1–4 GPUs and at most 600 seconds per execution; GPU queue wait is at most 3600 seconds. Failures/timeouts consume total executions; requests that never start do not. Diagnostics share GPU allocation with formal evaluations but produce no official score and consume no formal-run slots.
 - Inspect failed records, fix scripts and use a new request ID to execute again. Reuse `--request-id` with identical arguments only to retrieve an existing result. Cite both successful and failed diagnostics in your final Analysis; do not add profiler durations to claim formal step time. Wait for all diagnostics before `engineering finish`; the host seals their durable records with the final Analysis and rejects subsequent diagnosis.
+
+### Formal timing
+
+- Read the claim's design source and use its fixed Research SHA as the anchor. Developed Nodes require the frozen selected iteration in `research.json`; Root uses its fixed baseline Spec/A0. Do not substitute the initial Spec or last iteration for a developed Node's selection.
+- After semantic checks, commit the candidate and run `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`. It waits for the grader's result without committing files, using the existing complete-cycle/event/hardware contract and formal budgets. Quality remains inherited, not remeasured. Inspect Evaluation/Attempts on resume.
+- After a channel interruption repeat the same ID/SHA/flags to recover that execution. An intentional infrastructure retry uses `--retry` and a new ID, retaining the SHA and consuming the existing retry/formal allowances. Other failures require a corrected candidate; no empty commits or tuning mode.
 
 ## 1. Decide what performance difference is real
 

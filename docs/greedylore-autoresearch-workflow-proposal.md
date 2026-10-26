@@ -300,3 +300,11 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 正式 Researcher 正文已同步简洁的中英文草稿，逐步标明实际命令，保留观察、诊断与证据解释指引。研究起点包括 Research/Engineering 发现、资源约束下的期望性质与机制假设；handover 用于导航，选定方向后核查相关 Analysis。没有直接对应父问题时可用 null，并说明动机与 Parent 联系。
 英文命令说明为 `references/research_commands.md`，自动进入 `notes/toolkit/references/`；origin 注册模板同时交付。实际 AgentManager/CodexRuntime 的首次启动和恢复均核对角色、启动消息、AGENTS、共享规则、英文说明和模板，未调用真实模型或 GPU。新配置默认启用 staged；显式旧配置选择保留的兼容角色与规则，新正文不混入旧操作流程。
 本次提交前定向检查为 75 passed，包含四个 staged 完整流程模拟（正常、迁移质量失败、迁移执行失败、无合格候选）以及启动/恢复交付检查；修改的 Python 文件通过 Ruff，diff 检查通过。完整复核与全量回归按用户要求暂停，不能据此声称已完成全量验收。
+
+## 18. Engineer 交接与统一 timing 入口（2026-10-26）
+- 新协议的 `engineering claim` 返回明确的 `design_source`。开发节点必须提供冻结的 v3 `research.json`，选中轮次必须已完成且 SHA 与 Engineering 的 Research anchor 相同；共享档案须与宿主私有冻结 document 完全一致。缺失、不一致或旧格式直接报错，不回退到初始 Spec。Root 是固定基线启动路径，交接明确指向基线 Spec 和已评估 A0，不伪造开发迭代；宿主依据私有 Root policy 确定性重建 Spec，拒绝被改写的共享基线。claim 与正式 timing 均重新验证交接。
+- Engineer 阅读选中轮次的设计、观察和结果，最后一轮不一定被选中；恢复时保留已有 Engineering 工作。动态 rank/bitwidth/通信频率的决策输入、规则/阈值、触发、状态更新与相关随机语义必须保留；小范围语义检查覆盖代表性的触发/不触发和跨步状态，并记录未覆盖范围。
+- 正式测时统一为 `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`。候选由 Agent 自行检查并提交，命令不自动 stage/commit，等待现有 grader 结果。复用原测时执行器、完整周期/事件/硬件契约、Attempt 与 3 成功/10 总执行配额；质量仍是继承的 provisional 结果。新协议拒绝通过直接正式提交或旧重试入口绕开该命令。
+- 通信中断重发相同 ID/SHA/flags 只取原执行；明确的同 SHA 基础设施恢复增加 `--retry` 并使用新 ID。宿主在私有目录绑定不可变请求，随 Attempt 变更原子保存请求 ID，避免丢回复、进程恢复或重试再次失败后重复执行。失败、pending、基础设施恢复仍按原预算计数。
+- profiling、微基准和诊断继续使用受控 diagnostic 入口，不成为正式 timing 成绩。独立 Analyzer 的权限、Engineer 自写 Analysis、无需等待 Research Analysis，以及 GPU/大产物的宿主管理职责均不变。共享规则中的旧 `research intent` 表述改为 `origin.engineering_review`。
+- 验证：150 项定向回归与四个 staged 完整流程模拟通过；覆盖 Root/开发节点交接被改写时拒绝、选中轮次非最后一轮、真实 CLI 测时与同 ID 重放、三次成功后第四次被拒、基础设施重试幂等，以及发布和清理。Ruff 与 diff 检查通过；`gpt-5.6-sol high` review 后无剩余重要问题。模拟产物在 `/tmp/coral-engineer-timing-20261026-final/`，未调用真实模型或 GPU，不据此声称算法性能已改善。

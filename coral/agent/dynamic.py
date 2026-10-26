@@ -73,6 +73,10 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
     )
     if spec.workflow_role == "research" and staged_research:
         scope = staged_research_scope(spec.node_id)
+    if spec.workflow_role == 'engineering' and staged_research:
+        scope += ('\n- Read the claim\'s frozen design source and preserve adaptive policy semantics. '
+                  'Commit candidates and use `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` '
+                  'for formal measurement; infrastructure retries add `--retry` with a new ID.')
     progress = "research.json, Spec, Evaluation/Attempts" if staged_research and spec.workflow_role == "research" else "Spec, Evaluation/Attempts"
     prompt = (
         f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`.\n\n"

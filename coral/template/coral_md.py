@@ -72,6 +72,10 @@ def generate_coral_md(
                 "- Wait for host publication, completion and Agent retirement.\n- The Node becomes "
                 "a completed Parent only after Research Analysis and Engineering both finish."
             )
+            if config.grader.args.get('staged_research') is True:
+                scope += ("\n- Read the claim's design source and selected frozen iteration; preserve adaptive policy semantics. "
+                          "Commit candidates, then use `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` "
+                          "for formal measurement; infrastructure retries add `--retry` with a new ID.")
         else:
             raise ValueError("dynamic instructions require a valid workflow role and Node")
         return (

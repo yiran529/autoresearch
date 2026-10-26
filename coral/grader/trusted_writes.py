@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ WORKFLOW_OPERATIONS = frozenset({
 })
 OPERATIONS = frozenset({
     "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due", "run_diagnostic",
+    "engineering_timing",
 }) | WORKFLOW_OPERATIONS
 _WORKFLOW_FIELDS = {
     "research_action": frozenset({"node_id", "action", "data", "request_id"}),
@@ -228,6 +230,7 @@ def retry_attempt(
     max_infra_retries: int,
     expected_source_worktree: str | Path | None = None,
     authorize: Callable[[], Any] | None = None,
+    request_id: str | None = None,
 ) -> Attempt:
     """Atomically reset one terminal infrastructure failure to pending."""
     with trusted_writes_lock(coral_dir):
@@ -254,6 +257,8 @@ def retry_attempt(
             raise TrustedWriteError("infrastructure retry budget is exhausted")
         metadata = dict(attempt.metadata or {})
         metadata["infra_retry_count"] = retry_count + 1
+        if request_id is not None:
+            metadata['timing_request_ids'] = [*metadata.get('timing_request_ids', []), request_id]
         retried = _copy_attempt(
             attempt,
             score=None,
@@ -648,6 +653,8 @@ class TrustedWriteService:
             return self._start_memory(payload, binding)
         if operation == "submit_attempt":
             return self._submit(payload, binding).to_dict()
+        if operation == 'engineering_timing':
+            return self._engineering_timing(payload, binding).to_dict()
         if operation == "retry_attempt":
             return self._retry(payload, binding).to_dict()
         return self._publish(payload, binding)
@@ -737,6 +744,51 @@ class TrustedWriteService:
             canonical=canonical,
         )
 
+    def _engineering_timing(self, payload: dict[str, Any], binding: AgentBinding) -> Attempt:
+        """Submit committed Engineering code through the existing grader queue.
+
+        Journal the immutable request before submission; record its ID atomically
+        with the Attempt mutation so a lost reply cannot duplicate an infra retry.
+        """
+        if (set(payload) != {'sha', 'request_id', 'retry'}
+                or not isinstance(payload['sha'], str) or not _SHA.fullmatch(payload['sha'])
+                or not isinstance(payload['request_id'], str)
+                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,96}', payload['request_id'])
+                or type(payload['retry']) is not bool):
+            raise TrustedWriteError('invalid Engineering timing request')
+        owner = hashlib.sha256(json.dumps([binding.agent_id, binding.island_id]).encode()).hexdigest()
+        root = self.coral_dir / 'private' / 'timing_requests' / owner
+        root.mkdir(parents=True, exist_ok=True)
+        request_path = root / f"{payload['request_id']}.json"
+        with (root / 'requests.lock').open('a+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if request_path.exists():
+                if json.loads(request_path.read_text()) != payload:
+                    raise TrustedWriteError('Engineering timing request ID conflict')
+                previous = read_attempt(self.coral_dir, payload['sha'], island_id=binding.island_id)
+                if (previous is not None and previous.agent_id == binding.agent_id
+                        and payload['request_id'] in previous.metadata.get('timing_request_ids', [])):
+                    return previous
+            worktree = Path(binding.worktree).resolve()
+            sha = payload['sha']
+            if _git(worktree, 'rev-parse', 'HEAD') != sha:
+                raise TrustedWriteError('timing SHA must be the authenticated worktree HEAD')
+            parents = _git(worktree, 'show', '-s', '--format=%P', sha).split()
+            parent = parents[0] if parents else None
+            canonical = self._validate_submission(sha, binding, parent)
+            if canonical['mode'] != 'engineering':
+                raise TrustedWriteError('timing requires an Engineering submission')
+            _atomic_json(request_path, payload)
+            if payload['retry']:
+                return self._retry({'commit_hash': sha}, binding,
+                                   entrypoint='engineering_timing', request_id=payload['request_id'])
+            return self._submit({
+                'commit_hash': sha, 'agent_id': binding.agent_id,
+                'title': f"Engineering timing {canonical['node_id']}",
+                'parent_hash': parent, 'budget_class': BUDGET_CLASS_REAL,
+                'island_id': binding.island_id,
+            }, binding, canonical=canonical, entrypoint='engineering_timing', request_id=payload['request_id'])
+
     def _submit(
         self,
         payload: dict[str, Any],
@@ -744,6 +796,8 @@ class TrustedWriteService:
         *,
         root_source_commit: str | None = None,
         canonical: dict[str, Any] | None = None,
+        entrypoint: str | None = None,
+        request_id: str | None = None,
     ) -> Attempt:
         expected_fields = {
             "commit_hash",
@@ -809,6 +863,7 @@ class TrustedWriteService:
                         "island_id": binding.island_id,
                         "commit_hash": commit_hash,
                         "budget_class": payload["budget_class"],
+                        **({'entrypoint': entrypoint} if entrypoint else {}),
                     },
                 )
             existing_same = read_attempt(
@@ -817,6 +872,10 @@ class TrustedWriteService:
             if existing_same is not None:
                 if existing_same.agent_id != binding.agent_id:
                     raise TrustedWriteError("commit already belongs to another Agent")
+                if request_id is not None:
+                    existing_same.metadata['timing_request_ids'] = [
+                        *existing_same.metadata.get('timing_request_ids', []), request_id]
+                    write_attempt(self.coral_dir, existing_same, island_id=binding.island_id)
                 return existing_same
             if canonical["mode"] == "research" and payload["budget_class"] == BUDGET_CLASS_REAL:
                 clashes = [
@@ -860,6 +919,7 @@ class TrustedWriteService:
                 "grader_invocation_count": 0,
                 "grader_runs": [],
                 "source_worktree": str(worktree),
+                **({'timing_request_ids': [request_id]} if request_id is not None else {}),
             }
             if binding.island_id is not None:
                 metadata["island_id"] = binding.island_id
@@ -879,7 +939,8 @@ class TrustedWriteService:
             write_attempt(self.coral_dir, attempt, island_id=binding.island_id)
             return attempt
 
-    def _retry(self, payload: dict[str, Any], binding: AgentBinding) -> Attempt:
+    def _retry(self, payload: dict[str, Any], binding: AgentBinding, *,
+               entrypoint: str | None = None, request_id: str | None = None) -> Attempt:
         if set(payload) != {"commit_hash"}:
             raise TrustedWriteError("retry_attempt contains unknown or missing fields")
         commit_hash = payload["commit_hash"]
@@ -904,6 +965,7 @@ class TrustedWriteService:
                     "commit_hash": commit_hash,
                     "budget_class": "real",
                     "retry": True,
+                    **({'entrypoint': entrypoint} if entrypoint else {}),
                 },
             )
 
@@ -916,6 +978,7 @@ class TrustedWriteService:
             max_infra_retries=int(canonical["max_infra_retries"]),
             expected_source_worktree=worktree,
             authorize=authorize_retry,
+            request_id=request_id,
         )
 
     def _publish(self, payload: dict[str, Any], binding: AgentBinding) -> dict[str, Any]:

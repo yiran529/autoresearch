@@ -857,3 +857,59 @@ def test_memory_launch_failure_does_not_block_workflow_assignments(tmp_path, mon
     result = service.handle('reconcile_workflow', {}, peer_pid=4242)
     assert result['assignments'] == [{'agent_id': 'research-N001'}]
     assert 'memory launch unavailable' in result['memory_error']
+
+
+def _timing_fixture(tmp_path):
+    repo, _ = _init_repo(tmp_path / 'repo')
+    sha, _ = _commit(repo, 'engineering candidate')
+    binding = AgentBinding('engineer-E0001', os.getpid(), process_start_time(os.getpid()), str(repo), None)
+    service = _service(tmp_path / '.coral', binding)
+    service.submission_validator = lambda *_: {**_canonical(), 'mode': 'engineering', 'quality_anchor': 'b' * 40}
+    contexts = []
+    service.attempt_authorizer = lambda _canonical, context: contexts.append(context) or {}
+    return repo, sha, binding, service, contexts
+
+
+def test_engineering_timing_is_authenticated_and_idempotent(tmp_path):
+    repo, sha, binding, service, contexts = _timing_fixture(tmp_path)
+    request = {'sha': sha, 'request_id': 'timing-1', 'retry': False}
+    first = service.handle_authenticated('engineering_timing', request, binding)
+    assert first['commit_hash'] == sha and first['metadata']['mode'] == 'engineering'
+    assert contexts[-1]['entrypoint'] == 'engineering_timing'
+    # Retrieving a request after HEAD moves must not submit the new candidate.
+    _commit(repo, 'later candidate')
+    assert service.handle_authenticated('engineering_timing', request, binding)['commit_hash'] == sha
+    assert len(read_attempts(service.coral_dir)) == 1
+    with pytest.raises(TrustedWriteError, match='conflict'):
+        service.handle_authenticated('engineering_timing', {**request, 'sha': 'f' * 40}, binding)
+
+
+def test_engineering_timing_retry_replay_does_not_retry_a_second_failure(tmp_path):
+    _, sha, binding, service, contexts = _timing_fixture(tmp_path)
+    service.handle_authenticated('engineering_timing', {'sha': sha, 'request_id': 'first', 'retry': False}, binding)
+    def fail():
+        attempt = read_attempt(service.coral_dir, sha)
+        attempt.status = 'crashed'
+        attempt.metadata['failure_class'] = 'infra'
+        write_attempt(service.coral_dir, attempt)
+    fail()
+    request = {'sha': sha, 'request_id': 'retry-1', 'retry': True}
+    service.handle_authenticated('engineering_timing', request, binding)
+    assert contexts[-1]['retry'] and contexts[-1]['entrypoint'] == 'engineering_timing'
+    fail()  # Grader failed again before a lost response was recovered.
+    recovered = service.handle_authenticated('engineering_timing', request, binding)
+    assert recovered['status'] == 'crashed'
+    assert recovered['metadata']['infra_retry_count'] == 1
+    service.handle_authenticated('engineering_timing', {**request, 'request_id': 'retry-2'}, binding)
+    assert read_attempt(service.coral_dir, sha).metadata['infra_retry_count'] == 2
+
+
+def test_engineering_timing_rejects_research_and_non_head_sha(tmp_path):
+    _, sha, binding, service, _ = _timing_fixture(tmp_path)
+    request = {'sha': sha, 'request_id': 'first', 'retry': False}
+    service.submission_validator = lambda *_: _canonical()
+    with pytest.raises(TrustedWriteError, match='Engineering'):
+        service.handle_authenticated('engineering_timing', request, binding)
+    with pytest.raises(TrustedWriteError, match='HEAD'):
+        service.handle_authenticated('engineering_timing', {**request, 'sha': 'f' * 40, 'request_id': 'wrong-sha'}, binding)
+    assert not read_attempts(service.coral_dir)

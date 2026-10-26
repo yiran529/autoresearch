@@ -147,9 +147,26 @@ def driver(output, scenario):
             def engineering(identity, target):
                 from coral.grader.daemon import process_pending_once
                 bind(identity)
-                sim.cli('autoresearch.cli', 'engineering', 'claim', target)
+                spec_path = paths.coral_dir / f'public/notes/nodes/{target}/spec.md'
+                original_spec = spec_path.read_text()
+                def tamper_root():
+                    altered = yaml.safe_load(original_spec)
+                    altered['hypothesis'] = 'SIMULATED tampered baseline policy'
+                    spec_path.write_text(yaml.safe_dump(altered))
+                if target == 'N000':
+                    tamper_root()
+                    rejected = sim.cli('autoresearch.cli', 'engineering', 'claim', target, check=False)
+                    assert rejected.returncode != 0 and 'baseline' in rejected.stderr
+                    spec_path.write_text(original_spec)
+                claim = json.loads(sim.cli('autoresearch.cli', 'engineering', 'claim', target).stdout)
                 base = sim.git(repo, 'rev-parse', 'HEAD')
-                sim.declaration(paths.coral_dir, target, 'engineering', base, 1)
+                if target == 'N000':
+                    assert claim['design_source'] == {'path': 'notes/nodes/N000/spec.md', 'iteration': None}
+                else:
+                    record = json.loads((paths.coral_dir / 'public' / claim['design_source']['path']).read_text())
+                    selected = record['iterations'][claim['design_source']['iteration'] - 1]
+                    assert selected['code_sha'] == base == claim['research_sha']
+                    assert record['selected_iteration'] < len(record['iterations'])
                 stop = threading.Event()
                 def grade():
                     while not stop.is_set():
@@ -158,7 +175,32 @@ def driver(output, scenario):
                 thread = threading.Thread(target=grade, daemon=True)
                 thread.start()
                 try:
-                    sim.cli('coral.cli', 'eval', '-m', 'SIMULATED Engineering', '--timeout', '30')
+                    for index in range(1, 4):
+                        sim.declaration(paths.coral_dir, target, 'engineering', base, index)
+                        sim.git(repo, 'add', 'submission.yaml', 'simulation_marker.txt')
+                        sim.git(repo, 'commit', '-m', f'SIMULATED Engineering {index}')
+                        sha = sim.git(repo, 'rev-parse', 'HEAD')
+                        if target == 'N000' and index == 1:
+                            tamper_root()
+                            rejected = sim.cli('autoresearch.cli', 'engineering', 'timing', '--sha', sha,
+                                               '--request-id', 'tampered-root', check=False)
+                            assert rejected.returncode != 0 and 'baseline' in rejected.stderr
+                            spec_path.write_text(original_spec)
+                        args = ('engineering', 'timing', '--sha', sha, '--request-id', f'timing-{index}')
+                        result = json.loads(sim.cli('autoresearch.cli', *args).stdout)
+                        assert result['status'] != 'pending'
+                        assert result['metadata']['quality_anchor'] == base
+                        repeated = json.loads(sim.cli('autoresearch.cli', *args).stdout)
+                        assert repeated['metadata']['grader_invocation_count'] == result['metadata']['grader_invocation_count']
+                    sim.declaration(paths.coral_dir, target, 'engineering', base, 4)
+                    sim.git(repo, 'add', 'submission.yaml', 'simulation_marker.txt')
+                    sim.git(repo, 'commit', '-m', 'SIMULATED over-budget Engineering')
+                    fourth = sim.cli('autoresearch.cli', 'engineering', 'timing', '--sha', sim.git(repo, 'rev-parse', 'HEAD'),
+                                     '--request-id', 'timing-4', check=False)
+                    assert fourth.returncode != 0 and 'run limit' in fourth.stderr
+                    sim.event('engineering_timing_verified', node=target, anchor=base,
+                              selected_iteration=claim['design_source']['iteration'],
+                              formal_runs=3, duplicate_no_execution=True, fourth_rejected=True)
                 finally:
                     stop.set()
                     thread.join(timeout=5)
@@ -251,6 +293,11 @@ def driver(output, scenario):
                     action('design', {**design, 'method': f'candidate {i}'}, f'design-{i}')
                     action('decision', {'iteration': i, 'action': 'stop', 'reason': 'refuted'}, f'stop-{i}')
                 budget = action('design', {**design, 'method': 'forbidden fourth'}, 'design-4', check=False).returncode != 0
+            elif scenario == 'success':
+                # An abandoned later design must not replace the selected code or design.
+                action('design', {**design, 'method': 'unexecuted later design'}, 'design-2')
+                action('decision', {'iteration': 2, 'action': 'stop',
+                       'reason': 'No justified refinement; retain eligible iteration 1'}, 'stop-2')
             finish = {'selected_iteration': None if scenario == 'no_eligible' else 1, 'reason': 'frozen synthetic result'}
             action('finish', finish, 'finish')
             host = drain()

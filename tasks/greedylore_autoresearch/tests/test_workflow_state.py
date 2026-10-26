@@ -762,6 +762,59 @@ def _engineer_with_attempts(engineering_ready, count=2, *, analysis_pending=Fals
     return store, node, body
 
 
+def test_staged_engineer_requires_selected_design_and_authoritative_timing(engineering_ready):
+    from autoresearch.state import WorkflowError, authorize_attempt
+
+    coral_dir, repo, sha = engineering_ready
+    (coral_dir / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {'staged_research': True}}}))
+    store = _store(coral_dir, repo)
+    store.reconcile(0, 1)
+    with pytest.raises(WorkflowError, match='research record'):
+        store.claim_engineering('engineer-E0001', 'N001')
+    record = {'version': 3, 'frozen': True, 'selected_iteration': 1,
+              'iterations': [{'id': 1, 'status': 'completed', 'code_sha': sha},
+                             {'id': 2, 'status': 'failed', 'code_sha': 'd' * 40}]}
+    private = coral_dir / 'private/research_records/N001.json'
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text(json.dumps({'document': record, 'requests': {}}))
+    (coral_dir / 'public/notes/nodes/N001/research.json').write_text(json.dumps(record))
+    source = store.claim_engineering('engineer-E0001', 'N001')['design_source']
+    assert source == {'path': 'notes/nodes/N001/research.json', 'iteration': 1}
+    canonical = {'node_id': 'N001', 'mode': 'engineering'}
+    context = {'coral_dir': str(coral_dir), 'agent_id': 'engineer-E0001', 'island_id': None,
+               'commit_hash': 'e' * 40}
+    with pytest.raises(WorkflowError, match='engineering timing'):
+        authorize_attempt(canonical, context)
+    assert authorize_attempt(canonical, {**context, 'entrypoint': 'engineering_timing'}) == {}
+    record['iterations'][0]['design'] = {'method': 'tampered adaptive policy'}
+    (coral_dir / 'public/notes/nodes/N001/research.json').write_text(json.dumps(record))
+    with pytest.raises(WorkflowError, match='research record'):
+        store.claim_engineering('engineer-E0001', 'N001')
+    with pytest.raises(WorkflowError, match='research record'):
+        authorize_attempt(canonical, {**context, 'entrypoint': 'engineering_timing'})
+    record['selected_iteration'] = 2
+    private.write_text(json.dumps({'document': record, 'requests': {}}))
+    (coral_dir / 'public/notes/nodes/N001/research.json').write_text(json.dumps(record))
+    with pytest.raises(WorkflowError, match='selected'):
+        store.claim_engineering('engineer-E0001', 'N001')
+
+
+def test_root_engineering_design_source_matches_fixed_host_baseline(root_run):
+    from autoresearch.bootstrap import _root_spec
+    from autoresearch.state import WorkflowError
+
+    store = _store(root_run)
+    path = root_run / 'public/notes/nodes/N000/spec.md'
+    spec = _root_spec(SOURCE_SHA)
+    path.write_text(yaml.safe_dump(spec))
+    assert store._engineering_design_source('N000', ROOT_SHA) == {
+        'path': 'notes/nodes/N000/spec.md', 'iteration': None}
+    spec['hypothesis'] = 'Tampered dynamic baseline policy'
+    path.write_text(yaml.safe_dump(spec))
+    with pytest.raises(WorkflowError, match='baseline'):
+        store._engineering_design_source('N000', ROOT_SHA)
+
+
 def test_engineer_authored_finish_covers_all_attempts_and_never_launches_analyzer(engineering_ready):
     from autoresearch.lifecycle import run_worker
 
