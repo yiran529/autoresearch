@@ -1,22 +1,17 @@
-schema_version: 1
-
+schema_version: 2
 source:
   coral_commit: 0123dfb939b35228cf2c1fde224cd0561e727408
   greedylore_commit: d2c38bc2062e06fdfd73185c508e7cc652933de6
-
 data:
   c4_path: /home/wyr/greedy_lore/c4/c4_en/en
   tokenizer_path: /home/wyr/.cache/huggingface/hub/models--t5-base/snapshots/a9723ea7f1b39c1eae772870f3b547bf6ef7e6c1
   tokenizer_local_files_only: true
   dataloader_workers: 4
-
 recovery:
   max_infra_retries: 2
-
 environment:
-  HF_HUB_OFFLINE: "1"
-  TRANSFORMERS_OFFLINE: "1"
-
+  HF_HUB_OFFLINE: '1'
+  TRANSFORMERS_OFFLINE: '1'
 hardware:
   gpu_count: 4
   selection: any_idle_four
@@ -25,11 +20,9 @@ hardware:
     compute_processes: 0
     max_memory_used_mib: 512
     max_utilization_percent: 5
-
 training:
   seed: 1243
   sequence_length: 256
-
 compressor:
   name: top_subspace
   rank: 32
@@ -39,7 +32,6 @@ compressor:
   beta_ef: 0.0
   error_inherit: 0.0
   quality_start_step: 1000
-
 quality:
   max_relative_eval_loss: 1.05
   require_all_workloads: true
@@ -51,7 +43,6 @@ quality:
       precision: bf16
       per_device_batch_size: 128
       scheduler_steps: 8393
-      # Exploration budget: preserve the original LR schedule, stop early.
       stop_after_steps: 4000
       learning_rate: 0.0025
       activation_checkpointing: true
@@ -65,7 +56,6 @@ quality:
       matrix_learning_rate: 0.01
       scalar_learning_rate: 0.001
       activation_checkpointing: true
-
 efficiency:
   model: llama130m
   optimizer: adamw
@@ -82,8 +72,10 @@ efficiency:
   max_measured_iterations: 800
   repetitions: 2
   run_order:
-    - [130m_adamw_bf16, 130m_adamw_fp32]
-    - [130m_adamw_fp32, 130m_adamw_bf16]
+  - - 130m_adamw_bf16
+    - 130m_adamw_fp32
+  - - 130m_adamw_fp32
+    - 130m_adamw_bf16
   cell_value: arithmetic_mean_seconds_per_iteration
   report_variability: relative_spread
   aggregation: geometric_mean_dense_over_candidate
@@ -94,3 +86,23 @@ efficiency:
     130m_adamw_fp32:
       precision: fp32
       learning_rate: 0.0025
+evaluation:
+  development: llama130m_muon
+  final_quality:
+  - llama60m_adamw
+  - resnet18_cifar100_muon
+vision:
+  name: resnet18_cifar100_muon
+  model: resnet18
+  dataset: cifar100
+  data_path: /home/wyr/ARC-TopK-release/data
+  epochs: 40
+  stop_after_steps: 15640
+  per_device_batch_size: 32
+  workers: 2
+  precision: fp32
+  optimizer: muon
+  matrix_learning_rate: 0.02
+  scalar_learning_rate: 0.0005
+  weight_decay: 0.0005
+  max_accuracy_drop_pp: 1.0

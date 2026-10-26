@@ -69,6 +69,7 @@ def build_timing_command(
         "NCCL_DEBUG": "INFO", "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
         "OMP_NUM_THREADS": "4", "PYTHONPATH": str(candidate),
+        "CORAL_WORKLOAD": str(cell['name']),
     }
     return ProcessSpec(tuple(command), output.parent / f"{output.name}.process", env,
                        _ENV_ALLOWLIST, 2 * 60 * 60, cwd=candidate)

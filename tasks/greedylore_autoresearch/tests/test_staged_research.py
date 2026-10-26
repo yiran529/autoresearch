@@ -44,7 +44,7 @@ def host(tmp_path):
     from autoresearch.staged_research import StagedResearch
     r = record(tmp_path)
     initialize(r)
-    source = Path(__file__).resolve().parents[1] / 'taskdata/eval_contract.yaml'
+    source = Path(__file__).resolve().parents[1] / 'taskdata/eval_contract_v1.yaml'
     (r.store.coral_dir / 'private/eval_contract.yaml').write_text(source.read_text())
     backend = Backend()
     result = StagedResearch(r.store, r.agent_id, r.node_id, backend=backend)

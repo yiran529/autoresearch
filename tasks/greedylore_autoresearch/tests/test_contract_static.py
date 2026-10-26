@@ -6,7 +6,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASK_ROOT = REPO_ROOT / "tasks" / "greedylore_autoresearch"
-CONTRACT_PATH = TASK_ROOT / "taskdata" / "eval_contract.yaml"
+CONTRACT_PATH = TASK_ROOT / "taskdata" / "eval_contract_v1.yaml"
 
 
 def _contract() -> dict[str, object]:

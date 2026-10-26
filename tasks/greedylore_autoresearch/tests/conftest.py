@@ -19,7 +19,7 @@ for source in (TASK_ROOT / "grader" / "src", TASK_ROOT / "autoresearch" / "src")
 def contract(tmp_path):
     from greedylore_autoresearch_grader.contract import EvalContract
 
-    source = TASK_ROOT / "taskdata" / "eval_contract.yaml"
+    source = TASK_ROOT / "taskdata" / "eval_contract_v1.yaml"
     raw = yaml.safe_load(source.read_text())
     data = tmp_path / "c4"
     data.mkdir()

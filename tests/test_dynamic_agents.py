@@ -364,7 +364,10 @@ def test_staged_startup_and_generated_instructions_share_development_protocol(re
         assert 'autoresearch research register' in content
         assert 'origin' in content and 'design' in content
         assert 'at most 3 candidate training trajectories' in content
-        assert '60M' in content and 'research.json' in content
+        assert 'Development experiments' in content and 'Final evaluation' in content
+        assert 'ResNet18/CIFAR100' in content and 'research.json' in content
+        assert 'fresh mandatory timing' in content
+        assert '130M' not in content and '60M' not in content
         assert 'autoresearch research finish' in content
         assert '3 successful scored formal Research runs' not in content
         assert '10 total formal Research runs' not in content

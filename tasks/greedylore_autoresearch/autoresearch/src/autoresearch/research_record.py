@@ -8,6 +8,8 @@ import json
 import re
 from contextlib import nullcontext
 
+import yaml
+
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 
 from .runtime_artifacts import safe_path, settings
@@ -44,7 +46,7 @@ class ResearchRecord:
         self._owner()
         return copy.deepcopy(json.loads(self.private.read_text())['document'])
 
-    def _change(self, request_id, operation, payload, update, *, initial=None, _already_locked=False):
+    def _change(self, request_id, operation, payload, update, *, initial=None, _already_locked=False, _allow_frozen=False):
         if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,96}', request_id):
             raise ValueError('invalid research request ID')
         digest = hashlib.sha256(json.dumps([operation, payload], sort_keys=True).encode()).hexdigest()
@@ -62,7 +64,7 @@ class ResearchRecord:
                 raise PermissionError('research assignment is not active')
             if document is None:
                 raise ValueError('research record is not initialized')
-            if document.get('frozen'):
+            if document.get('frozen') and not _allow_frozen:
                 raise ValueError('research record is frozen')
             update(document)
             state['requests'][request_id] = digest
@@ -83,6 +85,11 @@ class ResearchRecord:
                     'question': origin['question'] if unified else (spec.get('research_intent') or {}).get('question', spec.get('hypothesis')),
                     'origin': origin, 'iterations': [], 'selected_iteration': None,
                     'selection_rationale': None, 'frozen': False}
+        contract_path = self.store.coral_dir / 'private/eval_contract.yaml'
+        contract = yaml.safe_load(contract_path.read_text()) if contract_path.exists() else {}
+        if contract.get('schema_version') == 2:
+            document['evaluation_stages'] = copy.deepcopy(contract['evaluation'])
+            document['final_evaluation'] = {}
 
         def update(value):
             if value['iterations']:
@@ -130,6 +137,17 @@ class ResearchRecord:
                 raise ValueError('timing SHA does not match the fixed candidate')
             row.setdefault('timings', []).append(copy.deepcopy(entry))
         return self._change(request_id, 'timing', [iteration, entry], update)
+
+    def final_observe(self, component, entry, request_id):
+        """Only the host appends final evidence; the candidate remains frozen."""
+        def update(value):
+            if not value['frozen'] or value['selected_iteration'] is None:
+                raise ValueError('final evidence requires a frozen selected candidate')
+            row = self._row(value, value['selected_iteration'])
+            if entry['sha'] != row['code_sha']:
+                raise ValueError('final evidence SHA mismatch')
+            value['final_evaluation'].setdefault(component, []).append(copy.deepcopy(entry))
+        return self._change(request_id, 'final_observe', [component, entry], update, _allow_frozen=True)
 
     @staticmethod
     def _row(value, iteration):
@@ -215,7 +233,9 @@ class ResearchRecord:
             if selected is not None:
                 row = self._row(value, selected)
                 from .staged_timing import eligible
-                if not eligible(row):
+                development_ok = (row['status'] == 'completed' and row['observations']
+                    and row['observations'][-1].get('quality_pass'))
+                if not (development_ok if value.get('evaluation_stages') else eligible(row)):
                     raise ValueError('selected iteration must have completed eligible 130M evidence')
             value.update(selected_iteration=selected, selection_rationale=reason, frozen=True)
 

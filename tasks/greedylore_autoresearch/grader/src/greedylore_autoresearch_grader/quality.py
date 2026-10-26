@@ -26,6 +26,13 @@ def build_quality_command(
     checkpoint_interval_steps: int = 1000, resume_checkpoint: str | Path | None = None,
     pause_after_steps: int | None = None, training_metrics: str | Path | None = None,
 ) -> ProcessSpec:
+    if profile['model'] == 'resnet18':
+        if resume_checkpoint is not None or pause_after_steps is not None:
+            raise ValueError('vision final task supports bounded from-scratch retries, not staged continuation')
+        from .vision import build_vision_command
+        return build_vision_command(profile, candidate, output, gpus,
+            checkpoint_root=checkpoint_root, checkpoint_interval_steps=checkpoint_interval_steps,
+            training_metrics=training_metrics)
     candidate = Path(candidate).resolve()
     output = Path(output).resolve()
     compressor = profile["compressor"]
@@ -94,6 +101,7 @@ def build_quality_command(
         "WANDB_MODE": "disabled", "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
         "OMP_NUM_THREADS": "4", "PYTHONPATH": str(candidate),
+        "CORAL_WORKLOAD": str(profile['name']),
     }
     return ProcessSpec(tuple(command), output.parent / f"{output.name}.process", env,
                        _ENV_ALLOWLIST, 24 * 60 * 60, cwd=candidate)

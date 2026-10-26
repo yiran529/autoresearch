@@ -1,8 +1,8 @@
 # GreedyLoRE AutoResearch 工作流修改方案
 
-更新：2026-10-26。状态：核心代码、知识整理及 Researcher 正式 prompt 已接入；评估 fidelity/efficiency 的进一步校准仍待进行。
+更新：2026-10-26。当前契约 v2 采用 **Development experiments** 和 **Final evaluation** 两阶段；当前实现与验收见第 20 节。第 13–19 节保留早期实施记录，不代表 v2 的收尾顺序或本次验收结果。
 
-目标是在有限搜索预算下发现 quality 与 efficiency 更好的算法。保留 Researcher、独立 Analyzer、Engineer 三个角色；Researcher 在同一上下文中完成 130M 开发、按需诊断与少量迭代，每节点开发结束后对一个冻结且合格的候选做 60M 迁移检验。使用单一研究档案串联设计与证据，将 wisdom 与 summary 分开。先采用简单规则。
+目标是在有限搜索预算下发现 quality 与 efficiency 更好的算法。保留 Researcher、独立 Analyzer、Engineer 三个角色；Researcher 在同一上下文中完成 Development experiments、按需诊断与少量迭代；节点开发结束后先冻结一个完成且合格的候选，再做 Final evaluation：独立新 timing、固定语言迁移任务和 ResNet18/CIFAR100。使用单一研究档案串联设计与证据，将 wisdom 与 summary 分开。先采用简单规则。
 
 本方案基于 `root-reuse-20261022` 的复盘及后续讨论，描述目标机制，不表示当前运行时已具备。现有实现见 [架构](greedylore-autoresearch-architecture.md)、[产物](greedylore-autoresearch-artifacts.md)与 [GPU 协调](../tasks/greedylore_autoresearch/GPU_COORDINATION.md)。早期方案中的开发中 Analyzer 反馈、整轮末才运行 60M，已由以下流程替代。
 
@@ -11,7 +11,7 @@
 ```text
 选题、注册研究起点与首轮设计，释放选题锁
         ↓
-申请并持有 4 卡，开始 130M 开发
+申请并持有 4 卡，开始 Development experiments
         ↓
 Researcher：训练 → 观察/按需诊断 → 判断预测
         ├─ 原方案：从自身完整状态继续训练
@@ -20,7 +20,9 @@ Researcher：训练 → 观察/按需诊断 → 判断预测
         ↓
 冻结研究档案与一个已完成的候选；无合格候选则明确记录
         ↓
-宿主：130M 合格才做一次 60M 迁移检验，否则跳过
+宿主：完成开发且质量/资源合格 → 先冻结 SHA/设计/policy/映射
+        ↓
+Final evaluation：全新 mandatory timing + 语言迁移 + ResNet18/CIFAR100；否则明确跳过
         ↓
 释放 Research 阶段的 4 卡，启动一次独立 Analysis
         ↓
@@ -30,7 +32,7 @@ Researcher：训练 → 观察/按需诊断 → 判断预测
 ```
 
 - **Researcher：**从证据/问题提出方法，并检验“机制解释 → 设计回应 → 机制变化 → 质量与成本收益”的推理；自行完成开发诊断，无须等待 Analyzer。
-- **Analyzer：**在开发冻结且 60M 终态或明确跳过后，独立复核机制与实际收益，形成有范围的认识及重要研究问题。复用充分证据，仅为关键未知补有界诊断，不规定新算法、不重开当前节点。
+- **Analyzer：**在开发冻结且所有 Final evaluation 组件终态或明确跳过后，独立复核机制与实际收益，形成有范围的认识及重要研究问题。复用充分证据，仅为关键未知补有界诊断，不规定新算法、不重开当前节点。
 - **Engineer：**对值得优化的候选做保持算法语义的实现优化。完整 Engineering 的选择与跳过规则属于后续细化内容，不增加开发中的 Agent 交接。
 
 两侧均可发现机制。Researcher 的诊断服务于当前开发决策，Analyzer 的诊断服务于结论可信度和后续研究。无新增 finding 也是有效结果。
@@ -42,10 +44,10 @@ Researcher：训练 → 观察/按需诊断 → 判断预测
 | 内容 | 要求 |
 | --- | --- |
 | 研究起点 | 固定 Node、Parent/base_commit、研究模式、主要问题；`origin` 保存证据、初始核心假设、选择理由、父问题回应、Engineering 复用/推迟依据 |
-| `iterations[]` | 每项对应一条候选训练轨迹，包含轮次 ID、`design`、`observations[]`、`decisions[]` |
+| `iterations[]` | 每项对应一条候选训练轨迹，包含轮次 ID、`design`、`observations[]`、`timings[]`、`decisions[]`；训练前 timing 淘汰的设计也占额度 |
 | 本轮设计 | 方法及改动、机制解释与竞争解释、通信与持久状态、机制/质量/成本预测、对照与证伪条件；训练前保存并冻结 |
 | 观察与决策 | 追加代码 SHA、run/diagnostic ID、持久证据、预测判断、continue/revise/stop 及理由；保留负结果和不确定性 |
-| 最终选择 | 开发结束后固定 `selected_iteration`、选择理由、实际 SHA、参数、动态策略及迁移配置；无合格候选时明确记录 |
+| 最终选择 | 开发结束后固定 `selected_iteration`、选择理由、实际 SHA、设计、参数、动态策略及各 workload 映射；先冻结，再追加 `final_evaluation` 各组件状态/结果/证据；无合格候选时明确记录 |
 
 同一轮的暂停、诊断和原样续跑追加在原轮；修改方案后追加下一轮，不覆盖旧设计或观察。核心机制/假设或主要问题改变，仍属于新 Node。已定义 adaptive policy 的正常动作变化不算修改方案。
 
@@ -63,9 +65,9 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 这些主要属于后续 prompt 与 ref 的改进；代码侧提供公平评估、非周期策略和真实动作记录能力，不强制算法家族或固定动作。
 
-## 4. 130M 开发与预算
+## 4. Development experiments 与预算
 
-通常不超过两条、最多三条 130M 候选训练轨迹。算法失败、主动提前终止、有意回退重跑均消耗轨迹；pending 预留额度。仅宿主认定的基础设施故障可按同版本恢复规则处理，重试仍有独立上限并计入实际计算。
+通常不超过两条、最多三条开发候选训练轨迹，最多三份 append-only 设计；仅做 timing 即淘汰的设计也计入。算法失败、主动提前终止、有意回退重跑均消耗轨迹；pending 预留额度。仅宿主认定的基础设施故障可按同版本恢复规则处理，重试仍有独立上限并计入实际计算。
 
 同一方案从最新有效 checkpoint 精确续跑仍为原轨迹，不重置步数、token、诊断或重试额度。每条轨迹使用固定训练上限与 schedule；诊断采用节点级累计预算。第三条轨迹须有证据支持的修复或影响方法选择的关键未知，训练前记录理由；可以少于两条就结束。
 
@@ -120,17 +122,18 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 - 效率判断覆盖目标 workload 与完整有效周期；对非周期方法保存真实动作和累计成本，短窗漏掉罕见事件时限制结论。保留现有 null period 支持并检查其覆盖范围。
 - 固定 seed 和数据顺序支持配对比较，不提供独立训练重复。验证 token 数、训练长度和独立 seed 分别解决不同不确定性。
 
-候选选择同时体现质量与成本，保留负结果及有价值的取舍。有限 Pareto 候选保留、后续继承规则和按需 Engineering 曾讨论过，但选择规则尚未定型，可在基础闭环之后实施。第一版仍只选一个候选做节点末 60M。
+候选选择同时体现质量与成本，保留负结果及有价值的取舍。有限 Pareto 候选保留、后续继承规则和按需 Engineering 曾讨论过，但选择规则尚未定型，可在基础闭环之后实施。每节点只选一个候选进入 Final evaluation，禁止根据最终结果再切换候选。
 
-## 8. 每节点 60M 与后续 Engineering
+## 8. Final evaluation 与后续 Engineering
+`research finish` 只要求候选完成开发协议、通过预定 development validity/quality/resource 检查；允许选择较早轮次。开发 timing 可在训练前、暂停后或完成后按需进行，不是提名门槛，也不要求为最终测时预留开发额度。无合格候选则明确跳过，保留失败供 Analysis；从未执行时仍提供已提交、明确未执行的代码证据。
 
-主动结束开发或耗尽额度后，冻结一个已完成 130M、通过预先固定的有效性/质量门槛和资源约束的候选。允许选择先前完成的轮次，不限最后一轮。无合格候选则跳过 60M，保留失败供 Analysis。
+宿主**先冻结**选定 SHA、设计、压缩策略与各 workload 映射，再执行 Final evaluation：全新 mandatory timing、固定语言迁移任务、ResNet18/CIFAR100。Final timing 与开发 timing 的 5 completed/15 total 预算分开，不复用任何开发测量；保留原 timing validity、完整周期/事件和硬件可比性检查，不新增加速幅度门槛。诊断累计 5 success/15 total/600 秒、开发通常两轨迹/最多三设计的约束不变。
 
-宿主运行该候选的一次 60M AdamW 迁移检验，预算独立于三条 130M 轨迹；只允许既定的同版本基础设施恢复，不换候选、不因结果不理想追加参数试验、不重开当前节点。迁移所需的尺寸或参数映射在结果揭晓前固定。
+每个 final component 仅可在宿主判为基础设施失败时重试，默认最多两次；恢复时保留其他已完成组件，同组件结果缓存仅用于恢复同一冻结评估。Vision 重试从头运行，不宣称精确 checkpoint 续跑。算法失败或重试耗尽保留终态失败，不切候选、不调参、不重新开放本节点；其他必需组件仍须进入终态或明确跳过。全部 final components 终态后，才释放 Research 4 卡、退休 Researcher，启动独立 Analyzer 与按最终质量门槛控制的 Engineer。
 
-结果可供 Analyzer、后继节点与后续 wisdom 使用，因此是冻结后的跨 workload 迁移检验，不是整轮搜索的独立 held-out。130M Muon 到 60M AdamW 同时改变模型规模和优化器，不能分别归因，也不替代同任务新 seed 或完整 schedule 确认。
+候选在已提交的 `method_policy.py` 中通过 `configure_compression(args, workload)` 定义各任务的压缩映射，并使用共享 hook；Researcher 验证矩阵和卷积梯度均适用。ResNet rank 64、dense 4000、refresh 1200 仅为 stock GreedyLoRE 默认方法参数，不是候选硬约束。Dense 保持无压缩。固定训练配置与具体模型见 [evaluation_tasks.md](../tasks/greedylore_autoresearch/references/evaluation_tasks.md)：vision 复用 CIFAR100 CM046/CM047，40 epochs/15640 steps、4 GPU、每卡 batch32、workers2、FP32、Muon LR .02/scalar .0005、wd .0005、seed1243、epoch cosine、无 LR warmup。Vision 用最终 epoch 的完整 10000 test accuracy，默认相对同契约 dense 最多下降 1.0 percentage point（operator 可配置），不挑 best epoch。
 
-完整 Engineering 集中于值得优化的候选，选择/跳过规则另行收敛。Engineering 产物如用于最终性能主张，仍需相应质量复核，不能永久只继承旧代码成绩。少数最终候选的新 seed、较长训练或额外保留条件，可另设预算；目前未确定，不作为第一版每节点的额外必跑阶段。
+语言质量沿用同契约 dense-relative loss <=1.05。新契约必须建立匹配 dense/Root 参考；历史 seed 结果不作为新参考，不能编造哈希。已有 v1 保存运行维持原行为。最终结果可供 Analyzer、后继节点和 wisdom 使用；这是开发选中方法的迁移/稳健性证据，不是 campaign-level 独立 held-out，也不替代同任务独立 seed 或完整 schedule 的确认。方法与任务同时改变的效果不能分别归因。
 
 ## 9. 动态产物目录与节点清理
 
@@ -143,7 +146,7 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 │   ├── checkpoints/llama130m_muon/step-00001000/...
 │   ├── quality/...
 │   └── timing/...
-├── runs/<finish-request-id>-transfer/...
+├── runs/<finish-request-id>-final/...
 ├── diagnostics/<analysis-or-engineer-task-id>/...
 ├── analysis/<session-id>/...
 └── caches/...
@@ -161,7 +164,7 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 ## 10. Research 阶段持续预留 4 卡
 
-可以实现。将当前每个 quality/timing/diagnostic 阶段单独申请、释放的 reservation，扩展为宿主持有的 Research 阶段 reservation：注册完成后、进入 GPU 开发时一次性申请 4 张卡，获卡后持续保留至 130M 开发和条件性的 60M 检验均结束或明确跳过。不要持有全局选题锁等待 GPU。
+可以实现。将当前每个 quality/timing/diagnostic 阶段单独申请、释放的 reservation，扩展为宿主持有的 Research 阶段 reservation：注册完成后、进入 GPU 开发时一次性申请 4 张卡，获卡后持续保留至 Development experiments 和全部 Final evaluation 组件均终态或明确跳过。不要持有全局选题锁等待 GPU。
 
 期间 Researcher 的训练、诊断、修改代码和思考均不释放这组卡；正式子进程由宿主串行复用固定 UUID，不重新进入公共队列申请同一组卡。持有 reservation 不要求训练进程始终存活，也不需要占位进程消耗显存。暂停后可结束训练进程，诊断完成后从 checkpoint 重启并续跑原轨迹。
 
@@ -170,7 +173,7 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 - reservation 属于宿主的 Node/Research assignment，保留可信身份、UUID 与存活状态；由宿主把卡交给已授权的训练/诊断子任务。Agent 不能自行选择卡、伪造归属或绕过托管入口。
 - 子任务复用已有 reservation，不再次竞争自己的锁或运行名额；同一 reservation 默认串行执行。保留 run 级执行名额限制，持续持卡的节点占用一个名额。
 - 正式 timing 前清理本节点其他计算进程，再按原规则检查空闲条件、硬件可比性和外部干扰。持续预留不代表某个训练进程可与 timing 同时占卡。
-- 开发及 60M 确认结束后释放，不继续占到 Analyzer/Engineer 完成。它们按自身授权申请资源；GPU 释放与动态产物清理分别按各自阶段处理。
+- 全部 Final evaluation 组件终态或明确跳过后释放，不继续占到 Analyzer/Engineer 完成。它们按自身授权申请资源；GPU 释放与动态产物清理分别按各自阶段处理。
 - 正常结束、取消、宿主或 assignment 失效时，停止自己的子任务并释放 reservation。中断恢复保留研究预算，但重新核实/申请实际 GPU，不把旧状态文件当作仍持有锁。
 
 此模式减少反复排队并保持卡身份稳定，代价是思考和代码调整期间也占着 4 卡。高优先级 Analyzer/Engineer 无法抢占已持有的 reservation，现有优先级只能影响新申请；并发节点数需与 GPU 组数和执行名额匹配。第一版按用户要求保留整段 reservation，不做短时闲置回收。
@@ -179,7 +182,7 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 ## 11. 独立 Analyzer 的输入与输出
 
-输入为冻结研究档案、选定代码、全部尝试的正式结果与提供的诊断证据，并仅使用实际提供的历史/父节点资料。复核每轮预测、修改依据与最终收益，也保留发现意外机制的空间，不局限于确认 Researcher 的故事。
+输入为完整冻结研究档案（含 `final_evaluation` 各组件状态与证据）、选定代码、全部尝试的正式结果与提供的诊断证据，并仅使用实际提供的历史/父节点资料。复核每轮预测、修改依据与最终收益，区分 development-selected 证据和 final transfer/robustness 证据。按材料与调查进展安排分析，不规定固定 checklist 或路线；保留有用发现、意外机制与反例，不局限于确认 Researcher 的故事。
 
 输出仍为一份符合现有 schema 的 Analysis：机制与 practical verdict 分开；findings 包含来源、对照、条件、竞争解释、反证和限制；new_information 只记增量；最多两个重要后续问题，附最小区分实验。handover 是同一文档中的交接内容，不另写一份报告。
 
@@ -200,12 +203,16 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 Wisdom 的单位是会影响设计、解释或实验选择的认识；同一认识的新证据合并，不能因重复就自动提升为普遍规律。不要求覆盖每个节点，没有新增认识就不更新。分数、状态和完整日志不放入 wisdom，强制流程保留在 workflow rules。
 
 Memory 读取当前 wisdom 与新节点 Analysis，按需查阅已覆盖的历史 Analysis；旧节点 Spec、evaluation 与原始日志不随每次调用重复加载。旧 run 缺少 wisdom 时一次性补读已有 summary 覆盖的 Analysis。原始证据仅从本次必读 Analysis 的冻结 manifest 中按路径与 SHA-256 提取，统一限制大小与数量；缺失、哈希不匹配或被裁剪均视为不可用。
-Memory 一次输出三份 Markdown 正文，宿主补充累计 `processed_analyses` 并发布；三份全部发布成功才确认该节点已整理。中途失败复用已封存结果，不重复调用模型。累计覆盖不代表每次重读所有历史；没有新增认识可保持 wisdom 正文不变。Researcher/Analyzer 不直接修改共享 wisdom。每节点 60M 迁移结果属于后续可使用的已知证据，记录其来源与范围。
+Memory 一次输出三份 Markdown 正文，宿主补充累计 `processed_analyses` 并发布；三份全部发布成功才确认该节点已整理。中途失败复用已封存结果，不重复调用模型。累计覆盖不代表每次重读所有历史；没有新增认识可保持 wisdom 正文不变。Researcher/Analyzer 不直接修改共享 wisdom。每节点 Final evaluation 结果属于后续可使用的已知证据，记录其来源与范围。
 当前知识整理实现保留现有触发与单 worker，不新增角色或数据库。仅修改 Memory 写作要求、Researcher/Engineer 的 wisdom 阅读指引与 ref 问题导航；Researcher/Analyzer 的实验流程 prompt 改版仍单独处理。
 
 Ref 保留家族文件，增加一个简短的问题入口，链接表示容量、历史积累、预算分配、阶段变化等问题对应的构件；同一内容可被多个入口引用，不复制正文。跨方向组合不要求多 Parent 状态管理。
 
 知识整理验收（2026-10-26）：任务测试与 sandbox、trusted writes、dynamic agents 回归共 780 passed、2 skipped，含正常及故障恢复完整模拟；新增覆盖旧 run 迁移、三份文档中断重试、宿主累计覆盖、增量输入和冻结证据哈希。5.6-sol high review 无剩余阻塞问题。模拟替换模型与训练，验证协议和证据边界，不证明真实 Memory 的归纳质量或科学结论成立。
+
+## 历史实施记录说明
+
+以下第 13–19 节为当时版本的实施/验收记录。涉及 130M/60M 阶段名、冻结前补 timing 与共用开发预算的描述已被上文契约 v2 替代；已有 v1 运行仍按其保存契约执行。历史测试数量不证明本次变更已验证。
 
 ## 13. 实施顺序、验收与待定参数
 
@@ -323,3 +330,13 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 既有 staged 档案若仅保存旧式嵌入 timing，其执行仍计入预算；无法证明测量上下文一致时不作为新请求的缓存复用。已经冻结的历史节点保留原始测量与发布语义。
 
 本次验证：任务与框架相关回归 808 passed、2 skipped（缺少 bubblewrap）；最终恢复补丁后专项 55 passed，四个完整 staged 模拟 4 passed。Ruff 与 diff 检查通过。`gpt-5.6-sol` high review 的缓存校验、归档/发布中断及配额问题已修复，复查无剩余阻塞/高/中等级问题。报告、时间线及日志位于 `/tmp/coral-research-timing-20261026/`；没有执行真实 GPU 或模型调用，模拟不证明实际算法速度与 CUDA/NCCL 等价。
+
+
+## 20. 开发／最终评估与视觉迁移（2026-10-26）
+- 默认契约升为 v2：开发阶段完成质量合格的候选可被选中，无需先做 timing；先冻结 SHA、设计与每任务压缩策略，再独立执行新 timing、语言迁移与 ResNet18/CIFAR100。开发 timing 仍可按需使用，其 5/15 预算不能占用最终测时。已有 v1 契约与冻结记录保持原行为，不自动迁移。
+- ResNet18 仅固定训练任务与优化器配置；rank、压缩起始时刻、刷新、EF 及动态策略由候选定义。`method_policy.py` 接收压缩字段；固定训练字段不可通过该接口改写。64/4000/1200 仅为原版方法默认值。Vision 正式结果及新 dense 参考检查实际训练配方、40 epoch/15640 updates、4 卡和完整 10000 测试样本；历史准确率加一个新 hash 不能成为新参考。
+- 最终组件分别保存结果和基础设施恢复次数，默认仅允许两次基础设施重试。宿主在外部结果已完成、尚未写入私有记录时中断，恢复会核验同一请求的进程退出记录、完整命令和结果后持久化，不重跑已完成训练。发布中断同样只补发布；重试耗尽保留 infra 分类；所有最终组件终态后才释放四卡。Vision 失败重试仍从头训练，checkpoint 用于诊断，不宣称精确续跑。
+- Researcher、Analyzer、共享规则、启动消息、命令参考及 `/tmp/coral-prompt-drafts-20261025/` 中英文草稿同步使用阶段名称。详细固定配置放入 `references/evaluation_tasks.md`。独立 Analyzer 保持机制分析与研究问题职责；Engineer 保持语义约束和原 timing 入口。
+- `gpt-5.6-sol high` 完成独立复核，修复恢复、固定训练字段、dense 参考、质量元数据和 seed manifest 校验问题后，无剩余高／中优先级发现。微型 CPU/Gloo 跑通真实 vision runner；六个完整 CLI 模拟通过，覆盖成功、语言与 vision 各自质量／执行失败、无合格候选。模拟证据位于 `/tmp/coral-final-evaluation-20261026/accepted-staged/`；不证明真实 GPU 算法收益。正式运行前仍需建立新契约的 dense/Root 参考。
+
+本轮全量相关回归：**858 passed、2 skipped**（环境缺少 bubblewrap）；包含六个完整 staged CLI 模拟及微型 CPU/Gloo vision 执行。修改文件的 Ruff、Python 语法与 diff 检查通过。未运行真实 GPU 训练或模型服务。

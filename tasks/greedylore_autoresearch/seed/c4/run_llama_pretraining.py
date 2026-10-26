@@ -168,6 +168,9 @@ def parse_args(args):
     add_muon_args(parser, scalar_lr_default=0.001, scalar_weight_decay_default=0.0)
     
     args = parser.parse_args(args)
+    if os.environ.get('CORAL_WORKLOAD'):
+        from compression_config import apply_compression_policy
+        args = apply_compression_policy(args, os.environ['CORAL_WORKLOAD'])
 
     if args.checkpoint_interval_steps <= 0:
         raise ValueError("checkpoint_interval_steps must be positive")

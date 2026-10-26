@@ -371,6 +371,9 @@ def parse_args():
     add_comm_hook_args(parser)
     add_muon_args(parser, scalar_lr_default=0.001, scalar_weight_decay_default=0.)
     args = parser.parse_args()
+    if os.environ.get('CORAL_WORKLOAD'):
+        from compression_config import apply_compression_policy
+        args = apply_compression_policy(args, os.environ['CORAL_WORKLOAD'])
     if args.measured_iterations <= 0 or args.warmup_iterations < 0:
         parser.error('Invalid timing budget')
     if args.ddp_bucket_cap_mb is not None and args.ddp_bucket_cap_mb <= 0:

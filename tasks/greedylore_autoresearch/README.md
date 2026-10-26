@@ -25,8 +25,12 @@ the option to require the selection lock for their uninitialized Nodes.
 
 ## Evaluation and handover policy
 
-- New contracts require each workload's final loss / Dense final loss <= **1.05**.
-  Historical contracts, Attempts and verdicts retain their original versions.
+- Contract v2 requires language final loss / same-contract Dense final loss <= **1.05**,
+  and final-epoch ResNet18/CIFAR100 test accuracy drop <= **1.0 percentage point**
+  by default (operator configurable). See `references/evaluation_tasks.md` for fixed
+  task settings and candidate-owned compression policy. Historical v1 contracts,
+  Attempts and verdicts retain their original behavior. New matching dense/Root
+  references are required; historical seed results are not authoritative new references.
 - Attempts retain optional advisory `utility`: `U = S * exp(-d)`, where `S` is
   the geometric mean BF16/FP32 speedup over a fixed, stage-matched N000 reference,
   and `d = max(0, candidate minus baseline loss over the two quality workloads)`.
@@ -84,7 +88,7 @@ Paused historical runs are not automatically migrated or restarted.
 
 Task resources are host-published under the run's public `notes/toolkit/`. Each Agent's generated instructions locate that directory under its runtime shared directory (for Codex, `.codex/notes/toolkit/`). It contains workflow rules and route-specific references. It does not contain private evaluation inputs. Research Analysis receives a fixed code/evidence snapshot and only the parent analyses actually referenced by its Spec.
 
-Research Analysis remains an independent session. Choose applicable initial diagnostics, investigate a principal unexplained observation, and report evidence, counterevidence and unknowns without proposing algorithms. Each Analysis has at most five successful diagnostic executions and fifteen total executions including failures, each up to 600 seconds, with a separate GPU queue budget of one hour per request. Failed diagnostics may be debugged and retried with new request IDs; all retries retain records and count toward the total budget. See `GPU_COORDINATION.md` for host/client wait budgets.
+Research Analysis remains an independent session. Arrange investigation according to the supplied evidence and worthwhile research questions; report useful findings, counterevidence and unknowns without proposing algorithms. Each Analysis has at most five successful diagnostic executions and fifteen total executions including failures, each up to 600 seconds, with a separate GPU queue budget of one hour per request. Failed diagnostics may be debugged and retried with new request IDs; all retries retain records and count toward the total budget. See `GPU_COORDINATION.md` for host/client wait budgets.
 
 ## Node workflow
 
@@ -92,7 +96,11 @@ New task configurations enable staged Research (`grader.args.staged_research: tr
 
 Register `{origin, design}` plus planning controls. The origin fixes the Node's question/core hypothesis, Parent, evidence/selection rationale and parent/Engineering response. Each design states method, explanation, predictions and tests. The host supplies provenance, stores version-3 `research.json`, generates an immutable initial Spec with compatibility handover fields and the first-design hash, and appends runtime observations/decisions. Researcher submits no separate intent or final report. Existing version-2 records remain readable; fresh staged registrations cannot use the old registration shape or initialization command.
 
-Normally use two, at most three 130M trajectories, including failures/stops/restarts. Same-SHA exact continuation stays within its original fixed budget. Researcher uses managed diagnostics at meaningful pauses, judges predictions and records reasons before continuing/revising/stopping. When development ends, `research finish` freezes one completed eligible candidate (or none); the host performs at most one conditional 60M transfer, releases Research GPUs, retires Researcher and starts independent Analysis and quality-gated Engineering. Do not tune or reopen the Node from transfer feedback. Spec/record publication retries preserve the original design and do not repeat completed computation.
+Development experiments normally use two, at most three trajectories, including failures/stops/restarts, within three append-only designs including timing-screened designs. Same-SHA exact continuation stays within its original fixed budget. Researcher uses managed diagnostics at meaningful pauses, judges predictions and records reasons before continuing/revising/stopping. Optional development timing can run before training, while paused or after completion, within its own 5-completed/15-total budget. Diagnostics retain their 5-success/15-total/600-second limits.
+
+When development ends, `research finish` requires one completed candidate with passing development validity/quality/resource evidence, or records none. It first freezes the selected SHA, design, compression policy and workload mapping. Final evaluation then runs fresh mandatory timing, language transfer and ResNet18/CIFAR100; final timing is separate from development timing and never reuses development measurements. Preserve timing validity/cycle/hardware checks without adding a speedup-magnitude gate. The host retains its four GPUs until every final component is terminal or explicitly skipped, then releases them, retires Researcher and starts independent Analysis and quality-gated Engineering. Final feedback cannot reopen development or authorize tuning. Infrastructure recovery permits two retries per final component by default, retaining completed component results; vision retries restart from scratch, not exact checkpoint continuation. Same-component cache reuse is for recovery only. Spec/record publication retries preserve the original design and do not repeat completed computation.
+
+Candidates define per-workload compression mapping in committed `method_policy.py` (`configure_compression(args, workload)`) and the shared hook. Verify the method applies to matrix and convolution gradients; freeze this policy before final feedback. Rank 64, dense prefix 4000 and refresh 1200 are stock GreedyLoRE vision defaults, not fixed candidate constraints. Dense references keep compression disabled. Fixed training settings and quality gates are in `references/evaluation_tasks.md`. Independent Analysis reads the full frozen record including `final_evaluation` component evidence, distinguishing development-selected findings from final transfer/robustness evidence. Reuse by later Nodes does not make final evidence an independent campaign held-out.
 
 Saved configurations retain their recorded protocol. Explicit non-staged configurations select the retained compatibility role/rules; new Researcher instructions contain only the staged workflow. No running experiment is automatically migrated.
 

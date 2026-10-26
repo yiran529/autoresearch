@@ -4,10 +4,10 @@ import json
 import logging
 import math
 import os
-from pathlib import Path
 import random
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -15,15 +15,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler, Subset, TensorDataset
 import torchvision
-from torchvision import transforms
-
-from models.resnet import BasicBlock, ResNet
-from optimizer import add_muon_args, build_muon_optimizer
 from comm_hooks.default_hooks import _allreduce_fut
 from comm_hooks.subspace_hook import SubspaceState, _should_compress_subspace, subspace_hook
+from diagnostic_checkpoint import save_final_checkpoint
+from compression_config import apply_compression_policy
+from models.resnet import BasicBlock, ResNet
+from optimizer import add_muon_args, build_muon_optimizer
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler, Subset, TensorDataset
+from torchvision import transforms
 
 
 def parse_args(argv=None):
@@ -44,6 +45,17 @@ def parse_args(argv=None):
     parser.add_argument('--min-compression-rate', dest='min_compression_rate', type=float, default=2.)
     parser.add_argument('--wandb-project', default='GreedyLore-CIFAR')
     parser.add_argument('--wandb-mode', choices=['online', 'offline', 'disabled'], default='online')
+    parser.add_argument('--contract-hash', default='')
+    parser.add_argument('--stop-after-steps', type=int)
+    parser.add_argument('--no-download', action='store_true')
+    parser.add_argument('--no-communication-bit-estimates', dest='communication_bit_estimates',
+                        action='store_false', default=True)
+    parser.add_argument('--checkpoint-root', help='External diagnostic snapshot root; retries restart from scratch')
+    parser.add_argument('--checkpoint-interval-steps', type=int, default=1000)
+    parser.add_argument('--training-metrics')
+    parser.add_argument('--use-error-feedback', default='ef14')
+    parser.add_argument('--beta-ef', type=float, default=0.)
+    parser.add_argument('--error-inherit', type=float, default=0.)
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--smoke-steps', type=int, default=0, help='Synthetic data; no dataset download or W&B')
     add_muon_args(parser)
@@ -56,6 +68,12 @@ def parse_args(argv=None):
         args.muon_scalar_lr = .005 if args.dataset == 'cifar10' else .0005
     if args.muon_scalar_weight_decay is None:
         args.muon_scalar_weight_decay = args.weight_decay
+    if args.checkpoint_interval_steps <= 0:
+        parser.error('checkpoint interval must be positive')
+    if args.stop_after_steps is not None and args.stop_after_steps <= 0:
+        parser.error('stop-after-steps must be positive')
+    if args.contract_hash and (args.smoke_steps or args.dry_run):
+        parser.error('formal results cannot use synthetic smoke data or dry-run mode')
     if args.start_compress_iter < 0 or args.update_proj_gap < 1 or args.epochs < 1:
         parser.error('Invalid compression schedule or epoch budget')
     return args
@@ -112,13 +130,19 @@ def attach_hook(model, args):
         subspace = SubspaceState(
             dist.group.WORLD, matrix_approximation_rank=args.compress_rank,
             start_compress_iter=args.start_compress_iter, update_proj_gap=args.update_proj_gap,
-            min_compression_rate=args.min_compression_rate, use_error_feedback='ef14',
+            min_compression_rate=args.min_compression_rate, use_error_feedback=args.use_error_feedback,
             uncompressed_names=['linear'], random_seed=args.seed,
-            beta_ef=0, error_inherit=0,
+            beta_ef=args.beta_ef, error_inherit=args.error_inherit,
         )
         subspace.param_to_name = {p: name for name, p in model.named_parameters()}
     state = CommunicationState(subspace)
-    model.register_comm_hook(state, counted_hook)
+    if args.communication_bit_estimates:
+        model.register_comm_hook(state, counted_hook)
+    elif subspace is not None:
+        # Candidate states need not expose stock GreedyLoRE estimator fields.
+        model.register_comm_hook(subspace, subspace_hook)
+    else:
+        model.register_comm_hook(state, counted_hook)
     return state
 
 
@@ -135,7 +159,7 @@ def make_datasets(args, rank):
                                          transforms.RandomHorizontalFlip(), transforms.ToTensor(), normalize])
     test_transform = transforms.Compose([transforms.ToTensor(), normalize])
     dataset_type = torchvision.datasets.CIFAR10 if args.dataset == 'cifar10' else torchvision.datasets.CIFAR100
-    if rank == 0:
+    if rank == 0 and not args.no_download:
         dataset_type(args.data_dir, train=True, download=True)
         dataset_type(args.data_dir, train=False, download=True)
     dist.barrier()
@@ -149,16 +173,25 @@ def seed_worker(worker_id):
     random.seed(seed)
 
 
-def main():
-    args = parse_args()
-    if args.dry_run:
-        print(json.dumps(vars(args), indent=2))
-        return
+def initialize_distributed():
     local_rank = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(local_rank)
     dist.init_process_group('nccl')
-    rank, world_size = dist.get_rank(), dist.get_world_size()
-    device = torch.device('cuda', local_rank)
+    return local_rank, dist.get_rank(), dist.get_world_size(), torch.device('cuda', local_rank)
+
+
+def main(args=None):
+    args = parse_args() if args is None else args
+    workload = os.environ.get('CORAL_WORKLOAD', '')
+    args = apply_compression_policy(args, workload)
+    if args.compressor not in {'none', 'top_subspace'}:
+        raise ValueError('unsupported vision compressor')
+    if args.start_compress_iter < 0 or args.update_proj_gap < 1 or args.compress_rank < 1:
+        raise ValueError('invalid vision compression parameters')
+    if args.dry_run:
+        print(json.dumps(vars(args), indent=2))
+        return
+    local_rank, rank, world_size, device = initialize_distributed()
     logging.basicConfig(level=logging.INFO if rank == 0 else logging.WARNING)
     output = Path(args.output_dir).resolve()
     if rank == 0:
@@ -190,6 +223,9 @@ def main():
                              num_workers=args.workers, pin_memory=True, worker_init_fn=seed_worker)
     testloader = DataLoader(Subset(testset, evaluation_indices(len(testset), rank, world_size)),
                             batch_size=100, num_workers=args.workers, pin_memory=True)
+    planned_updates = len(trainloader) * args.epochs
+    if args.stop_after_steps is not None and args.stop_after_steps != planned_updates:
+        raise ValueError(f'epoch/update budget mismatch: {planned_updates} != {args.stop_after_steps}')
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     criterion = torch.nn.CrossEntropyLoss()
     config = dict(vars(args), world_size=world_size, global_batch_size=world_size * args.batch_size,
@@ -200,10 +236,11 @@ def main():
                   cuda_visible_devices=os.environ.get('CUDA_VISIBLE_DEVICES'),
                   parameter_count=sum(p.numel() for p in model.parameters()),
                   compression_stage='DDP gradients before Muon momentum/orthogonalization',
-                  use_error_feedback='ef14', beta_ef=0, error_inherit=0,
                   scheduler='cosine to zero, epoch steps, no LR warmup',
                   evaluation_split='test', uncompressed_names=['linear'],
-                  checkpoint_policy='none; failed runs cannot resume')
+                  workload=workload, resume_policy='restart_from_scratch',
+                  checkpoint_policy=('diagnostic periodic and final snapshots; no exact vision resume'
+                                     if args.checkpoint_root else 'none; retries restart from scratch'))
     tracker = None
     if rank == 0:
         (output / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
@@ -216,6 +253,16 @@ def main():
     dist.barrier()
     best_accuracy, best_epoch, update_step = 0., 0, 0
     started = time.monotonic()
+    last_batch = None
+    last_checkpoint_step = None
+    checkpoint = None
+
+    def save_diagnostic():
+        return save_final_checkpoint(
+            Path(args.checkpoint_root) / f'step-{update_step:08d}',
+            model, optimizer, scheduler, hook.subspace, config=config,
+            update_step=update_step, batch=last_batch,
+        )
     for epoch in range(args.epochs):
         sampler.set_epoch(epoch)
         model.train()
@@ -231,6 +278,19 @@ def main():
                 raise RuntimeError(f'Nonfinite loss at epoch {epoch + 1}, batch {batch_idx}')
             optimizer.step()
             update_step += 1
+            last_batch = {'inputs': inputs.detach(), 'targets': targets.detach()}
+            if rank == 0 and args.training_metrics:
+                metrics_path = Path(args.training_metrics)
+                metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                with metrics_path.open('a') as stream:
+                    stream.write(json.dumps(dict(update_step=update_step, epoch=epoch+1,
+                        loss=loss.item(), learning_rates=lrs, contract_hash=args.contract_hash,
+                        world_size=world_size)) + '\n')
+            # Epoch-boundary saves happen after evaluation and the scheduler step.
+            if (args.checkpoint_root and update_step % args.checkpoint_interval_steps == 0
+                    and batch_idx + 1 < len(trainloader)):
+                checkpoint = save_diagnostic()
+                last_checkpoint_step = update_step
             stats += torch.stack((loss.detach().double() * len(targets),
                                   predictions.argmax(1).eq(targets).sum().double(),
                                   torch.tensor(len(targets), device=device, dtype=torch.float64)))
@@ -262,7 +322,8 @@ def main():
                    train_accuracy=(100*stats[1]/stats[2]).item(), test_loss=test_loss,
                    test_accuracy=accuracy, test_samples=int(evaluation[2].item()),
                    best_test_accuracy=best_accuracy, best_epoch=best_epoch, learning_rates=lrs,
-                   ddp_dense_reference_bits=hook.dense_bits, ddp_payload_bits=hook.payload_bits,
+                   ddp_dense_reference_bits=hook.dense_bits if args.communication_bit_estimates else None,
+                   ddp_payload_bits=hook.payload_bits if args.communication_bit_estimates else None,
                    muon_collective_bits=optimizer.communication_bits_stats()['total'],
                    elapsed_seconds=time.monotonic()-started)
         if rank == 0:
@@ -272,6 +333,9 @@ def main():
             if tracker is not None:
                 tracker.log(row, step=update_step)
         scheduler.step()
+        if args.checkpoint_root and update_step % args.checkpoint_interval_steps == 0:
+            checkpoint = save_diagnostic()
+            last_checkpoint_step = update_step
         if args.smoke_steps:
             # Catch rank divergence in actual compressed Muon updates.
             delta = torch.zeros((), device=device)
@@ -284,8 +348,23 @@ def main():
                 raise RuntimeError(f'Parameter divergence: {delta.item()}')
             if update_step >= args.smoke_steps:
                 break
+    if args.stop_after_steps is not None and update_step != args.stop_after_steps:
+        raise RuntimeError('vision training did not complete the fixed update budget')
+    if args.checkpoint_root and last_checkpoint_step != update_step:
+        checkpoint = save_diagnostic()
     if rank == 0:
-        result = dict(row, status='smoke_completed' if args.smoke_steps else 'completed',
+        result = dict(row, contract_hash=args.contract_hash, world_size=world_size,
+                      compressor=args.compressor,
+                      training_recipe=dict(model='resnet18', dataset=args.dataset, epochs=args.epochs,
+                          per_device_batch_size=args.batch_size, workers=args.workers, seed=args.seed,
+                          precision='fp32', optimizer='muon', matrix_learning_rate=args.lr,
+                          scalar_learning_rate=args.muon_scalar_lr, weight_decay=args.weight_decay,
+                          matrix_momentum=args.muon_mu, nesterov=True,
+                          adjust_lr=args.muon_adjust_lr, scalar_betas=[args.muon_scalar_beta1, args.muon_scalar_beta2],
+                          scalar_eps=args.muon_scalar_eps, schedule='epoch_cosine', lr_warmup_steps=0,
+                          augmentation='cifar_random_crop4_flip', bias_bn_weight_decay=0.),
+                      resume_policy='restart_from_scratch', diagnostic_checkpoint=checkpoint,
+                      status='smoke_completed' if args.smoke_steps else 'completed',
                       final_test_accuracy=accuracy, final_test_loss=test_loss,
                       ddp_payload_scope='estimated per-rank collective inputs including warmup, SVD refresh and score probes; excludes network replication and DDP buffers',
                       muon_payload_scope='existing optimizer AllGather estimate: world_size*(world_size-1)*input_bits; different scope from per-rank DDP inputs, do not sum directly')

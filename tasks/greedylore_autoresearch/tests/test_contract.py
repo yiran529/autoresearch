@@ -8,7 +8,7 @@ from greedylore_autoresearch_grader.contract import (
     canonical_contract_hash,
 )
 
-SOURCE = Path(__file__).parents[1] / "taskdata" / "eval_contract.yaml"
+SOURCE = Path(__file__).parents[1] / "taskdata" / "eval_contract_v1.yaml"
 
 
 def make_contract(tmp_path):

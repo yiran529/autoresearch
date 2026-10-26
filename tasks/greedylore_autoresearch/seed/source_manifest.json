@@ -1,12 +1,12 @@
 {
   "adaptations": {
     "c4/run_llama_pretraining.py": {
-      "reason": "offline tokenizer and formal quality evidence; opt-in staged periodic checkpoints, exact deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches; preserve configured DataLoader workers and ordered replay settings for fixed-contract comparison",
-      "seed_sha256": "14c39609cbd835cbb8490525321341937f1d0f19562adbca6249a69ea3ee509e"
+      "reason": "offline tokenizer and formal quality evidence; opt-in staged periodic checkpoints, exact deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches; preserve configured DataLoader workers and ordered replay settings for fixed-contract comparison; apply frozen candidate-owned per-workload compression policy",
+      "seed_sha256": "def6f2400f2d6c1101e1d0808482cf2cd9fb63010bd319deae1619a92333be5f"
     },
     "c4/table_v_timing.py": {
-      "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
-      "seed_sha256": "dcb4a359a43aad427fe9c248216392c2e87e8141c84ed0769cfe3d8df168718c"
+      "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.; apply frozen candidate-owned per-workload compression policy",
+      "seed_sha256": "46f8d6b8ef11c1c09558747dea4fb6f1feaec8360878c78b776e032f3d19232c"
     },
     "comm_hooks/subspace_hook.py": {
       "reason": " Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
@@ -15,6 +15,10 @@
     "comm_hooks/utils.py": {
       "reason": "return hook state and record/check checkpoint bucket layouts for final diagnostics and staged checkpoint roots; timing registration unchanged",
       "seed_sha256": "0dc924cfdcdb5d910a03934758318dd335c3b14fd1f907b7ed3875be37bfecac"
+    },
+    "pytorch-cifar/train_ddp.py": {
+      "reason": "versioned final-evaluation runner with candidate-owned compression mapping, offline evaluation and external diagnostic checkpoints",
+      "seed_sha256": "6b6bd36f51652110111894603dc8ae0bf26604325f48e5ace07d6e7e7bca8bb4"
     },
     "tests/test_c4_model_setup.py": {
       "reason": "quality entrypoint regression coverage",
@@ -511,8 +515,14 @@
   "source_commit": "d2c38bc2062e06fdfd73185c508e7cc652933de6",
   "source_repository": "/home/wyr/greedy_lore",
   "task_files": {
+    "compression_config.py": {
+      "sha256": "066b7739477d45cc24a0481584f389669c596eed3f3ef744387daf1e51ba7ff8"
+    },
     "diagnostic_checkpoint.py": {
       "sha256": "2be32fda5c5522a794f5f77946a883e9693228ab60dd379f97cc13911b213596"
+    },
+    "method_policy.py": {
+      "sha256": "8d41f3165f95c8221310b50fe33339aec6b0b7f6339796e8d222b6b6fadaf30a"
     },
     "training_stream.py": {
       "sha256": "dbfa7250a0b0dc428bf2b573a9d1019f64642e7f6a806b71c18f4073f6b08d12"

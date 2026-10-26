@@ -275,6 +275,9 @@ class StagedResearch:
             raise ValueError('selected candidate requires eligible timing; inspect timing evidence before finishing')
 
     def _finish(self, job):
+        if self.record.read().get('evaluation_stages'):
+            from .staged_final import finalize
+            return finalize(self, job)
         state = self._read()
         document = self.record.read()
         selected = job['selected_iteration']

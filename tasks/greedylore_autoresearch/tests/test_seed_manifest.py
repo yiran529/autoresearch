@@ -50,6 +50,7 @@ def test_manifest_hashes_match_source_and_seed() -> None:
     assert set(manifest["adaptations"]) == {
         "c4/run_llama_pretraining.py",
         "c4/table_v_timing.py",
+        "pytorch-cifar/train_ddp.py",
         "comm_hooks/utils.py",
         "comm_hooks/subspace_hook.py",
         "tests/test_c4_model_setup.py",
@@ -68,3 +69,17 @@ def test_seed_excludes_untracked_runtime_data() -> None:
     assert not (SEED_DIR / "c4" / "c4_en_table_iv_96").exists()
     assert not list(SEED_DIR.rglob("*.json.gz"))
     assert not list(SEED_DIR.rglob("*.log"))
+
+
+def test_manifest_covers_and_hashes_task_owned_python_files() -> None:
+    manifest = json.loads((SEED_DIR / "source_manifest.json").read_text())
+    source_paths = {record["seed_path"] for record in manifest["files"].values()}
+    task_paths = {
+        path.relative_to(SEED_DIR).as_posix()
+        for path in SEED_DIR.rglob("*.py")
+        if path.relative_to(SEED_DIR).as_posix() not in source_paths
+    }
+    assert task_paths <= set(manifest["task_files"])
+    assert {"method_policy.py", "compression_config.py"} <= set(manifest["task_files"])
+    for relative, record in manifest["task_files"].items():
+        assert record["sha256"] == hashlib.sha256((SEED_DIR / relative).read_bytes()).hexdigest()

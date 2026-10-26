@@ -14,6 +14,27 @@ def _plain(value):
     return value
 
 
+def quality_policies(workloads, max_relative_eval_loss):
+    """Describe each workload's actual quality gate for public evidence."""
+    policies = {}
+    for name, profile in workloads.items():
+        if name == 'resnet18_cifar100_muon':
+            policies[name] = {
+                'metric': 'final_test_accuracy',
+                'comparison': 'dense final_test_accuracy - candidate final_test_accuracy <= max_accuracy_drop_pp',
+                'max_accuracy_drop_pp': profile['max_accuracy_drop_pp'],
+                'selection': 'final_epoch',
+                'test_examples': 10000,
+            }
+        else:
+            policies[name] = {
+                'metric': 'final_eval_loss',
+                'comparison': 'candidate final_eval_loss / dense final_eval_loss <= max_relative_eval_loss',
+                'max_relative_eval_loss': max_relative_eval_loss,
+            }
+    return policies
+
+
 def publish_context(contract, reference, root: Path, mode: str, timing_protocol=None) -> Path:
     """Called once before workloads, so failed runs also retain their real recipe."""
     path = root / 'evaluation_context.json'
@@ -34,6 +55,13 @@ def publish_context(contract, reference, root: Path, mode: str, timing_protocol=
         'dense_timing': reference['efficiency']['cells'],
         'timing_protocol': timing_protocol,
     }
+    if contract.raw['schema_version'] == 2:
+        value['quality'].update(
+            metric='workload_specific',
+            comparison='apply each workload policy against its same-contract dense reference',
+            workload_policies=quality_policies(
+                contract.quality, contract.raw['quality']['max_relative_eval_loss']),
+        )
     _atomic_json(path, _plain(value))
     return path
 

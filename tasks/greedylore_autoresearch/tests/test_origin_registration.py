@@ -191,7 +191,8 @@ def test_staged_toolkit_delivers_origin_template_and_command_guide(staged):
         if command != 'research register':
             assert command in guide
     rules = (toolkit / 'workflow_rules.md').read_text()
-    assert 'Normally use two, at most three 130M' in rules
+    assert 'normally use two, at most three candidate trajectories' in rules
+    assert (toolkit / 'references/evaluation_tasks.md').is_file()
     assert 'node initialize --intent-file' not in rules
 
 

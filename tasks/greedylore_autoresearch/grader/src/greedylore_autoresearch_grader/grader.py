@@ -9,6 +9,7 @@ from coral.types import Score, ScoreBundle
 
 from .contract import EvalContract
 from .efficiency import build_timing_command
+from .evaluation_context import quality_policies
 from .quality import build_quality_command
 from .results import geometric_mean_speedup, quality_gate
 
@@ -18,6 +19,7 @@ def score_results(
     max_relative_eval_loss=1.05, hardware_comparison=None,
     utility_reference=None, inherited_quality=None,
     timing_protocol=None, performance_eligible=True, ineligibility_reasons=(),
+    quality_profiles=None,
 ):
     scores = {}
     quality_ok = True
@@ -35,6 +37,20 @@ def score_results(
             scores[f"{label}_eval_loss"] = Score(candidate_loss, f"{label}_eval_loss")
             scores[f"{label}_loss_ratio"] = Score(ratio, f"{label}_loss_ratio")
             scores[f"{label}_quality_pass"] = Score(float(passed), f"{label}_quality_pass")
+        if 'resnet18_cifar100_muon' in (quality_profiles or {}):
+            import math
+            name = 'resnet18_cifar100_muon'
+            accuracy = quality[name]['final_test_accuracy']
+            dense_accuracy = reference['quality']['workloads'][name]['final_test_accuracy']
+            if any(type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 100
+                   for value in (accuracy, dense_accuracy)):
+                raise ValueError('invalid final classification accuracy')
+            drop = dense_accuracy - accuracy
+            passed = drop <= quality_profiles[name]['max_accuracy_drop_pp'] + 1e-12
+            quality_ok = quality_ok and passed
+            scores['resnet18_test_accuracy'] = Score(accuracy, 'resnet18_test_accuracy')
+            scores['resnet18_accuracy_drop_pp'] = Score(drop, 'resnet18_accuracy_drop_pp')
+            scores['resnet18_quality_pass'] = Score(float(passed), 'resnet18_quality_pass')
         scores["quality_gate"] = Score(float(quality_ok), "quality_gate")
     else:
         for label in workload_labels.values():
@@ -78,7 +94,7 @@ def score_results(
         if baseline_steps != timing_protocol["measured_iterations"]:
             utility_reason = "reference_window_mismatch"
     utility = advisory_utility(
-        {name: payload["final_eval_loss"] for name, payload in quality.items()}
+        {name: payload["final_eval_loss"] for name, payload in quality.items() if 'final_eval_loss' in payload}
         if mode == "research" else (inherited_quality or {}),
         {name: cell["mean"] for name, cell in timing.items()}, utility_reference,
         unavailable_reason=utility_reason,
@@ -91,7 +107,10 @@ def score_results(
                   if hardware_comparison and hardware_comparison["warnings"] else ""),
         metadata={
             "evaluation_policy": {"version": "quality-gated-efficiency-v2",
-                                  "max_relative_eval_loss": max_relative_eval_loss},
+                                  "max_relative_eval_loss": max_relative_eval_loss,
+                                  **({"workload_policies": quality_policies(
+                                      quality_profiles, max_relative_eval_loss)}
+                                     if 'resnet18_cifar100_muon' in (quality_profiles or {}) else {})},
             "utility": utility,
             "timing_protocol": timing_protocol,
             "performance_eligible": bool(comparable and performance_eligible and quality_ok),
@@ -181,6 +200,9 @@ class Grader(TaskGrader):
             raise InfraFailure("dense reference contract hash mismatch")
         import math
         quality_names = {"llama60m_adamw", "llama130m_muon"}
+        contract_path = Path(self.private_dir) / 'eval_contract.yaml'
+        if contract_path.exists():
+            quality_names = set(EvalContract.load(contract_path).quality)
         efficiency_names = {"130m_adamw_bf16", "130m_adamw_fp32"}
         try:
             quality_workloads = quality["workloads"]
@@ -190,8 +212,8 @@ class Grader(TaskGrader):
                 set(quality_workloads) == quality_names
                 and set(efficiency_cells) == efficiency_names
                 and all(
-                    math.isfinite(float(quality_workloads[name]["final_eval_loss"]))
-                    and float(quality_workloads[name]["final_eval_loss"]) > 0
+                    math.isfinite(float(quality_workloads[name]['final_test_loss' if name == 'resnet18_cifar100_muon' else 'final_eval_loss']))
+                    and float(quality_workloads[name]['final_test_loss' if name == 'resnet18_cifar100_muon' else 'final_eval_loss']) > 0
                     for name in quality_names
                 )
                 and all(
@@ -209,6 +231,15 @@ class Grader(TaskGrader):
             valid = False
         if not valid:
             raise InfraFailure("dense reference schema or values are invalid")
+        if 'resnet18_cifar100_muon' in quality_names:
+            from .vision import validate_vision_result
+            dense_vision = quality_workloads['resnet18_cifar100_muon']
+            try:
+                validate_vision_result(dense_vision, EvalContract.load(contract_path).quality['resnet18_cifar100_muon'])
+                if dense_vision.get('compressor') != 'none':
+                    raise ValueError('reference must have compression disabled')
+            except (KeyError, TypeError, ValueError) as exc:
+                raise InfraFailure(f'invalid dense vision reference: {exc}') from exc
         return {"quality": quality, "efficiency": efficiency}
 
     def _run(self, spec):
@@ -331,7 +362,10 @@ class Grader(TaskGrader):
                     output.mkdir(parents=True, exist_ok=False)
                     spec = build_quality_command(profile, candidate, output, reservation.indices)
                     payload = self._completed_json(spec, output)
-                    if (payload.get("contract_hash") != contract.contract_hash
+                    if profile['model'] == 'resnet18':
+                        from .vision import validate_vision_result
+                        validate_vision_result(payload, profile)
+                    elif (payload.get("contract_hash") != contract.contract_hash
                             or payload.get("world_size") != contract.hardware.gpu_count
                             or payload.get("update_step") != profile["stop_after_steps"]
                             or not math.isfinite(float(payload.get("final_eval_loss", math.nan)))):
@@ -459,6 +493,7 @@ class Grader(TaskGrader):
             utility_reference=utility_reference, inherited_quality=inherited_quality,
             timing_protocol=timing_protocol, performance_eligible=not reasons,
             ineligibility_reasons=reasons,
+            quality_profiles=contract.quality,
         )
 
     def evaluate(self) -> ScoreBundle:

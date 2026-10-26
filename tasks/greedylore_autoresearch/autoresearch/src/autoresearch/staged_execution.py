@@ -83,9 +83,14 @@ class Execution:
         contract = EvalContract.load(self.coral / 'private/eval_contract.yaml')
         if job['kind'] == 'diagnostic':
             return self._diagnostic(job, code, work, public, row)
-        if job['kind'] == 'timing':
+        if job['kind'] in {'timing', 'final_timing'}:
             return self._timing(job, code, work, public, contract)
-        name = 'llama60m_adamw' if job['kind'] == 'transfer' else 'llama130m_muon'
+        if job['kind'] == 'final_quality':
+            recovered = self.recover_final(job)
+            if recovered is not None:
+                return recovered
+        name = job['workload'] if job['kind'] == 'final_quality' else (
+            contract.final_workloads[0] if job['kind'] == 'transfer' else contract.development_workload)
         profile = contract.quality[name]
         target = job.get('pause_after_steps') or profile['stop_after_steps']
         if target > profile['stop_after_steps']:
@@ -131,19 +136,26 @@ class Execution:
                 payload = json.loads((output / 'all_results.json').read_text())
             except (OSError, ValueError) as exc:
                 raise ValueError(f'candidate quality result missing or malformed: {exc}') from exc
-            if (payload.get('status') not in {'paused', 'completed'}
+            if profile['model'] == 'resnet18':
+                from greedylore_autoresearch_grader.vision import validate_vision_result
+                validate_vision_result(payload, profile)
+            elif (payload.get('status') not in {'paused', 'completed'}
                     or payload.get('contract_hash') != contract.contract_hash
                     or payload.get('world_size') != contract.hardware.gpu_count
                     or payload.get('update_step') != target
                     or (target < profile['stop_after_steps']) != (payload['status'] == 'paused')):
                 raise ValueError('invalid staged quality result')
-            if payload['status'] == 'completed' and not math.isfinite(float(payload.get('final_eval_loss', math.nan))):
+            if profile['model'] != 'resnet18' and payload['status'] == 'completed' and not math.isfinite(float(payload.get('final_eval_loss', math.nan))):
                 raise ValueError('invalid final evaluation loss')
-            checkpoint = safe_path(Path(payload['checkpoint_path']))
-            if not checkpoint.is_relative_to(work / 'checkpoints' / name):
-                raise ValueError('candidate checkpoint path escapes this segment')
-            self.artifacts.publish_checkpoint(host.node_id, checkpoint,
-                public / 'checkpoints' / name / 'manifest.json')
+            checkpoint_value = payload.get('checkpoint_path') or (payload.get('diagnostic_checkpoint') or {}).get('path')
+            if profile['model'] == 'resnet18' and (payload.get('diagnostic_checkpoint') or {}).get('status') == 'complete':
+                checkpoint_value = str(work / 'checkpoints' / name / f"step-{payload['update_step']:08d}")
+            if checkpoint_value:
+                checkpoint = safe_path(Path(checkpoint_value))
+                if not checkpoint.is_relative_to(work / 'checkpoints' / name):
+                    raise ValueError('candidate checkpoint path escapes this segment')
+                self.artifacts.publish_checkpoint(host.node_id, checkpoint,
+                    public / 'checkpoints' / name / 'manifest.json')
             _atomic_json(cache, payload)
         observation = {**payload, 'run_id': run_id, 'evidence_path': public.relative_to(self.coral / 'public').as_posix(),
                        'eligible': False}
@@ -153,8 +165,105 @@ class Execution:
                 reference['quality']['workloads'][name]['final_eval_loss'],
                 max_relative=contract.raw['quality']['max_relative_eval_loss'])
             observation.update(quality_pass=passed)
+        if job['kind'] == 'final_quality':
+            self._save_final_quality(job, observation)
         self._archive(work, public)
         return observation
+
+    def _final_cache(self, job):
+        return safe_path(self.coral / 'private/research_final_results' / self.host.node_id / f"{job['request_id']}.json")
+
+    def _save_final_quality(self, job, result):
+        _atomic_json(self._final_cache(job), {'sha': job['sha'], 'workload': job['workload'],
+            'contract_hash': job['canonical']['contract_hash'], 'result': result,
+            'sha256': hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()})
+
+    def publish_final(self, job, result):
+        if job['kind'] == 'final_timing':
+            return self.publish_timing(job, result)
+        work = self.artifacts.path(self.host.node_id, f"runs/{job['request_id']}")
+        work.mkdir(parents=True, exist_ok=True)
+        public = self.coral / 'public/eval_logs' / job['sha'] / job['request_id']
+        result.setdefault('evidence_path', public.relative_to(self.coral / 'public').as_posix())
+        _atomic_json(work / 'final-result.json', result, mode=0o644)
+        self._archive(work, public)
+
+    def _validate_final_quality(self, result, job, contract):
+        if job['canonical']['contract_hash'] != contract.contract_hash:
+            raise ValueError('final request contract mismatch')
+        if not isinstance(result, dict):
+            raise ValueError('final quality result must be an object')
+        profile = contract.quality[job['workload']]
+        if profile['model'] == 'resnet18':
+            from greedylore_autoresearch_grader.vision import validate_vision_result
+            validate_vision_result(result, profile)
+        else:
+            loss = result.get('final_eval_loss')
+            if (result.get('status') != 'completed' or result.get('contract_hash') != contract.contract_hash
+                    or type(result.get('world_size')) is not int
+                    or result['world_size'] != contract.hardware.gpu_count
+                    or type(result.get('update_step')) is not int
+                    or result['update_step'] != profile['stop_after_steps']
+                    or type(loss) not in (int, float) or not math.isfinite(loss) or loss <= 0):
+                raise ValueError('invalid cached final language result')
+
+    def _recover_external_final(self, job, contract):
+        from greedylore_autoresearch_grader.quality import build_quality_command
+
+        work = self.artifacts.path(self.host.node_id, f"runs/{job['request_id']}")
+        output = work / 'quality' / job['workload']
+        result_path = safe_path(work / 'quality-result.json')
+        if not result_path.exists():
+            result_path = safe_path(output / 'all_results.json')
+        process_path = safe_path(work / 'process.json')
+        if not result_path.exists() or not process_path.exists():
+            return None
+        process = json.loads(process_path.read_text())
+        profile = contract.quality[job['workload']]
+        code = self.artifacts.path(self.host.node_id, f"code/{job['sha']}")
+        expected = build_quality_command(profile, code, output,
+            list(range(contract.hardware.gpu_count)),
+            checkpoint_root=work / 'checkpoints' / job['workload'],
+            checkpoint_interval_steps=self.interval,
+            training_metrics=work / 'training_metrics.jsonl')
+        # process.json is host-produced after the child exits. Match its complete
+        # command, including candidate snapshot, contract and request-local output;
+        # self-declared payload identity cannot certify a different run.
+        if (not isinstance(process, dict) or process.get('command') != list(expected.command)
+                or type(process.get('returncode')) is not int or process['returncode'] != 0
+                or process.get('timed_out') is not False or process.get('infra_failure') is not None):
+            raise ValueError('external final process is incomplete or belongs to another run')
+        payload = json.loads(result_path.read_text())
+        self._validate_final_quality(payload, job, contract)
+        public = self.coral / 'public/eval_logs' / job['sha'] / job['request_id']
+        result = {**payload, 'run_id': job['request_id'],
+                  'evidence_path': public.relative_to(self.coral / 'public').as_posix(), 'eligible': False}
+        # Persist completed work before public projection, including when the
+        # previous host stopped between all_results and quality-result writes.
+        self._save_final_quality(job, result)
+        self._archive(work, public)
+        return result
+
+    def recover_final(self, job):
+        if job['kind'] == 'final_timing':
+            return self.recover_timing(job)
+        from greedylore_autoresearch_grader.contract import EvalContract
+        from greedylore_autoresearch_grader.gpu import InfraFailure
+        cache = self._final_cache(job)
+        try:
+            contract = EvalContract.load(self.coral / 'private/eval_contract.yaml')
+            if not cache.exists():
+                return self._recover_external_final(job, contract)
+            saved = json.loads(cache.read_text())
+            result = saved['result']
+            if (saved['sha'] != job['sha'] or saved['workload'] != job['workload']
+                    or saved['contract_hash'] != job['canonical']['contract_hash']
+                    or saved['sha256'] != hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()):
+                raise ValueError('final cache identity mismatch')
+            self._validate_final_quality(result, job, contract)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise InfraFailure(f'invalid final component cache: {exc}') from exc
+        return result
 
     def recover_timing(self, job):
         from greedylore_autoresearch_grader.gpu import InfraFailure
@@ -291,7 +400,9 @@ class Execution:
                 from .staged_timing import latest_timing, timing_context
                 observation = row['observations'][-1]
                 canonical = host.validate_candidate(sha)
-                timing_entry = latest_timing(row, timing_context(host, canonical))
+                final_components = state.get('final_evaluation', {}).get('components')
+                timing_entry = ({'result': final_components['timing'][-1]['result']} if final_components else
+                                latest_timing(row, timing_context(host, canonical)))
                 if timing_entry is None and observation.get('timing'):
                     # A Node frozen under the previous staged protocol retains
                     # its original certified measurement; never relabel its context.
@@ -307,14 +418,18 @@ class Execution:
                 reference, _ = reference_for_window(reference,
                     (metadata.get('timing_protocol') or {}).get('measured_iterations', contract.raw['efficiency']['measured_iterations']),
                     contract.raw['efficiency']['measured_iterations'])
-                bundle = score_results('research', {'llama130m_muon': observation,
-                    'llama60m_adamw': state['transfer']}, timing, reference,
+                quality = {contract.development_workload: observation}
+                if final_components:
+                    quality.update({name: final_components[name][-1]['result'] for name in contract.final_workloads})
+                else:
+                    quality[contract.final_workloads[0]] = state['transfer']
+                bundle = score_results('research', quality, timing, reference,
                     contract_hash=contract.contract_hash,
                     comparable=metadata['comparability'] != 'incomparable_hardware', evidence_paths=[],
                     max_relative_eval_loss=contract.raw['quality']['max_relative_eval_loss'],
                     hardware_comparison=metadata.get('hardware_comparison'),
                     timing_protocol=metadata.get('timing_protocol'),
-                    performance_eligible=metadata.get('performance_eligible', False))
+                    performance_eligible=metadata.get('performance_eligible', False), quality_profiles=contract.quality)
             previous = read_attempt(self.coral, sha)
             if previous and previous.agent_id != host.agent_id:
                 raise PermissionError('cannot overwrite another assignment Attempt')
@@ -330,6 +445,9 @@ class Execution:
             if state['transfer'].get('evidence_path'):
 
                 paths.append(state['transfer']['evidence_path'])
+            for component in state.get('final_evaluation', {}).get('components', {}).values():
+                paths.extend(item['result']['evidence_path'] for item in component
+                             if item.get('result', {}).get('evidence_path'))
             # Diagnostic evidence and research.json are added independently to
             # Analyzer's immutable evidence envelope.
             metadata = {**canonical, **(bundle.metadata if bundle else {}),

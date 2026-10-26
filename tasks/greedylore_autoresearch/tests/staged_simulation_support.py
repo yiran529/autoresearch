@@ -19,10 +19,12 @@ import yaml
 
 
 def reference():
-    return {'quality': {'workloads': {name: {'final_eval_loss': loss} for name, loss in
+    result = {'quality': {'workloads': {name: {'final_eval_loss': loss} for name, loss in
             [('llama130m_muon', 4.0), ('llama60m_adamw', 3.0)]}},
             'efficiency': {'cells': {name: {'mean_iteration_seconds': .1} for name in
             ['130m_adamw_bf16', '130m_adamw_fp32']}}}
+    result['quality']['workloads']['resnet18_cifar100_muon'] = {'final_test_accuracy':75.91,'final_test_loss':1.27233}
+    return result
 
 
 class InventoryLease:
@@ -42,14 +44,19 @@ class InventoryLease:
 def quality_process(spec, **kwargs):
     from greedylore_autoresearch_grader.process import ProcessResult
     args = list(spec.command)
-    def value(flag): return args[args.index(flag) + 1]
+    def value(flag):
+        actual = flag if flag in args else flag.replace('_','-')
+        return args[args.index(actual) + 1]
     if '--resume_checkpoint' in args:
         assert (Path(value('--resume_checkpoint')) / 'manifest.json').is_file()
     output = Path(value('--output_dir'))
     name = output.name
     transfer = name == 'llama60m_adamw'
+    vision = name == 'resnet18_cifar100_muon'
     sim.event('quality_segment', workload=name, command=args,
               resume=value('--resume_checkpoint') if '--resume_checkpoint' in args else None)
+    if vision and os.environ['STAGED_SCENARIO'] == 'vision_failed':
+        raise ValueError('SIMULATED vision algorithm failure')
     if transfer and os.environ['STAGED_SCENARIO'] == 'transfer_failed':
         raise ValueError('SIMULATED transfer algorithm failure')
     target = int(value('--pause_after_steps') if '--pause_after_steps' in args else value('--stop_after_steps'))
@@ -66,10 +73,17 @@ def quality_process(spec, **kwargs):
                 'contract_hash': value('--contract_hash'), 'files': files}
     (checkpoint / 'manifest.json').write_text(json.dumps(manifest))
     output.mkdir(parents=True)
-    loss = (3.01 if os.environ['STAGED_SCENARIO'] == 'success' else 10.0) if transfer else (10.0 if os.environ['STAGED_SCENARIO'] == 'no_eligible' else 4.01)
+    loss = (10.0 if os.environ['STAGED_SCENARIO'] == 'transfer_quality_failed' else 3.01) if transfer else (10.0 if os.environ['STAGED_SCENARIO'] == 'no_eligible' else 4.01)
     payload = {'status': 'paused' if paused else 'completed', 'contract_hash': value('--contract_hash'),
                'world_size': 4, 'update_step': target, 'checkpoint_path': str(checkpoint),
                'final_eval_loss': loss, 'simulated': True}
+    if vision:
+        from greedylore_autoresearch_grader.contract import EvalContract
+        from greedylore_autoresearch_grader.vision import expected_vision_recipe
+        contract = EvalContract.load(os.environ['CORAL_SIM_CONTRACT'])
+        payload.pop('final_eval_loss')
+        payload.update(epoch=40,test_samples=10000,final_test_loss=1.3,final_test_accuracy=(70.0 if os.environ['STAGED_SCENARIO']=='vision_quality_failed' else 74.94),
+                       training_recipe=expected_vision_recipe(contract.quality[name]), compressor='top_subspace')
     (output / 'all_results.json').write_text(json.dumps(payload))
     Path(value('--training_metrics')).write_text(json.dumps({'update_step': target, 'simulated': True}) + '\n')
     spec.log_dir.mkdir(parents=True)
@@ -83,7 +97,10 @@ def quality_process(spec, **kwargs):
 def timing_formal(grader, contract, mode, refs):
     from greedylore_autoresearch_grader.grader import score_results
     from greedylore_autoresearch_grader.timing_policy import plan_timing
-    sim.event('timing_execution', mode=mode, code=str(grader.codebase_path))
+    node = grader.tasks[0].metadata.get('node_id')
+    record = Path(grader.private_dir).parent / f'public/notes/nodes/{node}/research.json'
+    frozen = json.loads(record.read_text())['frozen'] if record.exists() else False
+    sim.event('timing_execution', mode=mode, code=str(grader.codebase_path), frozen=frozen)
     plan = plan_timing(grader.tasks[0].metadata.get('timing_declaration', {'period_steps': contract.raw['compressor']['update_gap']}),
         minimum=contract.raw['efficiency']['measured_iterations'], maximum=800)
     return score_results('engineering', {}, {name: {'mean': .1, 'relative_spread': .01}
@@ -111,7 +128,8 @@ def driver(output, scenario):
     codex.write_text(f'#!{sys.executable}\nfrom prompt_audit_support import main\nmain()\n')
     codex.chmod(0o755)
     os.environ['PATH'] = str(binary) + os.pathsep + os.environ['PATH']
-    config, paths = sim.prepare()
+    config, paths = sim.prepare(contract_version=2)
+    os.environ['CORAL_SIM_CONTRACT'] = str(paths.coral_dir / 'private/eval_contract.yaml')
     saved = yaml.safe_load((paths.coral_dir / 'config.yaml').read_text())
     saved['grader']['args'].update(staged_research=True, dynamic_artifact_root=str(output / 'tensors'),
                                  dynamic_artifact_min_free_bytes=0, research_planning_lease_seconds=0)
@@ -332,7 +350,8 @@ def driver(output, scenario):
             action('finish', finish, 'finish')
             host = drain()
             assert host.status()['transfer_terminal'], host.status()
-            assert timing_count() == 1
+            expected_timing = timing_before_resume + (0 if scenario=='no_eligible' else 1)
+            assert timing_count() == expected_timing
             action('finish', finish, 'finish')
             drain()
             frozen_rejected = action('design', design, 'late', check=False).returncode != 0
@@ -354,8 +373,10 @@ def driver(output, scenario):
             assert any(item['path'] == f'notes/nodes/{node}/research.json' for item in records)
             assert any(item['path'].startswith(f'research_diagnostics/{node}/probe/') for item in records)
             timings = host.record.read()['iterations'][0]['timings']
-            assert len(timings) == 1
-            assert any(item['path'].startswith(timings[0]['result']['evidence_path'] + '/') for item in records)
+            final_records = host.record.read().get('final_evaluation', {})
+            timing_records = timings + final_records.get('timing', [])
+            assert timing_records
+            assert all(any(item['path'].startswith(t['result']['evidence_path'] + '/') for item in records) for t in timing_records)
             assert not list((paths.coral_dir / 'public').rglob('*.pt'))
             assert sum(e['workload'] == 'llama130m_muon' for e in segments) == 2
             report = dict(simulated=True, scenario=scenario, authenticated_cli=True, staged_prompt_delivery=True,
@@ -369,7 +390,9 @@ def driver(output, scenario):
                     'Diagnostic may be unavailable when bubblewrap is absent; no sandbox execution claim.'])
             report.update(timing_phase=timing_phase, timing_executions=timing_count(),
                 independent_timing=True, no_timing_on_resume=True,
-                timing_evidence_survives=(paths.coral_dir / 'public' / timings[0]['result']['evidence_path']).exists())
+                timing_evidence_survives=all((paths.coral_dir / 'public' / t['result']['evidence_path']).exists() for t in timing_records))
+            report.update(final_timing_executions=sum(e['event']=='timing_execution' and e['mode']=='timing' and e['frozen'] for e in sim.events()),
+                vision_runs=sum(e['workload']=='resnet18_cifar100_muon' for e in segments), freeze_before_final=True)
             (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         finally:
             server.stop()

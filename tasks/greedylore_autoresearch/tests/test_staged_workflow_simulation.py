@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize('scenario', ['success', 'transfer_quality_failed', 'transfer_failed', 'no_eligible'])
+@pytest.mark.parametrize('scenario', ['success', 'transfer_quality_failed', 'transfer_failed', 'no_eligible', 'vision_failed', 'vision_quality_failed'])
 def test_staged_workflow_simulation(tmp_path, scenario):
     import staged_simulation_support
 
@@ -56,4 +56,7 @@ def test_staged_workflow_simulation(tmp_path, scenario):
     assert report['transfer_runs'] == (0 if scenario == 'no_eligible' else 1)
     assert report['budget_enforced'] == (scenario == 'no_eligible')
     assert report['independent_timing'] and report['no_timing_on_resume']
-    assert report['timing_executions'] == 1 and report['timing_evidence_survives']
+    assert report['timing_executions'] >= 1 and report['timing_evidence_survives']
+    assert report['final_timing_executions'] == (0 if scenario=='no_eligible' else 1)
+    assert report['vision_runs'] == (0 if scenario=='no_eligible' else 1)
+    assert report['freeze_before_final']

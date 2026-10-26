@@ -178,6 +178,12 @@ class SyntheticGrader(TaskGrader):
             name: {"mean_iteration_seconds": 0.1}
             for name in ("130m_adamw_bf16", "130m_adamw_fp32")
         }}}
+        from greedylore_autoresearch_grader.contract import EvalContract
+        contract = EvalContract.load(coral_dir / "private/eval_contract.yaml")
+        quality_payload = {name: {"final_eval_loss": loss + loss_delta} for name, loss in baseline_losses.items()}
+        if contract.raw["schema_version"] == 2:
+            reference["quality"]["workloads"]["resnet18_cifar100_muon"] = {"final_test_accuracy":75.91,"final_test_loss":1.27233}
+            quality_payload["resnet18_cifar100_muon"] = {"final_test_accuracy":74.94,"final_test_loss":1.27259}
         inherited = None
         if mode == "engineering":
             anchors = [a for a in read_attempts(coral_dir)
@@ -185,13 +191,12 @@ class SyntheticGrader(TaskGrader):
             inherited = losses_from_attempt(anchors[0]) if anchors else None
         bundle = score_results(
             mode,
-            {name: {"final_eval_loss": loss + loss_delta} for name, loss in baseline_losses.items()}
-            if mode == "research" else {},
+            quality_payload if mode == "research" else {},
             {name: {"mean": seconds, "relative_spread": 0.01}
              for name in reference["efficiency"]["cells"]},
             reference, contract_hash=metadata["contract_hash"], comparable=True,
             evidence_paths=[], utility_reference=root_reference(coral_dir, mode, metadata["contract_hash"]),
-            inherited_quality=inherited, timing_protocol=protocol,
+            inherited_quality=inherited, timing_protocol=protocol, quality_profiles=contract.quality,
         )
         bundle.feedback = "SIMULATED: synthetic inputs to the real scoring code; no training or timing."
         bundle.metadata["simulated"] = True
@@ -505,7 +510,7 @@ def offline_grader_env(coral_dir, *_args, **_kwargs):
     return path
 
 
-def prepare():
+def prepare(*, contract_version=1):
     from autoresearch.bootstrap import bootstrap_root, bootstrap_root_analysis
 
     from coral.config import CoralConfig
@@ -550,6 +555,8 @@ def prepare():
     cfg.task_dir = TASK
     with patch("coral.workspace.grader_env.setup_grader_env", offline_grader_env):
         paths = create_project(cfg, config_dir=TASK)
+    if contract_version == 1:
+        (paths.coral_dir / "private/eval_contract.yaml").write_text((TASK / "taskdata/eval_contract_v1.yaml").read_text())
     seed = git(paths.repo_dir, "rev-parse", "HEAD")
     bootstrap_root(paths.repo_dir, paths.repo_dir / "source_manifest.json")
     a0 = git(paths.repo_dir, "rev-parse", "HEAD")
