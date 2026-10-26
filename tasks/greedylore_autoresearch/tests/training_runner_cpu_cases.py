@@ -63,6 +63,13 @@ def main():
         save=lambda *a, **kw: None, log=lambda *a, **kw: None,
         run=SimpleNamespace(url='offline', dir=str(output), id='test'),
     )
+    original_loader = torch.utils.data.DataLoader
+    actual_workers = []
+    def recording_loader(*args, **kwargs):
+        loader = original_loader(*args, **kwargs)
+        actual_workers.append(loader.num_workers)
+        return loader
+
     original_to = torch.Tensor.to
 
     def cpu_to(tensor, *args, **kwargs):
@@ -76,7 +83,7 @@ def main():
         root.mkdir(parents=True, exist_ok=True)
         return runner.parse_args([
             '--model_config', str(seed / 'configs/llama_60m.json'),
-            '--batch_size', '2', '--num_training_steps', '7', '--warmup_steps', '1',
+            '--batch_size', '2', '--workers', '0', '--num_training_steps', '7', '--warmup_steps', '1',
             '--optimizer', 'adamw', '--dtype', 'float32', '--single_gpu', '--eval_every', '3',
             '--checkpoint_root', str(root / 'checkpoints'), '--checkpoint_interval_steps', '3',
             '--training_metrics', str(root / 'metrics.jsonl'), '--output_dir', str(root),
@@ -96,6 +103,7 @@ def main():
         patch.object(torch.cuda, 'max_memory_allocated', return_value=0),
         patch.object(torch.cuda, 'empty_cache'), patch.object(torch.Tensor, 'to', cpu_to),
         patch.object(runner, 'wandb', wandb),
+        patch.object(torch.utils.data, 'DataLoader', side_effect=recording_loader),
         patch.object(runner, 'load_c4_split', side_effect=lambda *a, **kw: Data()),
         patch.object(runner.AutoTokenizer, 'from_pretrained', return_value=Tokenizer()),
         patch.object(runner.AutoConfig, 'from_pretrained', return_value=config),
@@ -154,6 +162,17 @@ def main():
         rows = [json.loads(line) for line in (output / 'part/metrics.jsonl').read_text().splitlines()]
         assert [row['update_step'] for row in rows] == list(range(1, 8))
         assert all('loss' in row and 'lr' in row and 'tokens_seen' in row for row in rows)
+        # Preserve the quality contract's four-worker configuration instead of
+        # changing its source sharding/order when staged checkpoints are enabled.
+        runner.main(args_for(output / 'workers4', '--workers', '4', '--pause_after_steps', '2'))
+        assert actual_workers[-1] == 4
+        workers_saved = torch.load(output / 'workers4/checkpoints/step-00000002/rank-0.pt', weights_only=True)
+        loader_identity = workers_saved['data_stream_state']['identity']
+        assert loader_identity['workers'] == 4 and loader_identity['requested_workers'] == 4
+        assert loader_identity['prefetch_factor'] == 2
+        assert loader_identity['persistent_workers'] is False and loader_identity['ordered_delivery'] is True
+        manifest = json.loads((output / 'workers4/checkpoints/step-00000002/manifest.json').read_text())
+        assert manifest['config']['effective_workers'] == 4
         # The legacy final diagnostic path retains its final score and now saves
         # the actual last input/labels pair without consuming an extra batch.
         fetched.clear()

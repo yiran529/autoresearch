@@ -35,3 +35,13 @@ def test_staged_two_rank_fresh_ddp_restarts(tmp_path):
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ordered_multiworker_c4_stream_replay(tmp_path):
+    result = subprocess.run(
+        ['/home/wyr/greedy_lore/.venv/bin/python',
+         str(Path(__file__).with_name('training_stream_workers_cpu_cases.py')), str(SEED), str(tmp_path)],
+        env={**os.environ, 'CUDA_VISIBLE_DEVICES': '', 'OMP_NUM_THREADS': '1'},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

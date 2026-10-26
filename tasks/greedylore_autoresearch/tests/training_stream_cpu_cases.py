@@ -29,7 +29,7 @@ def main():
     import diagnostic_checkpoint as checkpoint
     import training_stream as streams
 
-    identity = dict(rank=0, world_size=1, batch_size=2, workers=0, requested_workers=4,
+    identity = dict(rank=0, world_size=1, batch_size=2, workers=0, requested_workers=0,
                     seed=19, shuffle_seed=42, repeat=True)
     seen = []
 

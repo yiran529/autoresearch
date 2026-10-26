@@ -1,8 +1,8 @@
 {
   "adaptations": {
     "c4/run_llama_pretraining.py": {
-      "reason": "offline tokenizer and formal quality evidence; opt-in staged periodic checkpoints, exact deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches",
-      "seed_sha256": "edaaf5db4d2b61675d66a5557e447df6b9d173e1a91562146bca3a00f70073d1"
+      "reason": "offline tokenizer and formal quality evidence; opt-in staged periodic checkpoints, exact deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches; preserve configured DataLoader workers and ordered replay settings for fixed-contract comparison",
+      "seed_sha256": "14c39609cbd835cbb8490525321341937f1d0f19562adbca6249a69ea3ee509e"
     },
     "c4/table_v_timing.py": {
       "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
@@ -512,10 +512,10 @@
   "source_repository": "/home/wyr/greedy_lore",
   "task_files": {
     "diagnostic_checkpoint.py": {
-      "sha256": "058d5a179ff89288ae0fc4f8dbe1978028c3af4546bc20d0bf50fb2dcfabb1d4"
+      "sha256": "2be32fda5c5522a794f5f77946a883e9693228ab60dd379f97cc13911b213596"
     },
     "training_stream.py": {
-      "sha256": "3b6244102eee4cfc486c2efcad8899482e1fb4d1fc1fd99886862236974871c7"
+      "sha256": "dbfa7250a0b0dc428bf2b573a9d1019f64642e7f6a806b71c18f4073f6b08d12"
     }
   }
 }

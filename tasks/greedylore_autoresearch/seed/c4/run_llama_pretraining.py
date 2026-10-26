@@ -126,7 +126,7 @@ def parse_args(args):
     parser.add_argument("--diagnostic_checkpoint", type=str, default=None,
                         help="Save one final distributed state for diagnostics; no periodic saves.")
     parser.add_argument("--checkpoint_root", type=str, default=None,
-                        help="Enable staged checkpoints and deterministic replay (forces workers=0).")
+                        help="Enable staged checkpoints and deterministic ordered DataLoader replay.")
     parser.add_argument("--checkpoint_interval_steps", type=int, default=1000,
                         help="Positive optimizer-update checkpoint period, supplied by the host.")
     parser.add_argument("--resume_checkpoint", type=str, default=None)
@@ -254,7 +254,9 @@ def staged_checkpoint_config(args, model_config, world_size):
         digest.update(str(path.relative_to(seed_root)).encode())
         digest.update(path.read_bytes())
     config.update(code_sha256=digest.hexdigest(), model=model_config.to_dict(),
-                  world_size=world_size, effective_workers=0,
+                  world_size=world_size, effective_workers=args.workers,
+                  dataloader_prefetch_factor=2 if args.workers > 0 else None,
+                  dataloader_persistent_workers=False, dataloader_ordered_delivery=True,
                   torch_version=str(torch.__version__), datasets_version=datasets.__version__,
                   transformers_version=transformers.__version__)
     # Local config/tokenizer files are small and identify preprocessing content.
@@ -363,10 +365,9 @@ def main(args):
         return batch
 
     dataset = PreprocessedIterableDataset(data, tokenizer, batch_size=args.batch_size, max_length=args.max_length)
-    effective_workers = 0 if staged else args.workers
-    if staged and args.workers != 0:
-        logger.warning(f"Staged exact replay forces workers=0 (requested {args.workers}); "
-                       "worker prefetch/order replay is unsupported")
+    # Preserve the fixed quality contract's worker sharding/order. Default
+    # DataLoader delivery is ordered; replay reconstructs the prefetch queues.
+    effective_workers = args.workers
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=None, num_workers=effective_workers)
 
     model_config = AutoConfig.from_pretrained(args.model_config)
@@ -544,6 +545,8 @@ def main(args):
         batches = ReplayTrainingStream(batch_factory, identity={
             'rank': global_rank, 'world_size': world_size, 'batch_size': args.batch_size,
             'workers': effective_workers, 'requested_workers': args.workers,
+            'prefetch_factor': dataloader.prefetch_factor,
+            'persistent_workers': dataloader.persistent_workers, 'ordered_delivery': True,
             'seed': args.seed, 'shuffle_seed': seed_for_shuffle,
             'repeat': args.repeat_training_data, 'dataset_path': args.dataset_path,
             'tokenizer_path': args.tokenizer_path, 'max_length': args.max_length,

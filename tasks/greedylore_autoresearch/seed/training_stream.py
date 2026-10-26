@@ -1,10 +1,12 @@
 """Deterministic streamed-data replay and optimizer-boundary checkpoint scheduling.
 
-The staged C4 runner uses workers=0: worker prefetch/scheduling is deliberately
-unsupported. Replay reads consumed batches again and requires unchanged source
-content, tokenizer, fixed shuffle/order and configuration. Tokenization must be
-deterministic; random data transforms interleaved with model RNG are unsupported.
-Replay cost is linear in consumed batches; no large data buffers are serialized.
+Replay preserves the configured C4 DataLoader worker count and default ordered
+worker delivery. Recreating the iterator from its initial main RNG reconstructs
+worker seeds and prefetched queues; only batches delivered to training count as
+consumed. Source content, tokenizer, shuffle/order and loader settings must match.
+C4 tokenization must be deterministic. Stochastic main-process data transforms
+interleaved with model RNG, and stochastic worker transforms across loader
+restarts, are unsupported. Replay is linear; prefetch buffers are recomputed.
 """
 from pathlib import Path
 
@@ -13,8 +15,9 @@ from diagnostic_checkpoint import capture_rng_state, restore_rng_state
 
 class ReplayTrainingStream:
     def __init__(self, batch_factory, *, identity):
-        if identity.get('workers') != 0:
-            raise ValueError('exact training stream replay requires workers=0')
+        workers = identity.get('workers')
+        if type(workers) is not int or workers < 0:
+            raise ValueError('training stream workers must be a nonnegative integer')
         self.batch_factory = batch_factory
         self.identity = dict(identity)
         self.consumed_batches = 0

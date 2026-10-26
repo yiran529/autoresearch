@@ -178,7 +178,7 @@ def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, conf
         'config': config, 'model_layout': _layout(model),
         'files': {} if errors else {name: info for item in ranks for name, info in item['files'].items()},
         'data_stream_replay': 'exact' if data_stream_state is not None else 'unavailable',
-        'limitations': (['Replay requires unchanged deterministic data, tokenizer, code and workers=0.']
+        'limitations': (['Replay requires unchanged deterministic data, tokenizer, code and ordered DataLoader settings.']
                          if data_stream_state is not None else
                          ['No original dataloader position is saved; not exact training-stream replay.'])
                         + ['Use matching code, world size and DDP bucket layout.'],
