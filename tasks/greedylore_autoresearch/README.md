@@ -25,18 +25,20 @@ the option to require the selection lock for their uninitialized Nodes.
 
 ## Evaluation and handover policy
 
-- Contract v2 requires language final loss / same-contract Dense final loss <= **1.05**,
-  and final-epoch ResNet18/CIFAR100 test accuracy drop <= **1.0 percentage point**
+- Contract v3 requires language final loss / same-contract Dense final loss <= **1.05**,
+  and final-epoch ResNet18/CIFAR100 validation accuracy drop <= **1.0 percentage point**
   by default (operator configurable). See `references/evaluation_tasks.md` for fixed
-  task settings and candidate-owned compression policy. Historical v1 contracts,
+  task settings and candidate-owned compression policy. Historical v1/v2 contracts,
   Attempts and verdicts retain their original behavior. New matching dense/Root
   references are required; historical seed results are not authoritative new references.
 - Attempts retain optional advisory `utility`: `U = S * exp(-d)`, where `S` is
   the geometric mean BF16/FP32 speedup over a fixed, stage-matched N000 reference,
-  and `d = max(0, candidate minus baseline loss over the two quality workloads)`.
-  This discounts speedup by the worst PPL degradation; it does not reward quality
-  improvement or estimate time to quality. It never gates exploration, Parent
-  eligibility or candidate selection. Missing/incompatible evidence produces null
+  and `d = mean(candidate minus baseline loss over the two language workloads)`.
+  Signed changes reward improvements and penalize regressions; equivalently this
+  divides S by the geometric mean relative PPL. Vision accuracy remains a separate
+  gate. This is advisory, not an estimate of time to quality. Saved v1/v2 contracts
+  retain the previous worst-PPL penalty; existing records are not rewritten.
+  It never gates exploration, Parent eligibility or candidate selection. Missing/incompatible evidence produces null
   U with a reason. Engineering quality remains inherited and provisional.
 - New methods must commit `timing.period_steps` in `submission.yaml`; only
   `requested_steps` is optional. Legacy submissions may omit `timing`. Period
@@ -117,6 +119,13 @@ Active iterative Research retains tensor payloads for its current best candidate
 Once an ordinary Node has completed Research, validated Research Analysis, and completed Engineering with validated Analysis (or explicitly skipped Engineering), host reconciliation removes all of that Node's evaluation checkpoint tensors, including the selected candidate and archived/retried Attempts. Cleanup waits for pending/running graders, diagnostic commands and Analyzer sessions to drain; completed Nodes reject further diagnostics. Original manifests, configurations, metrics, logs, Attempts and reports remain unchanged, so the Node remains usable as a code/Analysis Parent, but its tensors cannot be used for later continuation or diagnostics. Root N000 retains its baseline checkpoints. The host saves completion before deletion and records each removal in `private/checkpoint_retention.json` before unlinking payloads. Per-Node `cleanup.status` in `private/autoresearch_state.json` becomes `done` only after successful cleanup; errors remain `pending` with `last_error` and are retried on the next reconciliation, including after restart. Existing completed version-2 Nodes without a cleanup record are also eligible.
 
 Root bootstrap remains one fixed baseline Attempt A0; historical completed Nodes are not reopened. Root N000 follows the same two branches after the host pins S0, creates A0 and submits the fixed baseline Attempt. Dynamic scheduling can start before Root Analysis exists, but does not reserve ordinary Researchers until N000 is fully complete. Root Engineering uses A0 as its quality anchor and ordinary Engineer authorization; the host-only bootstrap exception remains restricted to Root Research. The standalone `bootstrap-root-analysis` command produces baseline evidence only and does not certify full Node completion or automatically start Engineering.
+
+The v3 vision task trains on 45000 official training images and evaluates a fixed,
+class-stratified 5000-image validation split (50 per class, seed1243), using no
+validation augmentation. Forty epochs now mean14080 updates. Daily runs do not
+load official test data; the operator reserves it for a few frozen post-search
+confirmations with the same training recipe. Matching new dense/Root references
+are required; historical test metrics cannot serve as validation evidence.
 
 The fixed Root evaluation follows the recorded contract: the current default runs development-language quality for 4000 updates, language-transfer quality for 5000 updates, ResNet18/CIFAR100 quality and fresh formal timing. Original language schedules and warmups remain unchanged. Root has no iterative development or candidate selection; its algorithm is fixed at A0. Changed budgets invalidate the previous contract's dense/Root references, so establish matching references and evaluate a new run rather than reopening or relabelling historical Nodes.
 

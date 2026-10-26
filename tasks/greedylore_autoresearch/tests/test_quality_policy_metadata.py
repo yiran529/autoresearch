@@ -29,13 +29,14 @@ def _results():
     return quality, reference, timing
 
 
-def _assert_vision_policy(policy):
+def _assert_vision_policy(policy, validation=False):
+    metric = 'final_validation_accuracy' if validation else 'final_test_accuracy'
     assert policy == {
-        'metric': 'final_test_accuracy',
-        'comparison': 'dense final_test_accuracy - candidate final_test_accuracy <= max_accuracy_drop_pp',
+        'metric': metric,
+        'comparison': f'dense {metric} - candidate {metric} <= max_accuracy_drop_pp',
         'max_accuracy_drop_pp': .75,
         'selection': 'final_epoch',
-        'test_examples': 10000,
+        **({'validation_examples': 5000, 'split_seed': 1243} if validation else {'test_examples': 10000}),
     }
 
 
@@ -50,7 +51,7 @@ def test_final_context_publishes_workload_specific_quality_policies(tmp_path):
     assert value['quality']['metric'] == 'workload_specific'
     policies = value['quality']['workload_policies']
     assert set(policies) == set(contract.quality)
-    _assert_vision_policy(policies[VISION])
+    _assert_vision_policy(policies[VISION], validation=True)
     assert policies['llama60m_adamw'] == {
         'metric': 'final_eval_loss',
         'comparison': 'candidate final_eval_loss / dense final_eval_loss <= max_relative_eval_loss',

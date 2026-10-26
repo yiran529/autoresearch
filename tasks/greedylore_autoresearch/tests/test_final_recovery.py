@@ -43,9 +43,8 @@ def final_run(tmp_path, workload='llama60m_adamw', *, validated_cache=True):
     result = dict(status='completed', contract_hash=contract.contract_hash,
                   world_size=4, update_step=profile['stop_after_steps'])
     if profile['model'] == 'resnet18':
-        from greedylore_autoresearch_grader.vision import expected_vision_recipe
-        result.update(epoch=40, test_samples=10000, final_test_loss=1.3, final_test_accuracy=75.,
-                      training_recipe=expected_vision_recipe(profile))
+        from test_validation_vision import validation_payload
+        result.update(validation_payload(profile))
     else:
         result['final_eval_loss'] = 3.
     result_path = work / 'quality-result.json' if validated_cache else output / 'all_results.json'
@@ -104,8 +103,8 @@ def test_foreign_or_incomplete_process_cannot_certify_external_result(tmp_path, 
     ('llama60m_adamw', 'final_eval_loss', True),
     ('resnet18_cifar100_muon', 'status', 'smoke_completed'),
     ('resnet18_cifar100_muon', 'epoch', 39),
-    ('resnet18_cifar100_muon', 'test_samples', 9999),
-    ('resnet18_cifar100_muon', 'final_test_accuracy', 101),
+    ('resnet18_cifar100_muon', 'validation_samples', 4999),
+    ('resnet18_cifar100_muon', 'final_validation_accuracy', 101),
 ])
 def test_external_payload_is_revalidated_before_promotion(tmp_path, workload, field, value):
     from greedylore_autoresearch_grader.gpu import InfraFailure

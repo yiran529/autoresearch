@@ -1,6 +1,6 @@
 # GreedyLoRE AutoResearch 工作流修改方案
 
-更新：2026-10-26。当前契约 v2 采用 **Development experiments** 和 **Final evaluation** 两阶段；当前实现与验收见第 20 节。第 13–19 节保留早期实施记录，不代表 v2 的收尾顺序或本次验收结果。
+更新：2026-10-27。当前契约 v3 采用 **Development experiments** 和 **Final evaluation** 两阶段；当前 U 与 vision 划分见第 22 节；阶段执行见第 20 节。第 13–19 节保留早期实施记录，不代表 v2 的收尾顺序或本次验收结果。
 
 目标是在有限搜索预算下发现 quality 与 efficiency 更好的算法。保留 Researcher、独立 Analyzer、Engineer 三个角色；Researcher 在同一上下文中完成 Development experiments、按需诊断与少量迭代；节点开发结束后先冻结一个完成且合格的候选，再做 Final evaluation：独立新 timing、固定语言迁移任务和 ResNet18/CIFAR100。使用单一研究档案串联设计与证据，将 wisdom 与 summary 分开。先采用简单规则。
 
@@ -131,7 +131,7 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 每个 final component 仅可在宿主判为基础设施失败时重试，默认最多两次；恢复时保留其他已完成组件，同组件结果缓存仅用于恢复同一冻结评估。Vision 重试从头运行，不宣称精确 checkpoint 续跑。算法失败或重试耗尽保留终态失败，不切候选、不调参、不重新开放本节点；其他必需组件仍须进入终态或明确跳过。全部 final components 终态后，才释放 Research 4 卡、退休 Researcher，启动独立 Analyzer 与按最终质量门槛控制的 Engineer。
 
-候选在已提交的 `method_policy.py` 中通过 `configure_compression(args, workload)` 定义各任务的压缩映射，并使用共享 hook；Researcher 验证矩阵和卷积梯度均适用。ResNet rank 64、dense 4000、refresh 1200 仅为 stock GreedyLoRE 默认方法参数，不是候选硬约束。Dense 保持无压缩。固定训练配置与具体模型见 [evaluation_tasks.md](../tasks/greedylore_autoresearch/references/evaluation_tasks.md)：vision 复用 CIFAR100 CM046/CM047，40 epochs/15640 steps、4 GPU、每卡 batch32、workers2、FP32、Muon LR .02/scalar .0005、wd .0005、seed1243、epoch cosine、无 LR warmup。Vision 用最终 epoch 的完整 10000 test accuracy，默认相对同契约 dense 最多下降 1.0 percentage point（operator 可配置），不挑 best epoch。
+候选在已提交的 `method_policy.py` 中通过 `configure_compression(args, workload)` 定义各任务的压缩映射，并使用共享 hook；Researcher 验证矩阵和卷积梯度均适用。ResNet rank 64、dense 4000、refresh 1200 仅为 stock GreedyLoRE 默认方法参数，不是候选硬约束。Dense 保持无压缩。固定训练配置与具体模型见 [evaluation_tasks.md](../tasks/greedylore_autoresearch/references/evaluation_tasks.md)：vision 复用 CIFAR100 CM046/CM047，40 epochs/14080 steps、4 GPU、每卡 batch32、workers2、FP32、Muon LR .02/scalar .0005、wd .0005、seed1243、epoch cosine、无 LR warmup。当前 v3 从官方训练集按类固定划分 45000 train/5000 validation（每类 50 张、seed1243），validation 不作随机增强，日常不加载官方 test；Vision 用最终 epoch 的完整 validation accuracy，默认相对同契约 dense 最多下降 1.0 percentage point（operator 可配置），不挑 best epoch。
 
 语言质量沿用同契约 dense-relative loss <=1.05。新契约必须建立匹配 dense/Root 参考；历史 seed 结果不作为新参考，不能编造哈希。已有 v1 保存运行维持原行为。最终结果可供 Analyzer、后继节点和 wisdom 使用；这是开发选中方法的迁移/稳健性证据，不是 campaign-level 独立 held-out，也不替代同任务独立 seed 或完整 schedule 的确认。方法与任务同时改变的效果不能分别归因。
 
@@ -349,3 +349,12 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 - 固定配置参考、README 及 `/tmp` 中英文任务说明已同步；Researcher/Analyzer 正文继续使用阶段名称。完整 staged 模拟确认暂停／续跑在 4000 步结束，成功语言迁移在 5000 步结束。`gpt-5.6-sol high` review 后无剩余高／中优先级问题；最终 Root/正式评估专项 **71 passed**，覆盖新预算、三质量＋四 timing、旧契约参考提前拒绝、不完整视觉结果、数组/null/字符串结果失败归档。
 
 本轮全量相关回归 **861 passed、2 skipped**（缺少 bubblewrap），包含六个完整 CLI 模拟；新增 JSON 类型补丁及三个回归场景后，Root/正式评估专项 **71 passed**。Ruff 与 diff 检查通过。模拟证据：`/tmp/coral-root-budget-20261026/staged/`。没有执行真实 GPU 训练或模型服务。
+
+
+## 22. 有符号均值 U 与独立 vision validation（2026-10-27）
+- 默认契约升为 v3。`U = S × exp(-((Ldev − LRoot,dev) + (Ltransfer − LRoot,transfer))/2)`，版本 `mean-log-ppl-ratio-v2`。两项语言任务等权、有符号，不再取最差项或把质量改善截为零。相当于 S 除以两项相对 PPL 的几何均值；S 的 Root 参照与 BF16/FP32 测时口径不变。ResNet accuracy 不进入 U，单独报告并保留质量门槛；U 不成为选题、候选选择或晋级门槛。
+- CIFAR100 官方训练集按类固定留出每类 50 张：45000 train/5000 validation，split_seed1243；train 用原增强，validation 无随机增强。40 epoch 对应14080更新，语言预算仍4000/5000。记录并比较 dense/候选的 split index SHA；新结果使用 `final_validation_accuracy/loss`，拒绝 test 指标替代及不匹配划分。Root 与日常最终评估都走同一新契约。
+- 日常入口不构造官方 test dataset。搜索结束后由操作方固定少量候选，用同一45000训练配方重新训练并一次性报告官方 test；已有 seed runner 提供显式 test/split 参数，本次未新增自动 campaign-test 阶段，不授权 Researcher 绕过托管 GPU 入口。已完成 Node 的大产物照常清理，不承诺日后从其 vision checkpoint 精确续跑。
+- 保留 v1/v2 契约解析与旧 U/官方 test 评估语义，不迁移历史运行；原始 v2 模板存为 `eval_contract_v2.yaml`。新 hash 要求重新建立匹配的 dense/Root，历史 test accuracy 不作为新 validation 基线。固定配置与 `/tmp` 中英文说明同步；原 epoch、优化器及方法参数边界不变。
+
+本轮验证：任务与框架相关完整回归 **873 passed、2 skipped**（bubblewrap 缺失或 namespace 不可用），包括六个完整 staged CLI 模拟；另有 **8 项真实 CPU/Gloo 与 seed 校验通过**，覆盖训练／验证划分、无随机增强验证集及实际 runner。Memory 后续整理模拟确认新的最终证据可读、增量引用和重复调用幂等。`gpt-5.6-sol high` review 无剩余高／中等级问题；Ruff、语法与 diff 检查通过。证据位于 `/tmp/coral-validation-utility-20261027/`，未执行真实 GPU 训练或模型调用，不据此声称算法收益。

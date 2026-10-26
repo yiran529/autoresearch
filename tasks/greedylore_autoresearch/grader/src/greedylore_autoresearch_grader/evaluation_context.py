@@ -19,12 +19,16 @@ def quality_policies(workloads, max_relative_eval_loss):
     policies = {}
     for name, profile in workloads.items():
         if name == 'resnet18_cifar100_muon':
+            from .vision import vision_metric_fields
+            metric = vision_metric_fields(profile)[0]
             policies[name] = {
-                'metric': 'final_test_accuracy',
-                'comparison': 'dense final_test_accuracy - candidate final_test_accuracy <= max_accuracy_drop_pp',
+                'metric': metric,
+                'comparison': f'dense {metric} - candidate {metric} <= max_accuracy_drop_pp',
                 'max_accuracy_drop_pp': profile['max_accuracy_drop_pp'],
                 'selection': 'final_epoch',
-                'test_examples': 10000,
+                **({'validation_examples': 100 * profile['validation_per_class'],
+                    'split_seed': profile['split_seed']} if profile.get('evaluation_split') == 'validation'
+                   else {'test_examples': 10000}),
             }
         else:
             policies[name] = {
@@ -55,7 +59,7 @@ def publish_context(contract, reference, root: Path, mode: str, timing_protocol=
         'dense_timing': reference['efficiency']['cells'],
         'timing_protocol': timing_protocol,
     }
-    if contract.raw['schema_version'] == 2:
+    if contract.raw['schema_version'] >= 2:
         value['quality'].update(
             metric='workload_specific',
             comparison='apply each workload policy against its same-contract dense reference',

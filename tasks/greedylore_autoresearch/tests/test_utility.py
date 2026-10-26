@@ -21,7 +21,7 @@ def reference():
 def test_utility_penalizes_worst_ppl_increase_without_rewarding_other_workload():
     value = advisory_utility(
         {"llama60m_adamw": 2.9, "llama130m_muon": 4.05},
-        {"130m_adamw_bf16": 0.1, "130m_adamw_fp32": 0.2}, reference(),
+        {"130m_adamw_bf16": 0.1, "130m_adamw_fp32": 0.2}, reference(), version="worst-ppl-discount-v1",
     )
     assert value["speedup"] == pytest.approx(1.1)
     assert value["loss_penalty"] == pytest.approx(0.05)

@@ -1,5 +1,6 @@
 """Paper-aligned CIFAR comparison: dense Muon versus GreedyLore + Muon."""
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -48,6 +49,9 @@ def parse_args(argv=None):
     parser.add_argument('--contract-hash', default='')
     parser.add_argument('--stop-after-steps', type=int)
     parser.add_argument('--no-download', action='store_true')
+    parser.add_argument('--evaluation-split', choices=['test', 'validation'], default='test')
+    parser.add_argument('--validation-per-class', type=int, default=0)
+    parser.add_argument('--split-seed', type=int, default=1243)
     parser.add_argument('--no-communication-bit-estimates', dest='communication_bit_estimates',
                         action='store_false', default=True)
     parser.add_argument('--checkpoint-root', help='External diagnostic snapshot root; retries restart from scratch')
@@ -76,6 +80,9 @@ def parse_args(argv=None):
         parser.error('formal results cannot use synthetic smoke data or dry-run mode')
     if args.start_compress_iter < 0 or args.update_proj_gap < 1 or args.epochs < 1:
         parser.error('Invalid compression schedule or epoch budget')
+    if (not 0 <= args.validation_per_class < 500 or
+            args.evaluation_split == 'validation' and (args.dataset != 'cifar100' or not args.validation_per_class)):
+        parser.error('validation requires CIFAR100 and a nonempty per-class training split')
     return args
 
 
@@ -146,6 +153,22 @@ def attach_hook(model, args):
     return state
 
 
+def stratified_split_indices(targets, per_class, seed):
+    groups = {}
+    for index, target in enumerate(targets):
+        groups.setdefault(int(target), []).append(index)
+    rng = random.Random(seed)
+    train, validation = [], []
+    for label in sorted(groups):
+        indices = groups[label].copy()
+        if not 0 < per_class < len(indices):
+            raise ValueError('each class requires nonempty training and validation sets')
+        rng.shuffle(indices)
+        validation.extend(indices[:per_class])
+        train.extend(indices[per_class:])
+    return sorted(train), sorted(validation)
+
+
 def make_datasets(args, rank):
     if args.smoke_steps:
         generator = torch.Generator().manual_seed(args.seed)
@@ -161,10 +184,23 @@ def make_datasets(args, rank):
     dataset_type = torchvision.datasets.CIFAR10 if args.dataset == 'cifar10' else torchvision.datasets.CIFAR100
     if rank == 0 and not args.no_download:
         dataset_type(args.data_dir, train=True, download=True)
-        dataset_type(args.data_dir, train=False, download=True)
+        if args.evaluation_split == 'test':
+            dataset_type(args.data_dir, train=False, download=True)
     dist.barrier()
-    return (dataset_type(args.data_dir, train=True, download=False, transform=train_transform),
-            dataset_type(args.data_dir, train=False, download=False, transform=test_transform))
+    trainset = dataset_type(args.data_dir, train=True, download=False, transform=train_transform)
+    if args.validation_per_class:
+        if len(trainset) != 50000 or set(trainset.targets) != set(range(100)):
+            raise ValueError('validation split requires the complete official CIFAR100 training set')
+        train_indices, validation_indices = stratified_split_indices(
+            trainset.targets, args.validation_per_class, args.split_seed)
+        args.split_sha256 = hashlib.sha256(json.dumps(dict(train=train_indices,
+            validation=validation_indices, seed=args.split_seed), sort_keys=True).encode()).hexdigest()
+        args.partition_train_samples = len(train_indices)
+        trainset = Subset(trainset, train_indices)
+        if args.evaluation_split == 'validation':
+            validation_source = dataset_type(args.data_dir, train=True, download=False, transform=test_transform)
+            return trainset, Subset(validation_source, validation_indices)
+    return trainset, dataset_type(args.data_dir, train=False, download=False, transform=test_transform)
 
 
 def seed_worker(worker_id):
@@ -237,7 +273,7 @@ def main(args=None):
                   parameter_count=sum(p.numel() for p in model.parameters()),
                   compression_stage='DDP gradients before Muon momentum/orthogonalization',
                   scheduler='cosine to zero, epoch steps, no LR warmup',
-                  evaluation_split='test', uncompressed_names=['linear'],
+                  uncompressed_names=['linear'],
                   workload=workload, resume_policy='restart_from_scratch',
                   checkpoint_policy=('diagnostic periodic and final snapshots; no exact vision resume'
                                      if args.checkpoint_root else 'none; retries restart from scratch'))
@@ -256,6 +292,7 @@ def main(args=None):
     last_batch = None
     last_checkpoint_step = None
     checkpoint = None
+    evaluation_split = args.evaluation_split
 
     def save_diagnostic():
         return save_final_checkpoint(
@@ -319,9 +356,11 @@ def main(args=None):
         if accuracy > best_accuracy:
             best_accuracy, best_epoch = accuracy, epoch + 1
         row = dict(epoch=epoch+1, update_step=update_step, train_loss=(stats[0]/stats[2]).item(),
-                   train_accuracy=(100*stats[1]/stats[2]).item(), test_loss=test_loss,
-                   test_accuracy=accuracy, test_samples=int(evaluation[2].item()),
-                   best_test_accuracy=best_accuracy, best_epoch=best_epoch, learning_rates=lrs,
+                   train_accuracy=(100*stats[1]/stats[2]).item(),
+                   **{f'{evaluation_split}_loss': test_loss, f'{evaluation_split}_accuracy': accuracy,
+                      f'{evaluation_split}_samples': int(evaluation[2].item()),
+                      f'best_{evaluation_split}_accuracy': best_accuracy},
+                   best_epoch=best_epoch, learning_rates=lrs,
                    ddp_dense_reference_bits=hook.dense_bits if args.communication_bit_estimates else None,
                    ddp_payload_bits=hook.payload_bits if args.communication_bit_estimates else None,
                    muon_collective_bits=optimizer.communication_bits_stats()['total'],
@@ -365,9 +404,15 @@ def main(args=None):
                           augmentation='cifar_random_crop4_flip', bias_bn_weight_decay=0.),
                       resume_policy='restart_from_scratch', diagnostic_checkpoint=checkpoint,
                       status='smoke_completed' if args.smoke_steps else 'completed',
-                      final_test_accuracy=accuracy, final_test_loss=test_loss,
+                      **{f'final_{evaluation_split}_accuracy': accuracy, f'final_{evaluation_split}_loss': test_loss},
                       ddp_payload_scope='estimated per-rank collective inputs including warmup, SVD refresh and score probes; excludes network replication and DDP buffers',
                       muon_payload_scope='existing optimizer AllGather estimate: world_size*(world_size-1)*input_bits; different scope from per-rank DDP inputs, do not sum directly')
+        if args.validation_per_class:
+            result['training_recipe'].update(evaluation_split=evaluation_split,
+                validation_per_class=args.validation_per_class, split_seed=args.split_seed,
+                split_algorithm='stratified-per-class-random-v1')
+            result.update(evaluation_split=evaluation_split, train_samples=args.partition_train_samples,
+                          split_sha256=args.split_sha256)
         (output / 'all_results.json').write_text(json.dumps(result, indent=2) + '\n')
         if tracker is not None:
             tracker.summary.update(result)

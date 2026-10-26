@@ -429,7 +429,8 @@ class Execution:
                     max_relative_eval_loss=contract.raw['quality']['max_relative_eval_loss'],
                     hardware_comparison=metadata.get('hardware_comparison'),
                     timing_protocol=metadata.get('timing_protocol'),
-                    performance_eligible=metadata.get('performance_eligible', False), quality_profiles=contract.quality)
+                    performance_eligible=metadata.get('performance_eligible', False), quality_profiles=contract.quality,
+                    utility_version=contract.utility_version)
             previous = read_attempt(self.coral, sha)
             if previous and previous.agent_id != host.agent_id:
                 raise PermissionError('cannot overwrite another assignment Attempt')

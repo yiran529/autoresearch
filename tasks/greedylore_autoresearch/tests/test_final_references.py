@@ -7,7 +7,7 @@ from test_final_contract import final_contract
 
 def references(tmp_path):
     from greedylore_autoresearch_grader.grader import Grader
-    from greedylore_autoresearch_grader.vision import expected_vision_recipe
+    from test_validation_vision import validation_payload
 
     from coral.config import GraderConfig
     contract = final_contract(tmp_path)
@@ -15,10 +15,7 @@ def references(tmp_path):
     root = private / 'dense_references'
     root.mkdir(parents=True)
     (private / 'eval_contract.yaml').write_text(contract.path.read_text())
-    vision = dict(status='completed', contract_hash=contract.contract_hash, world_size=4,
-                  epoch=40, update_step=15640, test_samples=10000,
-                  final_test_loss=1.2, final_test_accuracy=75.0, compressor='none',
-                  training_recipe=expected_vision_recipe(contract.quality['resnet18_cifar100_muon']))
+    vision = validation_payload(contract.quality['resnet18_cifar100_muon']) | {'compressor': 'none'}
     quality = {'contract_hash': contract.contract_hash, 'workloads': {
         'llama60m_adamw': {'final_eval_loss': 3.0}, 'llama130m_muon': {'final_eval_loss': 4.0},
         'resnet18_cifar100_muon': vision}}
@@ -52,5 +49,5 @@ def test_dense_vision_rejects_relabelled_metrics_or_wrong_recipe(tmp_path, mutat
     else:
         vision['compressor'] = 'top_subspace'
     (root / 'quality.json').write_text(json.dumps(quality))
-    with pytest.raises(InfraFailure, match='dense vision'):
+    with pytest.raises(InfraFailure, match='dense'):
         grader._load_references(contract.contract_hash)

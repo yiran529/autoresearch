@@ -8,7 +8,8 @@ from pathlib import Path
 
 WORKLOADS = {"llama60m_adamw": "llama60m", "llama130m_muon": "llama130m"}
 CELLS = {"130m_adamw_bf16": "bf16", "130m_adamw_fp32": "fp32"}
-UTILITY_VERSION = "worst-ppl-discount-v1"
+UTILITY_VERSION = "mean-log-ppl-ratio-v2"
+LEGACY_UTILITY_VERSION = "worst-ppl-discount-v1"
 
 
 def losses_from_attempt(attempt):
@@ -67,11 +68,15 @@ def root_reference(coral_dir: Path, mode: str, contract_hash: str):
         return None
 
 
-def advisory_utility(quality, timing, reference, *, unavailable_reason=None):
+def advisory_utility(quality, timing, reference, *, unavailable_reason=None, version=UTILITY_VERSION):
+    if version not in {UTILITY_VERSION, LEGACY_UTILITY_VERSION}:
+        raise ValueError('unsupported utility version')
+    legacy = version == LEGACY_UTILITY_VERSION
     result = {
-        "version": UTILITY_VERSION, "advisory_only": True,
-        "formula": "S * exp(-max(0, candidate_loss - baseline_loss over workloads))",
-        "value": None, "speedup": None, "loss_penalty": None,
+        "version": version, "advisory_only": True,
+        "formula": ("S * exp(-max(0, candidate_loss - baseline_loss over workloads))" if legacy else
+                    "S * exp(-mean(candidate_loss - baseline_loss over the two language workloads))"),
+        "value": None, "speedup": None, "loss_penalty" if legacy else "mean_loss_delta": None,
         "reference": reference, "reason": unavailable_reason,
     }
     if unavailable_reason or reference is None:
@@ -82,10 +87,11 @@ def advisory_utility(quality, timing, reference, *, unavailable_reason=None):
                    *reference["quality"].values(), *reference["timing"].values()]
         if any(type(x) not in (int, float) or not math.isfinite(x) or x <= 0 for x in numbers):
             raise ValueError("nonfinite or nonpositive measurement")
-        delta = max(0.0, *(quality[k] - reference["quality"][k] for k in WORKLOADS))
+        deltas = [quality[k] - reference['quality'][k] for k in WORKLOADS]
+        delta = max(0., *deltas) if legacy else sum(deltas) / len(WORKLOADS)
         speedup = math.exp(sum(math.log(reference["timing"][k] / timing[k]) for k in CELLS) / 2)
         result.update(value=speedup * math.exp(-delta), speedup=speedup,
-                      loss_penalty=delta, reason=None)
+                      **{'loss_penalty' if legacy else 'mean_loss_delta': delta}, reason=None)
     except (KeyError, TypeError, ValueError, OverflowError):
         result["reason"] = "invalid_or_missing_measurement"
     return result

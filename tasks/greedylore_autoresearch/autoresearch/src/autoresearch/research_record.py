@@ -87,7 +87,7 @@ class ResearchRecord:
                     'selection_rationale': None, 'frozen': False}
         contract_path = self.store.coral_dir / 'private/eval_contract.yaml'
         contract = yaml.safe_load(contract_path.read_text()) if contract_path.exists() else {}
-        if contract.get('schema_version') == 2:
+        if contract.get('schema_version', 1) >= 2:
             document['evaluation_stages'] = copy.deepcopy(contract['evaluation'])
             document['final_evaluation'] = {}
 

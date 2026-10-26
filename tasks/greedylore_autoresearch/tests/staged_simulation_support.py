@@ -23,7 +23,7 @@ def reference():
             [('llama130m_muon', 4.0), ('llama60m_adamw', 3.0)]}},
             'efficiency': {'cells': {name: {'mean_iteration_seconds': .1} for name in
             ['130m_adamw_bf16', '130m_adamw_fp32']}}}
-    result['quality']['workloads']['resnet18_cifar100_muon'] = {'final_test_accuracy':75.91,'final_test_loss':1.27233}
+    result['quality']['workloads']['resnet18_cifar100_muon'] = {'final_validation_accuracy':75.91,'final_validation_loss':1.27233,'split_sha256':'a'*64}
     return result
 
 
@@ -82,7 +82,7 @@ def quality_process(spec, **kwargs):
         from greedylore_autoresearch_grader.vision import expected_vision_recipe
         contract = EvalContract.load(os.environ['CORAL_SIM_CONTRACT'])
         payload.pop('final_eval_loss')
-        payload.update(epoch=40,test_samples=10000,final_test_loss=1.3,final_test_accuracy=(70.0 if os.environ['STAGED_SCENARIO']=='vision_quality_failed' else 74.94),
+        payload.update(epoch=40,evaluation_split='validation',train_samples=45000,validation_samples=5000,split_sha256='a'*64,final_validation_loss=1.3,final_validation_accuracy=(70.0 if os.environ['STAGED_SCENARIO']=='vision_quality_failed' else 74.94),
                        training_recipe=expected_vision_recipe(contract.quality[name]), compressor='top_subspace')
     (output / 'all_results.json').write_text(json.dumps(payload))
     Path(value('--training_metrics')).write_text(json.dumps({'update_step': target, 'simulated': True}) + '\n')
@@ -128,7 +128,7 @@ def driver(output, scenario):
     codex.write_text(f'#!{sys.executable}\nfrom prompt_audit_support import main\nmain()\n')
     codex.chmod(0o755)
     os.environ['PATH'] = str(binary) + os.pathsep + os.environ['PATH']
-    config, paths = sim.prepare(contract_version=2)
+    config, paths = sim.prepare(contract_version=3)
     os.environ['CORAL_SIM_CONTRACT'] = str(paths.coral_dir / 'private/eval_contract.yaml')
     saved = yaml.safe_load((paths.coral_dir / 'config.yaml').read_text())
     saved['grader']['args'].update(staged_research=True, dynamic_artifact_root=str(output / 'tensors'),

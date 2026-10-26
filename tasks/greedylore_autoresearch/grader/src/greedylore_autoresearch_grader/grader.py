@@ -20,6 +20,7 @@ def score_results(
     utility_reference=None, inherited_quality=None,
     timing_protocol=None, performance_eligible=True, ineligibility_reasons=(),
     quality_profiles=None,
+    utility_version='mean-log-ppl-ratio-v2',
 ):
     scores = {}
     quality_ok = True
@@ -40,15 +41,23 @@ def score_results(
         if 'resnet18_cifar100_muon' in (quality_profiles or {}):
             import math
             name = 'resnet18_cifar100_muon'
-            accuracy = quality[name]['final_test_accuracy']
-            dense_accuracy = reference['quality']['workloads'][name]['final_test_accuracy']
+            from .vision import vision_metric_fields
+            accuracy_key = vision_metric_fields(quality_profiles[name])[0]
+            accuracy = quality[name][accuracy_key]
+            dense_result = reference['quality']['workloads'][name]
+            dense_accuracy = dense_result[accuracy_key]
+            split_matches = not (quality_profiles[name].get('evaluation_split') == 'validation' and (
+                not quality[name].get('split_sha256') or quality[name]['split_sha256'] != dense_result.get('split_sha256')))
+            if not split_matches:
+                ineligibility_reasons = [*ineligibility_reasons, 'validation_split_mismatch']
             if any(type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 100
                    for value in (accuracy, dense_accuracy)):
                 raise ValueError('invalid final classification accuracy')
             drop = dense_accuracy - accuracy
-            passed = drop <= quality_profiles[name]['max_accuracy_drop_pp'] + 1e-12
+            passed = split_matches and drop <= quality_profiles[name]['max_accuracy_drop_pp'] + 1e-12
             quality_ok = quality_ok and passed
-            scores['resnet18_test_accuracy'] = Score(accuracy, 'resnet18_test_accuracy')
+            score_name = 'resnet18_validation_accuracy' if 'validation' in accuracy_key else 'resnet18_test_accuracy'
+            scores[score_name] = Score(accuracy, score_name)
             scores['resnet18_accuracy_drop_pp'] = Score(drop, 'resnet18_accuracy_drop_pp')
             scores['resnet18_quality_pass'] = Score(float(passed), 'resnet18_quality_pass')
         scores["quality_gate"] = Score(float(quality_ok), "quality_gate")
@@ -97,7 +106,7 @@ def score_results(
         {name: payload["final_eval_loss"] for name, payload in quality.items() if 'final_eval_loss' in payload}
         if mode == "research" else (inherited_quality or {}),
         {name: cell["mean"] for name, cell in timing.items()}, utility_reference,
-        unavailable_reason=utility_reason,
+        unavailable_reason=utility_reason, version=utility_version,
     )
     utility["quality_source"] = "measured" if mode == "research" else "inherited (provisional)"
     scores["advisory_utility"] = Score(utility["value"], "advisory_utility", "optional reference; never a gate")
@@ -201,8 +210,13 @@ class Grader(TaskGrader):
         import math
         quality_names = {"llama60m_adamw", "llama130m_muon"}
         contract_path = Path(self.private_dir) / 'eval_contract.yaml'
+        loss_fields = {name: 'final_eval_loss' for name in quality_names}
         if contract_path.exists():
-            quality_names = set(EvalContract.load(contract_path).quality)
+            contract = EvalContract.load(contract_path)
+            quality_names = set(contract.quality)
+            if 'resnet18_cifar100_muon' in quality_names:
+                from .vision import vision_metric_fields
+                loss_fields['resnet18_cifar100_muon'] = vision_metric_fields(contract.quality['resnet18_cifar100_muon'])[1]
         efficiency_names = {"130m_adamw_bf16", "130m_adamw_fp32"}
         try:
             quality_workloads = quality["workloads"]
@@ -212,8 +226,8 @@ class Grader(TaskGrader):
                 set(quality_workloads) == quality_names
                 and set(efficiency_cells) == efficiency_names
                 and all(
-                    math.isfinite(float(quality_workloads[name]['final_test_loss' if name == 'resnet18_cifar100_muon' else 'final_eval_loss']))
-                    and float(quality_workloads[name]['final_test_loss' if name == 'resnet18_cifar100_muon' else 'final_eval_loss']) > 0
+                    math.isfinite(float(quality_workloads[name][loss_fields[name]]))
+                    and float(quality_workloads[name][loss_fields[name]]) > 0
                     for name in quality_names
                 )
                 and all(
@@ -499,6 +513,7 @@ class Grader(TaskGrader):
             timing_protocol=timing_protocol, performance_eligible=not reasons,
             ineligibility_reasons=reasons,
             quality_profiles=contract.quality,
+            utility_version=contract.utility_version,
         )
 
     def evaluate(self) -> ScoreBundle:

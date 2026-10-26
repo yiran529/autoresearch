@@ -181,9 +181,14 @@ class SyntheticGrader(TaskGrader):
         from greedylore_autoresearch_grader.contract import EvalContract
         contract = EvalContract.load(coral_dir / "private/eval_contract.yaml")
         quality_payload = {name: {"final_eval_loss": loss + loss_delta} for name, loss in baseline_losses.items()}
-        if contract.raw["schema_version"] == 2:
+        if contract.raw["schema_version"] >= 2:
             reference["quality"]["workloads"]["resnet18_cifar100_muon"] = {"final_test_accuracy":75.91,"final_test_loss":1.27233}
             quality_payload["resnet18_cifar100_muon"] = {"final_test_accuracy":74.94,"final_test_loss":1.27259}
+        if contract.raw['schema_version'] >= 3:
+            for row in (reference['quality']['workloads']['resnet18_cifar100_muon'], quality_payload['resnet18_cifar100_muon']):
+                row['final_validation_accuracy'] = row.pop('final_test_accuracy')
+                row['final_validation_loss'] = row.pop('final_test_loss')
+                row['split_sha256'] = 'a'*64
         inherited = None
         if mode == "engineering":
             anchors = [a for a in read_attempts(coral_dir)
@@ -196,7 +201,7 @@ class SyntheticGrader(TaskGrader):
              for name in reference["efficiency"]["cells"]},
             reference, contract_hash=metadata["contract_hash"], comparable=True,
             evidence_paths=[], utility_reference=root_reference(coral_dir, mode, metadata["contract_hash"]),
-            inherited_quality=inherited, timing_protocol=protocol, quality_profiles=contract.quality,
+            inherited_quality=inherited, timing_protocol=protocol, quality_profiles=contract.quality, utility_version=contract.utility_version,
         )
         bundle.feedback = "SIMULATED: synthetic inputs to the real scoring code; no training or timing."
         bundle.metadata["simulated"] = True
@@ -555,8 +560,8 @@ def prepare(*, contract_version=1):
     cfg.task_dir = TASK
     with patch("coral.workspace.grader_env.setup_grader_env", offline_grader_env):
         paths = create_project(cfg, config_dir=TASK)
-    if contract_version == 1:
-        (paths.coral_dir / "private/eval_contract.yaml").write_text((TASK / "taskdata/eval_contract_v1.yaml").read_text())
+    if contract_version in (1, 2):
+        (paths.coral_dir / "private/eval_contract.yaml").write_text((TASK / f"taskdata/eval_contract_v{contract_version}.yaml").read_text())
     seed = git(paths.repo_dir, "rev-parse", "HEAD")
     bootstrap_root(paths.repo_dir, paths.repo_dir / "source_manifest.json")
     a0 = git(paths.repo_dir, "rev-parse", "HEAD")

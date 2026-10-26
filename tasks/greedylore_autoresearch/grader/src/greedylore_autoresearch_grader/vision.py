@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,9 @@ def build_vision_command(
         '--contract-hash', str(profile['contract_hash']), '--wandb-mode', 'disabled',
         '--no-download', '--no-communication-bit-estimates',
     ]
+    if profile.get('evaluation_split') == 'validation':
+        command += ['--evaluation-split', 'validation', '--validation-per-class', str(profile['validation_per_class']),
+                    '--split-seed', str(profile['split_seed'])]
     if checkpoint_root is not None:
         if type(checkpoint_interval_steps) is not int or checkpoint_interval_steps <= 0:
             raise ValueError('checkpoint_interval_steps must be a positive integer')
@@ -51,7 +55,7 @@ def build_vision_command(
 
 
 def expected_vision_recipe(profile: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: profile[key] for key in ('model', 'dataset', 'epochs', 'per_device_batch_size',
+    recipe = {key: profile[key] for key in ('model', 'dataset', 'epochs', 'per_device_batch_size',
             'workers', 'seed', 'precision', 'optimizer', 'matrix_learning_rate',
             'scalar_learning_rate', 'weight_decay')} | {
         'matrix_momentum': .95, 'nesterov': True, 'adjust_lr': 'spectral_norm',
@@ -59,6 +63,15 @@ def expected_vision_recipe(profile: Mapping[str, Any]) -> dict[str, Any]:
         'schedule': 'epoch_cosine', 'lr_warmup_steps': 0,
         'augmentation': 'cifar_random_crop4_flip', 'bias_bn_weight_decay': 0.,
     }
+    if profile.get('evaluation_split') == 'validation':
+        recipe.update({key: profile[key] for key in ('evaluation_split', 'validation_per_class', 'split_seed')})
+        recipe['split_algorithm'] = 'stratified-per-class-random-v1'
+    return recipe
+
+
+def vision_metric_fields(profile):
+    split = 'validation' if profile.get('evaluation_split') == 'validation' else 'test'
+    return f'final_{split}_accuracy', f'final_{split}_loss', f'{split}_samples'
 
 
 def validate_vision_result(payload: Mapping[str, Any], profile: Mapping[str, Any]) -> None:
@@ -67,13 +80,21 @@ def validate_vision_result(payload: Mapping[str, Any], profile: Mapping[str, Any
         raise ValueError('vision result status or contract mismatch')
     if payload.get('training_recipe') != expected_vision_recipe(profile):
         raise ValueError('vision result training recipe mismatch')
+    accuracy, loss, samples = vision_metric_fields(profile)
+    validation = profile.get('evaluation_split') == 'validation'
+    count = 100 * profile['validation_per_class'] if validation else 10000
+    if validation and (payload.get('evaluation_split') != 'validation'
+            or type(payload.get('train_samples')) is not int or payload['train_samples'] != 50000 - count
+            or not isinstance(payload.get('split_sha256'), str) or not re.fullmatch('[0-9a-f]{64}', payload['split_sha256'])
+            or 'final_test_accuracy' in payload or 'final_test_loss' in payload):
+        raise ValueError('vision validation split identity mismatch')
     for key, expected in [('world_size', profile['gpu_count']), ('epoch', profile['epochs']),
-                          ('update_step', profile['stop_after_steps']), ('test_samples', 10000)]:
+                          ('update_step', profile['stop_after_steps']), (samples, count)]:
         if type(payload.get(key)) is not int or payload[key] != expected:
             raise ValueError(f'vision result {key} mismatch')
-    for key in ('final_test_loss', 'final_test_accuracy'):
+    for key in (loss, accuracy):
         value = payload.get(key)
         if type(value) not in (int, float) or not math.isfinite(value):
             raise ValueError(f'vision result {key} must be finite')
-    if payload['final_test_loss'] <= 0 or not 0 <= payload['final_test_accuracy'] <= 100:
+    if payload[loss] <= 0 or not 0 <= payload[accuracy] <= 100:
         raise ValueError('vision final metrics are outside valid bounds')

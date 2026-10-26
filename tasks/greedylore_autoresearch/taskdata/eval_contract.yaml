@@ -1,4 +1,4 @@
-schema_version: 2
+schema_version: 3
 source:
   coral_commit: 0123dfb939b35228cf2c1fde224cd0561e727408
   greedylore_commit: d2c38bc2062e06fdfd73185c508e7cc652933de6
@@ -97,7 +97,7 @@ vision:
   dataset: cifar100
   data_path: /home/wyr/ARC-TopK-release/data
   epochs: 40
-  stop_after_steps: 15640
+  stop_after_steps: 14080
   per_device_batch_size: 32
   workers: 2
   precision: fp32
@@ -106,3 +106,6 @@ vision:
   scalar_learning_rate: 0.0005
   weight_decay: 0.0005
   max_accuracy_drop_pp: 1.0
+  evaluation_split: validation
+  validation_per_class: 50
+  split_seed: 1243

@@ -9,8 +9,8 @@ import pytest
 from greedylore_autoresearch_grader.gpu import GpuDevice, gpu_topology_fingerprint
 from greedylore_autoresearch_grader.grader import Grader
 from greedylore_autoresearch_grader.resources import ALLOCATION_POLICY_VERSION
-from greedylore_autoresearch_grader.vision import expected_vision_recipe
 from test_final_references import references
+from test_validation_vision import validation_payload
 
 from coral.config import GraderConfig
 from coral.types import Task
@@ -56,11 +56,9 @@ def root_grader(tmp_path, monkeypatch, *, invalid_vision=False):
             if 'c4/run_llama_pretraining.py' in command:
                 payload.update(world_size=4, update_step=int(value('--stop_after_steps')), final_eval_loss=3.)
             elif 'pytorch-cifar/train_ddp.py' in command:
-                payload.update(world_size=4, epoch=40, update_step=15640, test_samples=10000,
-                    final_test_loss=1.3, final_test_accuracy=75., compressor='top_subspace',
-                    training_recipe=expected_vision_recipe(contract.quality['resnet18_cifar100_muon']))
+                payload.update(validation_payload(contract.quality['resnet18_cifar100_muon']), compressor='top_subspace')
                 if invalid_vision:
-                    payload['test_samples'] = 9999
+                    payload['validation_samples'] = 4999
                 if invalid_vision in {'array', 'null', 'string'}:
                     payload = {'array': [], 'null': None, 'string': 'bad result'}[invalid_vision]
             else:
@@ -102,7 +100,7 @@ def test_root_incomplete_vision_result_is_a_candidate_failure(tmp_path, monkeypa
     bundle = grader.evaluate()
     assert bundle.metadata['failure_class'] == 'candidate'
     assert bundle.aggregated is None
-    assert 'vision' in bundle.feedback and 'test_samples' in bundle.feedback
+    assert 'vision' in bundle.feedback and 'validation_samples' in bundle.feedback
 
 
 def test_root_rejects_previous_training_budget_references_before_gpu(tmp_path, monkeypatch):

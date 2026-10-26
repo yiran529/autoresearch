@@ -17,8 +17,8 @@
       "seed_sha256": "0dc924cfdcdb5d910a03934758318dd335c3b14fd1f907b7ed3875be37bfecac"
     },
     "pytorch-cifar/train_ddp.py": {
-      "reason": "versioned final-evaluation runner with candidate-owned compression mapping, offline evaluation and external diagnostic checkpoints",
-      "seed_sha256": "6b6bd36f51652110111894603dc8ae0bf26604325f48e5ace07d6e7e7bca8bb4"
+      "reason": "versioned final-evaluation runner with candidate-owned compression mapping, offline evaluation and external diagnostic checkpoints; fixed stratified training/validation split without opening official test in search",
+      "seed_sha256": "9eca4d2498cd83a7d3ab3584217b6b823c4dc9ed8e8ddcba96a51ad26a035870"
     },
     "tests/test_c4_model_setup.py": {
       "reason": "quality entrypoint regression coverage",

@@ -80,7 +80,7 @@ def _finite_positive(value: Any, field: str) -> float:
 
 
 def _validate_values(raw: dict[str, Any]) -> None:
-    if type(raw['schema_version']) is not int or raw['schema_version'] not in (1, 2):
+    if type(raw['schema_version']) is not int or raw['schema_version'] not in (1, 2, 3):
         raise ContractError('unsupported contract schema_version')
     _positive_int(raw["hardware"]["gpu_count"], "hardware.gpu_count")
     _positive_int(raw["data"]["dataloader_workers"], "data.dataloader_workers")
@@ -109,8 +109,15 @@ def _validate_values(raw: dict[str, Any]) -> None:
     for name, workload in raw["quality"]["workloads"].items():
         for field in ("per_device_batch_size", "scheduler_steps", "stop_after_steps"):
             _positive_int(workload[field], f"quality.workloads.{name}.{field}")
-    if raw['schema_version'] == 2:
+    if raw['schema_version'] >= 2:
         vision = raw['vision']
+        train_samples = 50000
+        if raw['schema_version'] >= 3:
+            _positive_int(vision['validation_per_class'], 'vision.validation_per_class')
+            _positive_int(vision['split_seed'], 'vision.split_seed')
+            if vision['evaluation_split'] != 'validation' or vision['validation_per_class'] >= 500:
+                raise ContractError('vision requires a nonempty fixed training/validation split')
+            train_samples -= 100 * vision['validation_per_class']
         for key in ('epochs', 'stop_after_steps', 'per_device_batch_size', 'workers'):
             _positive_int(vision[key], f'vision.{key}')
         for key in ('matrix_learning_rate', 'scalar_learning_rate', 'weight_decay'):
@@ -120,7 +127,7 @@ def _validate_values(raw: dict[str, Any]) -> None:
             raise ContractError('vision.max_accuracy_drop_pp must be finite in [0,100)')
         if (vision['name'] != 'resnet18_cifar100_muon' or vision['model'] != 'resnet18'
                 or vision['dataset'] != 'cifar100' or vision['precision'] != 'fp32' or vision['optimizer'] != 'muon'
-                or vision['stop_after_steps'] != vision['epochs'] * math.ceil(50000 / (raw['hardware']['gpu_count'] * vision['per_device_batch_size']))):
+                or vision['stop_after_steps'] != vision['epochs'] * math.ceil(train_samples / (raw['hardware']['gpu_count'] * vision['per_device_batch_size']))):
             raise ContractError('invalid vision workload or complete epoch budget')
         if raw['evaluation'] != {'development': 'llama130m_muon',
                 'final_quality': ['llama60m_adamw', vision['name']]}:
@@ -131,6 +138,7 @@ _TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "taskdata" / "eval_contra
 try:
     _SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.read_text()))
     _LEGACY_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v1.yaml').read_text()))
+    _V2_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v2.yaml').read_text()))
 except OSError:
     _SCHEMA = None
 
@@ -171,6 +179,10 @@ class EvalContract:
         return tuple(self.raw.get('evaluation', {}).get('final_quality', ('llama60m_adamw',)))
 
     @property
+    def utility_version(self):
+        return 'mean-log-ppl-ratio-v2' if self.raw['schema_version'] >= 3 else 'worst-ppl-discount-v1'
+
+    @property
     def quality(self) -> Mapping[str, Mapping[str, Any]]:
         common = {
             "contract_hash": self.contract_hash,
@@ -186,7 +198,7 @@ class EvalContract:
             name: {"name": name, **dict(workload), **common}
             for name, workload in self.raw["quality"]["workloads"].items()
         }
-        if self.raw['schema_version'] == 2:
+        if self.raw['schema_version'] >= 2:
             vision = dict(self.raw['vision'])
             workloads[vision['name']] = {**vision, 'contract_hash': self.contract_hash,
                 'seed': self.raw['training']['seed'], 'gpu_count': self.hardware.gpu_count,
@@ -228,7 +240,7 @@ class EvalContract:
             raise ContractError("contract must be a mapping")
         if _SCHEMA is None:
             raise ContractError("fixed contract schema is unavailable")
-        _check_keys(loaded, _LEGACY_SCHEMA if loaded.get('schema_version') == 1 else _SCHEMA)
+        _check_keys(loaded, {1: _LEGACY_SCHEMA, 2: _V2_SCHEMA}.get(loaded.get('schema_version'), _SCHEMA))
         raw = copy.deepcopy(loaded)
         _validate_values(raw)
         for key in ("c4_path", "tokenizer_path"):
@@ -236,7 +248,7 @@ class EvalContract:
             if not resolved.exists():
                 raise ContractError(f"data.{key} does not exist: {resolved}")
             raw["data"][key] = str(resolved)
-        if raw['schema_version'] == 2:
+        if raw['schema_version'] >= 2:
             path_vision = Path(raw['vision']['data_path']).expanduser().resolve()
             if not path_vision.is_dir():
                 raise ContractError(f'vision.data_path does not exist: {path_vision}')

@@ -26,12 +26,12 @@ def final_contract(tmp_path):
 
 def test_final_contract_separates_development_and_final_quality(tmp_path):
     contract = final_contract(tmp_path)
-    assert contract.raw['schema_version'] == 2
+    assert contract.raw['schema_version'] == 3
     assert contract.development_workload == 'llama130m_muon'
     assert contract.final_workloads == ('llama60m_adamw', 'resnet18_cifar100_muon')
     assert set(contract.quality) == {'llama130m_muon', 'llama60m_adamw', 'resnet18_cifar100_muon'}
     vision = contract.quality['resnet18_cifar100_muon']
-    assert vision['epochs'] == 40 and vision['stop_after_steps'] == 15640
+    assert vision['epochs'] == 40 and vision['stop_after_steps'] == 14080
     assert vision['per_device_batch_size'] == 32 and vision['precision'] == 'fp32'
     assert vision['matrix_learning_rate'] == .02 and vision['scalar_learning_rate'] == .0005
     assert 'rank' not in vision and 'quality_start_step' not in vision

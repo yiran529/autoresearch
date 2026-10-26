@@ -1,7 +1,9 @@
 """Exercise actual vision training on CPU, replacing GPU and dataset boundaries."""
+import copy
 import importlib.util
 import json
 import sys
+from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -77,6 +79,31 @@ def main():
             runner.make_datasets(args, 0)
         assert downloads == [False, False], downloads
 
+        validation_args = runner.parse_args(['--dataset', 'cifar100', '--output-dir', str(output/'val'),
+            '--evaluation-split', 'validation', '--validation-per-class', '50', '--split-seed', '1243',
+            '--no-download', '--wandb-mode', 'disabled'])
+        targets = [label for label in range(100) for _ in range(500)]
+        opened = []
+        class LocalTrainingSet:
+            def __init__(self, root, *, train, download, transform=None):
+                assert train, 'daily validation must never open official test data'
+                opened.append((train, download))
+                self.targets, self.transform = targets, transform
+            def __len__(self): return len(self.targets)
+        with patch.object(runner.torchvision.datasets, 'CIFAR100', LocalTrainingSet):
+            training, validation = runner.make_datasets(validation_args, 0)
+        assert (len(training), len(validation)) == (45000, 5000)
+        assert set(training.indices).isdisjoint(validation.indices)
+        assert set(training.indices) | set(validation.indices) == set(range(50000))
+        assert Counter(targets[i] for i in validation.indices) == {i: 50 for i in range(100)}
+        assert runner.stratified_split_indices(targets, 50, 1243) == (training.indices, validation.indices)
+        assert runner.stratified_split_indices(targets, 50, 1244)[1] != validation.indices
+        assert len(validation_args.split_sha256) == 64
+        assert all(train and not download for train, download in opened)
+        assert any(isinstance(t, runner.transforms.RandomCrop) for t in training.dataset.transform.transforms)
+        assert not any(isinstance(t, (runner.transforms.RandomCrop, runner.transforms.RandomHorizontalFlip))
+                       for t in validation.dataset.transform.transforms)
+
         # This candidate deliberately has no stock iteration/rank/schedule
         # fields. The formal hook must execute it without static estimation.
         class CandidateState:
@@ -103,6 +130,21 @@ def main():
                          patch.object(runner.dist, 'destroy_process_group')]:
                 stack.enter_context(item)
             runner.main(args)
+            validation_run = copy.copy(args)
+            validation_run.output_dir = str(output/'validation-run')
+            validation_run.checkpoint_root = str(output/'validation-checkpoints')
+            validation_run.training_metrics = str(output/'validation-train.jsonl')
+            validation_run.evaluation_split = 'validation'
+            validation_run.validation_per_class = 50
+            validation_run.split_seed = 1243
+            validation_run.split_sha256 = validation_args.split_sha256
+            validation_run.partition_train_samples = 45000
+            runner.main(validation_run)
+        validation_result = json.loads((output/'validation-run/all_results.json').read_text())
+        assert validation_result['evaluation_split'] == 'validation'
+        assert validation_result['validation_samples'] == 6  # actual tiny evaluation fixture
+        assert 'final_validation_accuracy' in validation_result and 'final_test_accuracy' not in validation_result
+        assert validation_result['training_recipe']['validation_per_class'] == 50
         result = json.loads((output / 'all_results.json').read_text())
         config = json.loads((output / 'config.json').read_text())
         epochs = [json.loads(line) for line in (output / 'metrics.jsonl').read_text().splitlines()]
