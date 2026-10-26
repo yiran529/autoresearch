@@ -58,3 +58,17 @@
 2. **[Sparsified SGD with Memory](https://proceedings.neurips.cc/paper/2018/hash/b440509a0106086a67bc2ea9df0a1dab-Abstract.html)** (Stich et al., NeurIPS 2018). **Why:** Understand convergence with sparse communication and residual memory. **How:** top-k/random-k sparsified SGD and memory. **Limits:** SGD-specific assumptions, not arbitrary Adam/residual resets or inconsistent aggregation.
 3. **[The Convergence of Sparsified Gradient Methods](https://proceedings.neurips.cc/paper/2018/hash/314450613369e0ee72d0da7f6fee773c-Abstract.html)** (Alistarh et al., NeurIPS 2018). **Why:** Mathematical justification of magnitude sparsification and error correction. **How:** Analyze delayed corrections under smoothness assumptions. **Limits:** Assumptions and training dynamics must be checked before applying to LLM optimizers.
 4. **[Error Feedback Fixes SignSGD and other Gradient Compression Schemes](https://proceedings.mlr.press/v97/karimireddy19a.html)** (Karimireddy et al., ICML 2019). **Why:** Error compensation for biased compressors. **How:** EF analysis. **Limits:** Require correct state and actual optimizer assumptions.
+5. **[Sketched-SGD](https://papers.nips.cc/paper/2019/hash/75da5036f659fe64b53f3d9b39412967-Abstract.html)** (Ivkin et al., NeurIPS 2019). **Why:** coordinate choices may need global information. **How:** shared linear sketches and sparse/heavy-hitter-oriented recovery. **Limits:** candidate discovery and recovery consume messages and compute.
+6. **[ScaleCom](https://proceedings.nips.cc/paper_files/paper/2020/hash/9d58963592071dbf38a0fa114269959c-Abstract.html)** (Chen et al., NeurIPS 2020). **Why:** sparse compression needs aggregation mechanisms that scale with worker count. **How:** coordinated/worker-aware sparsification. **Limits:** compression and communication structure are intertwined.
+7. **[ATOMO](https://papers.nips.cc/paper_files/paper/2018/hash/33b3214d792caf311e1f00fd22b392c5-Abstract.html)** (Wang et al., NeurIPS 2018). **Why:** coordinate sparsity is only one possible atomic decomposition. **How:** randomized atomic sparsification with variance-aware probabilities. **Limits:** alternative atoms have different encoding and recovery costs.
+
+## 6. Additional mechanism contrasts (optional gap-discovery lenses)
+
+| Contrast | Question to examine | Boundary |
+| --- | --- | --- |
+| Worker-local vs. global support | Does the union of local nominations cover the true global high-utility coordinates when worker inputs cancel? | A shared support requires its own communication/estimation protocol; see `sketching.md` |
+| Greedy magnitude vs. coverage | Does the actual EF/state recurrence defer coordinates repeatedly, and in what units? | A long untransmitted age is not proven optimization damage |
+| Coordinate support vs. another atomic basis | Could a different representation improve the intended quantity under **real** equal bytes? | Exact Top-k remains optimal only for its defined coordinate-wise L2 problem |
+| Local sparse encoding vs. mergeable global message | Are support indices, duplicate aggregation and worker weights transmitted/handled consistently? | Sparse output cardinality is not the wire size; an AllGather baseline differs from sparse AllReduce |
+
+**Transferable insight:** the global **selection target**, the representation atoms, and the delayed-information state may be changed independently or together. A large Top-k residual does not prescribe one remedy; support quality, communication feasibility and optimizer impact are distinct questions.

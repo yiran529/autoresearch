@@ -120,3 +120,16 @@ One-step gain is not proof of improved final training.
 4. **[Error Feedback Fixes SignSGD and other Gradient Compression Schemes](https://proceedings.mlr.press/v97/karimireddy19a.html)** (Karimireddy et al., ICML 2019). **Why:** Understand biased compression and residual feedback. **How:** Error accumulation and virtual iterates. **Useful for:** true recurrence and conditional compressor assumptions. **Limits:** Do not assume the same guarantees for arbitrary AdamW/Muon implementations.
 
 **Interpretation example (hypothetical, not experiment data):** `E_svd=0.08`, `E_basis=0.36`, `E_selected=0.41`. The basis restriction (`0.28`) exceeds the selection excess (`0.05`) *for this input*. It does **not** establish that refresh is too infrequent or that final model quality is impaired.
+
+## 7. Additional mechanism contrasts (optional gap-discovery lenses)
+
+These questions are not a decision tree and do not establish that a particular mutation will help.
+
+| Contrast | What might reveal a limit | Interpretation boundary |
+| --- | --- | --- |
+| Fixed stored basis vs. chosen subspace | Large `E_basis-E_svd` under LR-01's exact orthogonal-subset model | Different basis mixtures or factor protocols need a new feasible-family comparison, not the same `E_basis` formula |
+| Estimated score vs. selected utility | True energy lost by selected directions under repeated fresh, fixed-input sketches | Unbiased estimates are not unbiased top-r decisions; see `sketching.md` |
+| Local factor quality vs. global protocol | Independent worker low-rank reconstructions versus legal shared-factor aggregation | Algebraically factoring local matrices and then averaging factors is not a valid global oracle |
+| Geometric error vs. optimizer effect | Similar Frobenius residuals but different full-state optimizer updates | Representation quality is a proxy, not an optimization guarantee; see `stateful_optimizer.md` |
+
+**Transferable insight:** a low-rank method changes not only the approximation family but also *when* a common coordinate system is created and *which* information can be aggregated before or after that creation. Other representations or communication orders remain legitimate even when none of the diagnostic gaps above is large.

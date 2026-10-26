@@ -64,3 +64,14 @@ Determine the **actual quantized object**, scale generation/synchronization, ran
 3. **[1-bit Adam: Communication Efficient Large-Scale Training with Adam's Convergence Speed](https://proceedings.mlr.press/v139/tang21a.html)** (Tang et al., ICML 2021). **Why:** nonlinear Adam cannot simply use classic gradient EF. **How:** warmup a preconditioner, then compress momentum communication. **Limits:** preconditioner drift, state transitions, QT-ADAM.
 4. **[Maximizing Communication Efficiency for Large-scale Training via 0/1 Adam](https://arxiv.org/abs/2202.06009)** (Lu et al., 2022). **Why:** combine low-bit and infrequent sync with an adaptive optimizer. **How:** approximate stale-state/linearized Adam-like updates. **Limits:** stale state and nonlinear effects; significant prior art for quantization × temporal hybrids.
 5. **[Error Feedback Fixes SignSGD and other Gradient Compression Schemes](https://proceedings.mlr.press/v97/karimireddy19a.html)** (Karimireddy et al., ICML 2019). **Why:** repair biased sign/compression through residual compensation. **How:** EF and virtual iterates. **Limits:** only under matching compressor/optimizer assumptions.
+
+## 6. Additional mechanism contrasts (optional gap-discovery lenses)
+
+| Contrast | Useful question | Boundary |
+| --- | --- | --- |
+| Local vs. shared scales | Is a scale independently derived per worker or jointly reconstructible before integer aggregation? | Different scales cannot generally be merged as raw codes and decoded with a single factor; a shared scale requires a legal establishment protocol |
+| Rounding error vs. estimator bias | Does clipping or outlier handling alter conditional expectation as well as variance? | A smaller rounding variance at a fixed input is not automatically a better equal-byte end-to-end codec |
+| Quantized object vs. optimizer state | Is the message a current gradient, EF input, momentum, model delta, or factor? | The same sign codec on different objects does not define the same optimizer; see `stateful_optimizer.md` |
+| Scale representation vs. total cost | Could indices, scales, grouping or per-worker reconstruction cost outweigh low nominal bits? | Report wire format, actual aggregation and critical path, not only bitwidth |
+
+**Transferable insight:** changing *which quantity is quantized* or *which nonlinear optimizer dependency is maintained separately* can be more consequential than changing the number of quantization levels. The warmup/frozen-preconditioner reasoning in 1-bit Adam is an example, not a universal recommendation to freeze Adam state.

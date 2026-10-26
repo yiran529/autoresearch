@@ -83,3 +83,15 @@ Define **local step**, **outer step**, per-worker and total training tokens, gra
 3. **[SlowMo: Improving Communication-Efficient Distributed SGD with Slow Momentum](https://arxiv.org/abs/1910.00643)**, Wang et al., ICLR 2020. **Motivation:** improve convergence/quality with infrequent communication. **Method:** slow momentum over periodic base-optimizer rounds. **Reuse:** outer-state diagnosis. **Limitation:** optimizer/state/benchmark assumptions must match.
 4. **[DiLoCo: Distributed Low-Communication Training of Language Models](https://arxiv.org/abs/2311.08105)**, Douillard et al., 2023. **Motivation:** LLM training across weakly interconnected groups. **Method:** many inner AdamW steps and outer momentum over model deltas. **Reuse:** window/worker/outer-update diagnostics. **Limitation:** optimizer-state preservation, outer-update and data assumptions.
 5. **[0/1 Adam](https://arxiv.org/abs/2202.06009)**, Lu et al., ICLR 2023. **Motivation:** combine low-bit exchange and local optimizer steps for Adam. **Method:** approximate/stale optimizer state to support efficient communication. **Reuse:** state-drift and update diagnostics. **Limitation:** not a generic plug-in replacement for AdamW.
+6. **[Streaming DiLoCo](https://arxiv.org/abs/2501.18512)**, Douillard et al., 2025. **Motivation:** reduce blocking/peak inter-group communication. **Method:** staggered model-fragment synchronization, communication/compute overlap and quantization. **Reuse:** communicating *which fragment when* as an algorithmic design dimension. **Limitation:** delayed partial updates change protocol semantics; speed/quality claims depend on the actual tested setup.
+
+## 7. Additional mechanism contrasts (optional gap-discovery lenses)
+
+| Contrast | Possible question | Boundary |
+| --- | --- | --- |
+| Fixed sync schedule vs. synchronized conditional decision | Can all ranks observe the same trigger at a guaranteed common event? | Independent local trigger branches can disagree on collective order and deadlock |
+| Model dispersion vs. optimization loss | Is disagreement correlated with an actual outer-update or quality problem? | Dispersion is a parameter-space statistic, not an automatic loss certificate |
+| Whole-model sync vs. fragment/streaming sync | Are peak bandwidth and critical path more important than aggregate bytes? | Partial updates introduce model-version and outer-optimizer dependencies; see Streaming DiLoCo |
+| Fewer rounds vs. a changed communicated object | When the window changes, are the real model deltas still comparable to per-step gradient inputs? | A different object/trajectory needs its own oracle and matched-token evidence |
+
+**Transferable insight:** communication frequency, event ordering, fragmentation, and state staleness can be research variables independent of a compression codec. A new trigger or schedule is meaningful only with a legal common protocol; it need not originate from a measured disagreement gap.

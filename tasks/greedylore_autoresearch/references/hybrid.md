@@ -74,3 +74,14 @@
 2. **[Maximizing Communication Efficiency for Large-scale Training via 0/1 Adam](https://arxiv.org/abs/2202.06009)**, Lu et al., ICLR 2023. **Motivation:** combine 1-bit communication and local steps for adaptive optimization. **Method:** approximate/stale optimizer states enabling communication reductions. **Reuse:** optimizer state interaction. **Limit:** nonlinear state and approximation assumptions are not a trivial Adam plug-in.
 3. **[DiLoCo: Distributed Low-Communication Training of Language Models](https://arxiv.org/abs/2311.08105)**, Douillard et al., 2023. **Motivation:** train LLMs with weak interconnects. **Method:** many inner steps followed by model-delta outer updates. **Reuse:** meaning of the transmitted object. **Limit:** depends on H, outer optimizer and tested data/network.
 4. **[1-bit Adam: Communication Efficient Large-Scale Training with Adam's Convergence Speed](https://proceedings.mlr.press/v139/tang21a.html)**, Tang et al., ICML 2021. **Motivation:** communication savings with Adam-style convergence speed. **Method:** preconditioner warmup and compression of optimizer-specific state. **Reuse:** optimizer-state-aware evidence. **Limit:** specific warmup/freeze rules; not generic SGD compression.
+
+## 7. Additional mechanism contrasts (optional gap-discovery lenses)
+
+| Interaction | Question | Interpretation boundary |
+| --- | --- | --- |
+| Compression after local training | Does a long window change the spectrum, scale or sparsity of the **actual** accumulated model delta? | Per-step gradient evidence is not a delta-compression oracle |
+| Sketch/selection plus a representation codec | Is the shared decision estimated on exactly the aggregate/object later reconstructed? | Better selected directions do not prove the composed decoder or wire protocol is better; see `sketching.md` |
+| Compression with optimizer-owned state | Does the EF/tracking buffer use the same units and event timestamps as the inner/outer optimizer? | An EF identity from ordinary gradient steps does not automatically apply across outer boundaries; see `stateful_optimizer.md` |
+| Two apparently complementary components | Does one component alter the input distribution or critical path of the other? | A quality gain in AB over A and B is not by itself proof of positive mechanistic interaction |
+
+**Transferable insight:** an interesting hybrid need not be a juxtaposition of two familiar codecs. It may instead change the coupling between *when*, *what*, *how*, and *under which shared state* communication occurs. Diagnose the interaction of mechanisms, but do not treat this table as a shortlist of permissible combinations.

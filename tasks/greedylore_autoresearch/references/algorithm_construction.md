@@ -6,7 +6,7 @@
 
 Read **common.md** for communication objects and comparison semantics. Use the relevant family reference for established mechanisms, **initial_diagnostics.md** for D1–D5, **semantic_criteria.md** for correctness, and **engineer_runtime.md** for measured runtime and implementation attribution. These are canonical repository filenames. This reference adds no run quotas, submission procedures, or role permissions; the existing workflow and evaluation contract remain authoritative.
 
-**Use selectively.** Start with Sections 1–3, then consult the most relevant construction pattern or example. Examples illustrate transformations, not an exhaustive menu. It is valid to use a construction not listed here.
+**Use selectively.** Start with Sections 1–3, then consult the most relevant construction pattern or example. Examples illustrate transformations, not an exhaustive menu. It is valid to use a construction not listed here. The examples, diagnostics, and patterns are **resources for reasoning, not a search policy**: neither the problem entry points nor C1–C6 bound the hypothesis space.
 
 ## Problem entry points
 Start from the property or uncertainty to change. The links provide reusable components, not a required menu or evidence of success in the current run. Shared `notes/wisdom.md` contains the run's evidence-bounded lessons; published Analysis remains the source to check.
@@ -16,8 +16,8 @@ Start from the property or uncertainty to change. The links provide reusable com
 | Representation loses useful information at a fixed budget | [Low rank](low_rank.md), [quantization](quantization.md), [hybrids](hybrid.md); C3 | Actual representable family, decoder agreement and total payload |
 | Omitted information accumulates or returns too late | [Sparsification](sparsification.md), [temporal state](temporal.md); C4–C5 | State units, decay/coverage, phase changes and optimizer-visible effects |
 | A fixed policy wastes budget across layers or training phases | [Temporal mechanisms](temporal.md); stateful protocol in §2, C4 and C6 | Observable online signal, synchronized decision, state transition and decision cost |
-| A desirable decision depends on unavailable global information | [Common aggregation semantics](common.md), [low rank](low_rank.md); C2 | What is local/shared, statistic bias and added communication stages |
-| Local reconstruction improves but training does not | [Initial diagnostics](initial_diagnostics.md), [semantic criteria](semantic_criteria.md); C6 | Actual optimizer update, state interaction, matched controls and training evidence |
+| A desirable decision depends on unavailable global information | [Sketching and global statistics](sketching.md), [common aggregation semantics](common.md), [low rank](low_rank.md); C2 | What is local/shared, statistic bias, decision error and added communication stages |
+| Local reconstruction improves but training does not | [Stateful optimizer mechanisms](stateful_optimizer.md), [initial diagnostics](initial_diagnostics.md), [semantic criteria](semantic_criteria.md); C4, C6 | Actual optimizer update, state interaction, matched controls and training evidence |
 | Two components may address complementary limitations | [Hybrid mechanisms](hybrid.md); §2, C1–C3 | Whether their benefits survive composition; state/merge compatibility and complete cost |
 | Fewer bytes do not improve measured runtime | [Engineer runtime](engineer_runtime.md), [hybrids](hybrid.md) | End-to-end measurement, packing/metadata and dependent collectives |
 
@@ -48,6 +48,20 @@ Write a short construction brief:
 Separate what is fixed by the evaluation contract from what Researcher may change. For example, total tokens and the model may be fixed while the compressor state transition is editable. Do not silently turn a quality comparison into a different-budget comparison.
 
 When useful, generate a small set of structurally different candidates before selecting one. Changing the encoded object, projection construction, or state recurrence offers different mechanisms; three values of the same refresh period offer one mechanism with three settings. A valuable combination of known mechanisms remains a valid research candidate when its contribution is described accurately.
+
+### Open-ended discovery lenses (optional, not a routing rule)
+
+A potential gap is a mismatch between a desired property and what an algorithm actually guarantees, represents, observes, or pays for. It need not be a measured failure. These contrasts are **questions that can reveal assumptions**, not a finite taxonomy or instructions about which algorithm to construct.
+
+| Possible viewpoint | Question worth asking | What would *not* follow automatically |
+| --- | --- | --- |
+| Information and coordination | Does the desired global decision require a nonlinear statistic that workers cannot compute consistently from local inputs? | A shared sketch is necessarily the right solution |
+| Representational freedom | Which constraint is imposed by the chosen coordinates, factorization, scale, or update rule rather than by the budget itself? | The less constrained representation improves training |
+| State and temporal structure | Is stored information a residual, an estimate, a predictor, an optimizer state, or a mixture that changes meaning across events? | Any single state recurrence is universally preferable |
+| Equivalent descriptions | Could a different but equivalent optimization variable or protocol expose an aggregatable/cheaper operation? | Algebraic equivalence survives quantization, stale state, or finite precision |
+| Desired properties without a known defect | Could a legal algorithm have fewer dependent collectives, better coverage, lower peak memory, or different quality–cost trade-offs even when diagnostics find no large error? | The target property is valuable on the present workload |
+
+The absence of a large SVD/selection/quantization gap does not close unrelated research directions. Equally, a large proxy gap is not a mandate to optimize that proxy. Counterexamples, invariances, new objectives, and designs outside these examples are all legitimate entry points; distinguish supported facts from hypotheses.
 
 ## 2. Treat the algorithm as an editable stateful protocol
 
@@ -103,7 +117,7 @@ Start from \(H=P+(H-P)\), with a reference \(P\) that sender and receiver can re
 
 Write the exact decision first. Identify the smallest exact or approximate statistic sufficient to make it. Consider a sketch, sample, cached estimate, or a two-stage decision. Derive the statistic's target under the actual worker aggregation.
 
-**Investigate:** bias, variance, selection dependence, and the gap between estimating a statistic and making a good nonlinear decision from it. Shared random projections can estimate global quantities; averaging nonlinear local statistics may estimate a different object. Example B in Section 5 uses a two-stage global selection; the same principle applies to sketches and low-rank scores.
+**Investigate:** bias, variance, selection dependence, and the gap between estimating a statistic and making a good nonlinear decision from it. Shared random projections can estimate global quantities; averaging nonlinear local statistics may estimate a different object. Example B in Section 5 uses a two-stage global selection; the same principle applies to sketches and low-rank scores. See `sketching.md` for conditional estimators, decision regret, and legal merge semantics; these are tools, not a required route.
 
 ### C3 — Relax one representation constraint
 
@@ -126,7 +140,7 @@ $$
 
 where the conditioning and each term must be derived for the proposed method. This display is a design template, not a guarantee for an arbitrary state update.
 
-**Investigate:** whether a correction, forgetting rule, or refresh controls the problematic term. State-tracking mechanisms such as EF21 and the broader 3PC framework provide related examples; their exact recurrences and assumptions matter [P4, P6].
+**Investigate:** whether a correction, forgetting rule, or refresh controls the problematic term. State-tracking mechanisms such as EF21 and the broader 3PC framework provide related examples; their exact recurrences and assumptions matter [P4, P6]. `stateful_optimizer.md` contrasts residual memory, gradient estimation, and optimizer-owned state without treating them as interchangeable.
 
 ### C5 — Add coverage or correction for omitted information
 
@@ -182,6 +196,27 @@ $$
 **Construction:** for direction \(u_j\), draw a fresh \(v_j\sim\mathcal N(0,I_n)\), shared across workers and independent of the conditioned input and basis. Form the local scalar \(u_j^\top H_i v_j\), aggregate the scalars, then square. Its conditional expectation is \(\|u_j^\top\bar H\|^2\). The paper uses these estimates for direction selection and periodically refreshes the basis [P2].
 
 **Transferable operation:** identify the global statistic needed by a decision, preserve the order of aggregation and nonlinearity, and communicate an estimator rather than the full object. Unbiased scores do not make the resulting top-r decision exact.
+
+### 1-bit Adam: change the optimizer representation before compression
+
+**Goal:** reduce communication while retaining useful adaptive-optimizer behavior.
+
+**Obstacle:** the Adam-type update combines first- and second-moment states through a time-dependent nonlinear preconditioner; applying classical error-compensated gradient compression as though the optimizer were linear can alter the intended state/update semantics.
+
+**Construction insight:** for a schematic Adam-like update (omitting bias corrections, weight decay and implementation-specific ordering),
+
+$$
+m_t=\beta_1 m_{t-1}+(1-\beta_1)g_t,\qquad
+v_t=\beta_2 v_{t-1}+(1-\beta_2)g_t^{\odot 2},
+$$
+
+$$
+u_t=\frac{m_t}{\sqrt{v_t}+\epsilon}.
+$$
+
+If a warmup period produces a sufficiently stable preconditioner, a **deliberate algorithmic change** is to hold it fixed during a later compression phase. With $D_\star=\operatorname{diag}((\sqrt{v_\star}+\epsilon)^{-1})$, the schematic update becomes $u_t=D_\star m_t$; this enables a different momentum-communication and error-compensation design. The actual 1-bit Adam protocol specifies its own warmup, momentum, compression, and update rules [P8]. It is **not** exactly vanilla Adam with a compressed gradient, and frozen $v$ is an empirical/algorithm-specific condition rather than a universal property.
+
+**Transferable operation:** identify which nonlinear dependence makes a naive codec unsuitable, then ask whether an equivalent description, phase-specific approximation, or newly maintained state can make a desired communication protocol legal. Account for the change to the optimizer itself, not only its message size. See `stateful_optimizer.md` and `quantization.md`.
 
 ### Error memory and tracking: make history part of the algorithm
 
@@ -396,6 +431,8 @@ A workload-specific failure is not a universal ban. Conversely, repeated failure
 
 ### Minimal candidate card
 
+Use this card to communicate an **executable** candidate if helpful; it is not a prerequisite for brainstorming and not a scorecard for ranking exploratory hypotheses.
+
 ~~~text
 Motivation:
   Observed limitation OR desired property, with the relevant resource constraint.
@@ -454,5 +491,8 @@ The family references remain the broader literature index. The citations below a
 - **[P5] [MARINA](https://proceedings.mlr.press/v139/gorbunov21a.html)** — gradient-difference compression and estimator design.
 - **[P6] [3PC: Three Point Compressors](https://proceedings.mlr.press/v162/richtarik22a.html)** — a state-dependent compressor framework that recovers EF21 and generates additional methods.
 - **[P7] [Error Feedback Reloaded, arXiv v1](https://arxiv.org/abs/2402.10774v1)** — an explicitly described discovery sequence: an equivalent reformulation with impractical machine cloning, an executable weighted method, and improved analysis of the original method. Useful for studying how an impractical ideal construction can suggest a feasible one.
+- **[P8] [1-bit Adam, ICML 2021](https://proceedings.mlr.press/v139/tang21a.html)** — optimizer preconditioning and momentum communication: the algorithmic object and state may need redesign before very-low-bit compression is meaningful.
+- **[P9] [Sketched-SGD, NeurIPS 2019](https://papers.nips.cc/paper/2019/hash/75da5036f659fe64b53f3d9b39412967-Abstract.html)** — use linear, mergeable sketches to approach a global sparsity decision with less direct communication.
+- **[P10] [ATOMO, NeurIPS 2018](https://papers.nips.cc/paper_files/paper/2018/hash/33b3214d792caf311e1f00fd22b392c5-Abstract.html)** — sparsification in alternative atomic representations; a coordinate choice is itself a design constraint.
 
 For any paper-derived construction card, record the target and constraints, direct approach, obstacle, key transformation, required assumptions, new cost, and transferable operation. Keep the original result separate from extensions proposed in the current research.
