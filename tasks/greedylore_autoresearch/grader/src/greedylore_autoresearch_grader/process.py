@@ -47,7 +47,7 @@ class ProcessResult:
 
 def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = None,
                       monitor: Callable | None = None,
-                      monitor_interval: float = 1) -> ProcessResult:
+                      monitor_interval: float = 1, on_start=None, on_finish=None) -> ProcessResult:
     spec.log_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     stdout_path = spec.log_dir / f"{token}.stdout.log"
@@ -71,6 +71,8 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
             start_new_session=True,
         )
         try:
+            if on_start:
+                on_start(process.pid)
             deadline = None if spec.timeout is None else time.monotonic() + spec.timeout
             next_monitor = 0.0
             while process.poll() is None:
@@ -111,6 +113,8 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
                 except ProcessLookupError:
                     pass
             process.wait()
+            if on_finish:
+                on_finish(process.pid)
         if infra_failure is None:
             try:
                 if check_cancelled:

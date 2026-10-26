@@ -307,6 +307,9 @@ class Grader(TaskGrader):
         evidence_paths = []
         def acquire(stage):
             self._stage = stage
+            borrowed = getattr(self, '_staged_reservation', None)
+            if borrowed is not None:
+                return borrowed()
             return reserve_idle_gpus(
                 contract.hardware.gpu_count, options.lock_dir, policy,
                 allow_other_users=stage == "quality" and options.pretraining_allow_other_users,

@@ -19,6 +19,8 @@ from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 
 
 def safe_path(path: Path) -> Path:
+    if '..' in path.parts:
+        raise ValueError('artifact path contains parent traversal')
     if any(p.is_symlink() for p in (path, *path.parents)):
         raise ValueError('artifact path traverses a symlink')
     return path
@@ -152,22 +154,33 @@ class RuntimeArtifacts:
     def preserve_small(self, node_id, source, destination, *, max_file_bytes=2**20):
         """Copy bounded textual evidence; record omitted large files explicitly."""
         source, destination = safe_path(Path(source)), safe_path(Path(destination))
-        if not source.is_relative_to(self.node_root(node_id)):
+        owned = safe_path(self.namespace / 'nodes' / node_id)
+        row = self._read()['nodes'].get(node_id)
+        if not row or row.get('cleaned') or row.get('path') != str(owned):
+            raise ValueError('evidence node ownership is absent or cleaned')
+        if not source.is_relative_to(owned):
             raise ValueError('evidence source is outside node artifacts')
         if not destination.is_relative_to(self.coral_dir / 'public'):
             raise ValueError('persistent evidence destination is not public')
-        records = []
-        for path in sorted(source.rglob('*')):
+        records, copied_bytes, count = [], 0, 0
+        for path in source.rglob('*'):
+            count += 1
+            if count > 4096:
+                records.append({'path': '.', 'preserved': False, 'reason': 'entry budget exceeded'})
+                break
             safe_path(path)
-            if not path.is_file() or path.suffix not in {'.json', '.jsonl', '.log', '.txt', '.py'}:
+            if not path.is_file() or path.suffix not in {'.json', '.jsonl', '.log', '.txt', '.py', '.md', '.csv', '.tsv',
+                    '.sh', '.yaml', '.yml', '.toml', '.cu', '.cpp', '.h', '.c'}:
                 continue
             size = path.stat().st_size
-            copied = size <= max_file_bytes
+            copied = size <= max_file_bytes and copied_bytes + size <= 16 * 2**20
             relative = path.relative_to(source)
             if copied:
                 target = destination / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
+                safe_path(target)
                 shutil.copyfile(path, target)
+                copied_bytes += size
             records.append({'path': relative.as_posix(), 'size_bytes': size, 'preserved': copied,
                             'sha256': hashlib.sha256(path.read_bytes()).hexdigest() if copied else None})
         return records

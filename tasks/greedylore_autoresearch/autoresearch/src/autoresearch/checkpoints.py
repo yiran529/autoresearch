@@ -36,6 +36,15 @@ def discover_checkpoints(evidence, context):
             if value.get('status') != 'complete':
                 descriptions.append(f'{root.name}: unavailable; ' + json.dumps(value))
                 continue
+            from .runtime_artifacts import RuntimeArtifacts
+            artifacts = RuntimeArtifacts(context.coral_dir)
+            managed = artifacts.resolve_checkpoint(path) if path.is_relative_to(context.coral_dir / 'public') else None
+            if managed is not None:
+                root = managed
+            elif (path.is_relative_to(context.coral_dir / 'public') and
+                  path.relative_to(context.coral_dir / 'public').as_posix() in artifacts._read()['checkpoints']):
+                descriptions.append(f'{root.name}: managed tensor payload unavailable or cleaned; manifest retained.')
+                continue
             world = value['world_size']
             if not isinstance(world, int) or isinstance(world, bool) or not 1 <= world <= 4:
                 raise ValueError('invalid world size')
@@ -63,7 +72,8 @@ def discover_checkpoints(evidence, context):
                 'For DDP continuation register via register_checkpoint_hook before loading '
                 '(the training registration helper does this when diagnostic_checkpoint is enabled). '
                 'Inspect manifest.json for config and limitations. Restore on the matching world '
-                'size and DDP bucket layout; no original dataloader position is recorded. '
+                'size and DDP bucket layout. Staged checkpoints record deterministic data replay; '
+                'legacy checkpoints do not record the original dataloader position. '
                 'CPU inspection of a CUDA checkpoint requires restore_rng=False.')
     text = '\n\n## Available final checkpoints\n' + ('\n'.join(descriptions) if descriptions else
         'Unavailable for this Attempt. No historical checkpoint is reconstructed automatically.')

@@ -116,10 +116,10 @@ def run_engineer_diagnostic(coral: Path, peer: int, payload: dict, executor):
         if not re.fullmatch(r'[0-9a-f]{40}', sha):
             raise ValueError('invalid diagnostic candidate SHA')
         code = task.workspace / 'code' / sha
-        _snapshot_commit(repo, sha, code, task.private)
+        _snapshot_commit(repo, sha, code, task.dynamic_root or task.private)
         snapshot_files(code, task.records / payload['request_id'] / 'code' / sha)
         # Validate/freeze inputs before replacing the previous staged scripts.
-        with tempfile.TemporaryDirectory(dir=task.private, prefix='scripts-') as temporary:
+        with tempfile.TemporaryDirectory(dir=task.dynamic_root or task.private, prefix='scripts-') as temporary:
             staged = Path(temporary) / 'experiments'
             snapshot_files(scripts, staged)
             if (task.workspace / 'experiments').exists():
@@ -167,5 +167,5 @@ def evidence_references(coral, node_id, research_sha):
         if ledger.get('owner_agent_id') != agent_id or ledger.get('research_sha') != research_sha:
             raise ValueError('Engineering diagnostic evidence identity mismatch')
         for request_id in ledger['requests']:
-            references.append(str((task.records / request_id).relative_to(coral / 'public')))
+            references.append(str((task.root / 'records' / request_id).relative_to(coral / 'public')))
     return references

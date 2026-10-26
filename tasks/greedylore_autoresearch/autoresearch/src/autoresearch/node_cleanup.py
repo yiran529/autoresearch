@@ -46,18 +46,38 @@ def cleanup_completed_nodes(store, state):
     changed = False
     attempts = None
     for node_id, record in state['nodes'].items():
+        cancelled = (record['research'].get('protocol') == 'staged-v2'
+                     and record['research'].get('status') == 'cancelled')
         if (node_id == 'N000' or (record.get('cleanup') or {}).get('status') == 'done'
-                or not store._node_completed(record)):
+                or not (cancelled or store._node_completed(record))):
             continue
         cleanup = {'status': 'pending', 'last_error': None}
         try:
-            if store._node_completed_unlocked(state, node_id):
+            if cancelled:
+                from .lease import ResearchLease
+                from .runtime_artifacts import RuntimeArtifacts
+                from .staged_research import node_idle
+                lease = ResearchLease(store.coral_dir, node_id)
+                if node_idle(store.coral_dir, node_id) and not lease._live(lease._read()):
+                    artifacts = RuntimeArtifacts(store.coral_dir)
+                    root = artifacts.namespace / 'nodes' / node_id
+                    if root.exists():
+                        artifacts.preserve_small(node_id, root, store.coral_dir / 'public/cancelled' / node_id)
+                    artifacts.cleanup_node(node_id, terminal=True, _already_locked=True)
+                    cleanup['status'] = 'done'
+            elif store._node_completed_unlocked(state, node_id):
                 if attempts is None:
                     attempts = read_attempts(store.coral_dir, island_id=store.island_id,
                                              include_archived=True)
                 with _idle_diagnostics(store.coral_dir, node_id) as idle:
                     if idle and prune_completed_node_checkpoints(
                             store.coral_dir, node_id, attempts, island_id=store.island_id):
+                        if record['research'].get('protocol') == 'staged-v2':
+                            from .runtime_artifacts import RuntimeArtifacts
+                            from .staged_research import node_idle
+                            if not node_idle(store.coral_dir, node_id):
+                                continue
+                            RuntimeArtifacts(store.coral_dir).cleanup_node(node_id, terminal=True, _already_locked=True)
                         cleanup['status'] = 'done'
         except (ValueError, OSError, KeyError, TypeError) as exc:
             cleanup['last_error'] = str(exc)

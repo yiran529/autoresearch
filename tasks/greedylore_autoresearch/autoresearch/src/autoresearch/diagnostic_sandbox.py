@@ -71,7 +71,7 @@ def isolation_available() -> bool:
 
 
 def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=False,
-                  write_sources=None, checkpoint_paths=()) -> list[str]:
+                  write_sources=None, checkpoint_paths=(), coral_dir=None) -> list[str]:
     """Create a minimal namespace; devices are NVIDIA minors, not NVML indices."""
     workspace = Path(workspace).absolute()
     for path in (workspace, workspace / 'experiments', workspace / 'results'):
@@ -90,10 +90,20 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
                 command.extend(['--ro-bind', name, name])
     command.extend(['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
                     '--tmpfs', '/dev/shm', '--dir', '/run'])
-    coral_root = next((parent for parent in workspace.parents if parent.name == '.coral'), None)
+    coral_root = Path(coral_dir) if coral_dir else next((parent for parent in workspace.parents if parent.name == '.coral'), None)
     checkpoints = {Path(value).absolute() for value in checkpoint_paths}
+    managed = set()
+    if coral_root is not None:
+        from .runtime_artifacts import RuntimeArtifacts
+        artifacts = RuntimeArtifacts(coral_root)
+        for relative in artifacts._read()['checkpoints']:
+            candidate = artifacts.resolve_checkpoint(coral_root / 'public' / relative)
+            if candidate is not None:
+                managed.add(candidate)
     for path in checkpoints:
         _no_symlinks(path)
+        if path in managed:
+            continue
         if (coral_root is None or not path.is_relative_to(coral_root / 'public/eval_logs')
                 or path.parent.name != 'checkpoints' or not path.is_dir()):
             raise ValueError('invalid host-selected checkpoint mount')
@@ -222,7 +232,7 @@ def snapshot_files(source: Path, target: Path, limit=64 * 1024 * 1024) -> None:
         os.close(target_fd)
 
 
-def execute_diagnostic(task, payload, cancelled) -> dict:
+def execute_diagnostic(task, payload, cancelled, *, borrowed=None) -> dict:
     """Reserve existing GPU locks, execute only inside bubblewrap, then release."""
     if not shutil.which('bwrap'):
         return {'status': 'unavailable', 'started': False,
@@ -235,7 +245,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
     record = task.records / payload['request_id']
     try:
         build_sandbox(task.workspace, runtime.get('readonly_paths', []), [], payload['argv'],
-                      checkpoint_paths=state.get('checkpoint_paths', []))
+                      checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir))
     except (ValueError, OSError) as exc:
         return {'status': 'unavailable', 'started': False, 'reason': str(exc)}
     queued = time.monotonic()
@@ -245,7 +255,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
         execution_limit = config.get('grader', {}).get('parallel', {}).get('max_workers', 1)
         allow_other_users = config.get('grader', {}).get('args', {}).get(
             'pretraining_allow_other_users', False)
-        reservation = reserve_idle_gpus(
+        reservation = borrowed if borrowed is not None else reserve_idle_gpus(
             payload['gpus'], runtime.get('gpu_lock_dir') or default_lock_dir(),
             IdleGpuPolicy(0, 512, 5), wait_timeout=DIAGNOSTIC_QUEUE_TIMEOUT, poll_interval=5,
             allow_other_users=allow_other_users,
@@ -283,7 +293,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                                 device_minors, payload['argv'], write_sources={
                                     'experiments': frozen / 'experiments',
                                     'results': frozen / 'results',
-                                }, checkpoint_paths=state.get('checkpoint_paths', []))
+                                }, checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir))
         # Do not inherit grader credentials, Python paths or its virtual environment.
         # UUID order matches the reservation; device nodes were resolved by UUID,
         # not by the independently ordered nvidia-smi indices.
@@ -292,7 +302,7 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                        'CUDA_VISIBLE_DEVICES': ','.join(reservation.uuids),
                        'HF_HUB_OFFLINE': '1', 'HF_DATASETS_OFFLINE': '1',
                        'TRANSFORMERS_OFFLINE': '1', 'WANDB_MODE': 'disabled'}
-        if state.get('source_role') == 'engineer':
+        if state.get('source_role') in {'engineer', 'researcher'}:
             environment['PYTHONPATH'] = state['code_path']
             environment['CORAL_DIAGNOSTIC_CODE'] = state['code_path']
         started = time.monotonic()
@@ -303,6 +313,8 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                 cancelled()
                 process = subprocess.Popen(command, env=environment, stdout=stdout, stderr=stderr,
                                            stdin=subprocess.DEVNULL, start_new_session=True)
+                if getattr(task, 'register_job', None):
+                    task.register_job(process.pid)
                 next_inventory = 0
                 while process.poll() is None:
                     cancelled()
@@ -326,6 +338,8 @@ def execute_diagnostic(task, payload, cancelled) -> dict:
                         except ProcessLookupError:
                             pass
                     process.wait()
+                    if getattr(task, 'clear_job', None):
+                        task.clear_job(process.pid)
                 result['runtime_seconds'] = time.monotonic() - started
         # Namespace init exit kills every remaining rank, including new-session ranks.
         try:

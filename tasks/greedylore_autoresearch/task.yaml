@@ -14,6 +14,12 @@ grader:
   timeout: 0
   direction: maximize
   args:
+    # New protocol is opt-in until the role prompts are updated.
+    staged_research: false
+    research_checkpoint_interval_steps: 1000
+    dynamic_artifact_root: /dev/shm/wyr_tmp
+    dynamic_artifact_min_free_bytes: 1073741824
+    research_infra_retry_limit: 2
     pretraining_allow_other_users: false
     gpu_lock_dir: null
     gpu_poll_interval_seconds: 5

@@ -356,7 +356,7 @@ class WorkflowStore:
             # Persist the immutable choice before constructing its evidence envelope.
             _atomic_json(self.state_path, state)
         context = self._context()
-        if record['research'].get('iterative'):
+        if record['research'].get('iterative') and record['research'].get('protocol') != 'staged-v2':
             from .checkpoint_retention import prune_research_checkpoints
 
             prune_research_checkpoints(self.coral_dir, node_id, context.attempts,
@@ -384,7 +384,8 @@ class WorkflowStore:
             if record["research"]["status"] not in {"active", "completed"}:
                 continue
             try:
-                if record['research'].get('iterative') and record.get('analysis') is None:
+                if (record['research'].get('iterative') and record.get('analysis') is None
+                        and record['research'].get('protocol') != 'staged-v2'):
                     from .checkpoint_retention import prune_research_checkpoints
 
                     attempts = research_attempts(read_attempts(self.coral_dir, island_id=self.island_id,
@@ -557,8 +558,12 @@ class WorkflowStore:
                 research = record["research"]
                 if node_id == "N000" or research["agent_id"] != agent_id:
                     continue
-                if research["status"] != "reserved":
-                    raise WorkflowError("only an unstarted reservation can be cancelled")
+                staged = research.get('protocol') == 'staged-v2'
+                if research['status'] != 'reserved' and not (staged and research['status'] == 'active'):
+                    raise WorkflowError('only an unstarted reservation or active staged research can be cancelled')
+                if staged:
+                    from .lease import ResearchLease
+                    ResearchLease(self.coral_dir, node_id).release()
                 research["status"] = "cancelled"
                 self._save_unlocked(state)
                 return {"agent_id": agent_id, "node_id": node_id, "status": "cancelled"}
@@ -570,6 +575,8 @@ class WorkflowStore:
         record = state['nodes'][node_id]['research']
         attempts = research_attempts(read_attempts(self.coral_dir, island_id=self.island_id,
                                                  include_archived=True), node_id)
+        if record.get('protocol') == 'staged-v2' and not record.get('transfer_terminal'):
+            raise ResearchNotReadyError(f'Node {node_id} staged development has not ended')
         if not attempts:
             raise ResearchNotReadyError(f"Node {node_id} requires one formal Research Attempt")
         iterative = bool(record.get('iterative'))
@@ -895,6 +902,9 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
     store._require_node_slot_unlocked(state, canonical.get('node_id'))
     _reject_finalizing(state, context.get("agent_id"), canonical.get("node_id"), canonical.get("mode"))
     mode = canonical.get("mode")
+    from .runtime_artifacts import settings
+    if mode == 'research' and settings(store.coral_dir).get('staged_research') is True:
+        raise WorkflowError('staged Research requires autoresearch research; coral eval cannot bypass it')
     iterative = mode == "research" and state["nodes"][canonical["node_id"]]["research"].get("iterative")
     if mode == "engineering" or iterative:
         label = "Research" if iterative else "Engineering"
@@ -1003,6 +1013,9 @@ def handle_workflow(
         from .planning import planning_operation
 
         return planning_operation(store, operation, owner, payload, context)
+    if operation == 'research_action':
+        from .staged_research import handle_action
+        return handle_action(store, owner, payload, context)
     if operation == "initialize_research":
         node_id = payload["node_id"]
         request = {key: value for key, value in payload.items() if key != "node_id"}

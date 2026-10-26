@@ -82,6 +82,17 @@ class DiagnosticTask:
         self.root = self.coral_dir / 'public/diagnostics' / task_id
         self.workspace = self.root / 'workspace'
         self.records = self.root / 'records'
+        self.dynamic_root = None
+        from .runtime_artifacts import RuntimeArtifacts, settings
+        workflow = self.coral_dir / 'private/autoresearch_state.json'
+        if workflow.exists() and settings(self.coral_dir).get('staged_research') is True:
+            state = json.loads(workflow.read_text())
+            node = state['nodes'].get(task_id[:4], {})
+            if node.get('research', {}).get('protocol') == 'staged-v2':
+                artifacts = RuntimeArtifacts(self.coral_dir)
+                self.dynamic_root = artifacts.namespace / 'nodes' / task_id[:4] / 'diagnostics' / task_id
+                self.workspace = self.dynamic_root / 'workspace'
+                self.records = self.dynamic_root / 'records'
 
     @contextmanager
     def locked(self, timeout=None, *, recovery_timeout=None):
@@ -223,6 +234,13 @@ class DiagnosticTask:
                 **record, **result, 'finished_at': time.time(),
             }, mode=0o644)
             _atomic_json(self.path, state)
+            if self.dynamic_root is not None:
+                from .runtime_artifacts import RuntimeArtifacts
+                artifacts = RuntimeArtifacts(self.coral_dir)
+                inventory = artifacts.preserve_small(state['node_id'], record_dir,
+                    self.root / 'records' / request_id)
+                _atomic_json(self.root / 'records' / request_id / 'artifact_inventory.json',
+                             {'files': inventory}, mode=0o644)
             return result
 
 
@@ -233,6 +251,9 @@ def create_task(coral_dir: Path, node_id: str, mode: str, version: int,
     task = DiagnosticTask(coral_dir, f'{node_id}-{mode}-v{version}')
     identity = {'node_id': node_id, 'mode': mode, 'version': version,
                 'research_sha': research_sha, 'evidence_hash': evidence_hash}
+    if task.dynamic_root is not None:
+        from .runtime_artifacts import RuntimeArtifacts
+        RuntimeArtifacts(coral_dir).require_space(node_id)
     with task.locked(timeout=5):
         if task.path.exists():
             state = task.read()

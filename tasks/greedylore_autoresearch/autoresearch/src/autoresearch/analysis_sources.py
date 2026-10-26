@@ -73,8 +73,8 @@ def read_source(reference, evidence, context, *, version=None):
         if any(ledger.get(key) != value for key, value in identity.items()):
             raise ValueError('ledger identity mismatch')
         request = ledger['requests'][parts[3]]
-        record_path = task.records / parts[3] / 'record.json'
-        record = json.loads(_regular_bytes(record_path, task.records))
+        record_path = (task.root / 'records') / parts[3] / 'record.json'
+        record = json.loads(_regular_bytes(record_path, (task.root / 'records')))
         public_identity = {('analysis_version' if key == 'version' else key): value
                            for key, value in identity.items()}
         if (any(record.get(key) != value for key, value in public_identity.items())
@@ -88,7 +88,7 @@ def read_source(reference, evidence, context, *, version=None):
             raise ValueError('not a diagnostic text/log/script result')
         if Path(suffix[-1]).suffix not in {'.json', '.log', '.txt', '.md', '.csv', '.tsv', '.py'}:
             raise ValueError('binary diagnostic payload is not citation evidence')
-        return _regular_bytes(task.records / parts[3] / Path(*suffix), task.records)
+        return _regular_bytes((task.root / 'records') / parts[3] / Path(*suffix), (task.root / 'records'))
     except (OSError, KeyError, ValueError) as exc:
         raise ArtifactValidationError(f'diagnostic evidence unavailable: {reference}: {exc}') from exc
 
@@ -159,14 +159,14 @@ def seal_sources(authored, evidence, context, version):
             status = request.get('result', {}).get('status')
             if status not in _TERMINAL:
                 continue
-            root = task.records / request_id
+            root = (task.root / 'records') / request_id
             if status == 'interrupted':
                 # The pre-execution interruption placeholder is deliberately
                 # charged, but is not a completed evidence record after a crash.
                 record_path = root / 'record.json'
                 if not record_path.exists():
                     continue
-                record = json.loads(_regular_bytes(record_path, task.records))
+                record = json.loads(_regular_bytes(record_path, (task.root / 'records')))
                 if 'finished_at' not in record:
                     continue
             paths = [root / 'record.json', root / 'stdout.log', root / 'stderr.log']

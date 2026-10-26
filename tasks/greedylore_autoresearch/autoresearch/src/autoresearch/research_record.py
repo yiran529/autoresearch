@@ -175,3 +175,18 @@ class ResearchRecord:
             value.update(selected_iteration=selected, selection_rationale=reason, frozen=True)
 
         return self._change(request_id, 'freeze', [selected, reason], update)
+
+    def bind_unrun(self, sha, request_id):
+        """Host-only: give an unexecuted, stopped design a committed code witness."""
+        if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}', sha):
+            raise ValueError('representative SHA must be a full commit')
+        def update(value):
+            if any(row['code_sha'] for row in value['iterations']):
+                raise ValueError('an executed candidate already represents this Node')
+            row = value['iterations'][-1]
+            if row['status'] != 'stopped':
+                raise ValueError('unexecuted design must be explicitly stopped')
+            row['code_sha'] = sha
+            row['observations'].append({'status': 'stopped', 'executed': False,
+                'reason': 'development ended before training; committed code witness only'})
+        return self._change(request_id, 'bind_unrun', sha, update)

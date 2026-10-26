@@ -33,12 +33,13 @@ MAX_REQUEST_BYTES = 64 * 1024
 WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
     "complete_assignment", "cancel_assignment", "finish_assignment", "archive_evidence",
-    "acquire_research_planning", "renew_research_planning", "release_research_planning",
+    "acquire_research_planning", "renew_research_planning", "release_research_planning", "research_action",
 })
 OPERATIONS = frozenset({
     "submit_attempt", "retry_attempt", "publish_artifact", "start_memory_if_due", "run_diagnostic",
 }) | WORKFLOW_OPERATIONS
 _WORKFLOW_FIELDS = {
+    "research_action": frozenset({"node_id", "action", "data", "request_id"}),
     "reconcile_workflow": frozenset(),
     "initialize_research": frozenset({"node_id", "parent_node", "hypothesis", "selection_rationale", "delta", "risk", "falsification_criteria"}),
     "claim_engineering": frozenset({"node_id"}),
@@ -542,6 +543,9 @@ class TrustedWriteService:
         context = {
             "coral_dir": str(self.coral_dir),
             "agent_id": binding.agent_id if binding else None,
+            "host_pid": os.getpid(),
+            "host_start_time": process_start_time(os.getpid()),
+            "worktree": str(binding.worktree) if binding else None,
             "agent_root_pid": binding.root_pid if binding else None,
             "agent_start_time": binding.start_time if binding else None,
             "island_id": binding.island_id if binding else None,

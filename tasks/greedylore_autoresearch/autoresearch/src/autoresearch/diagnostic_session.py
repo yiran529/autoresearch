@@ -84,7 +84,9 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
     shutil.copyfile(output_schema, schema)
     output = scratch / 'results/output.json'
     # Keep runtime caches out of durable evidence, including on setup/launch failure.
-    with tempfile.TemporaryDirectory(prefix='codex-home-', dir=task.private) as home_dir:
+    cache_root = task.dynamic_root if getattr(task, 'dynamic_root', None) is not None else task.private
+    cache_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='codex-home-', dir=cache_root) as home_dir:
         home = Path(home_dir)
         (home / '.codex').mkdir(exist_ok=True)
         # Codex needs its own API credentials. These are never mounted in experiments.
@@ -101,7 +103,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         # build_sandbox forbids private mounts; home is a new, otherwise empty directory
         # explicitly added for Codex bookkeeping, not the grader's actual home.
         command = build_sandbox(task.workspace, mounts, [], ['true'], network=True,
-                                checkpoint_paths=checkpoint_paths)
+                                checkpoint_paths=checkpoint_paths, coral_dir=str(task.coral_dir))
         command = command[:-2]  # replace the placeholder command following '--'
         command.extend(['--bind', str(home), str(home)])
         if auth.is_file():

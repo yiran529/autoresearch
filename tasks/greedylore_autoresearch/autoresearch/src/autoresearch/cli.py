@@ -147,6 +147,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autoresearch")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    research = commands.add_parser('research', help='host-controlled staged research (opt-in)')
+    research.add_argument('action', choices=('register', 'design', 'decision', 'train', 'diagnostic', 'finish', 'status', 'recover'))
+    research.add_argument('--node', required=True)
+    research.add_argument('--file', type=Path, help='JSON action data; status/recover need no file')
+    research.add_argument('--request-id', default=None, help='reuse after timeout for idempotency')
+
     evidence = commands.add_parser('evidence', help='archive small supporting scripts and logs')
     evidence_commands = evidence.add_subparsers(dest='evidence_command', required=True)
     archive = evidence_commands.add_parser('archive')
@@ -225,6 +231,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
+    if args.command == 'research':
+        data = json.loads(args.file.read_text()) if args.file else {}
+        result = request_trusted(_coral_dir(), 'research_action', {
+            'node_id': args.node, 'action': args.action, 'data': data,
+            'request_id': args.request_id or uuid.uuid4().hex})
+        print(json.dumps(result, indent=2))
+        return
     if args.command == 'evidence':
         from autoresearch.attachments import MAX_ATTACHMENT_BYTES
 

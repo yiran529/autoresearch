@@ -186,9 +186,12 @@ def _manifest_hash(manifest: dict[str, Any]) -> str:
 
 
 def _reference_path(reference: str, context: AnalysisContext) -> Path:
-    if reference.startswith('diagnostics/'):
-        relative = Path(reference.removeprefix('diagnostics/'))
-        root = context.coral_dir / 'public/diagnostics'
+    if reference.startswith(('diagnostics/', 'research_diagnostics/')):
+        prefix = reference.split('/', 1)[0]
+        if prefix == 'research_diagnostics' and not re.fullmatch(r'research_diagnostics/N[0-9]{3}/[A-Za-z0-9_-]{1,64}(?:/[^\x00]*)?', reference):
+            raise ArtifactValidationError('invalid Researcher diagnostic reference')
+        relative = Path(reference.removeprefix(prefix + '/'))
+        root = context.coral_dir / 'public' / prefix
         target = root / relative
         if (relative.is_absolute() or '..' in relative.parts or target.is_symlink()
                 or not target.resolve().is_relative_to(root.resolve())):
@@ -196,7 +199,7 @@ def _reference_path(reference: str, context: AnalysisContext) -> Path:
         return target
     if reference.startswith("notes/"):
         relative = reference.removeprefix("notes/")
-        if not re.fullmatch(r"nodes/N[0-9]{3}/(?:research|engineering)_analysis_v[1-9][0-9]*\.(?:md|json)", relative):
+        if not re.fullmatch(r"nodes/N[0-9]{3}/(?:(?:research|engineering)_analysis_v[1-9][0-9]*\.(?:md|json)|research\.json)", relative):
             raise ArtifactValidationError("invalid historical Analysis reference")
         target = context.notes_root / relative
         if target.is_symlink() or not target.resolve().is_relative_to(context.notes_root.resolve()):
@@ -296,6 +299,18 @@ def resolve_evidence(
     research_evidence = tuple(_attempt_evidence(item, candidate=True) for item in research)
     candidate_evidence = research_evidence if len(research_evidence) > 1 else ()
     raw_references = {reference for item in research_evidence for reference in item.eval_refs}
+    record_path = node_root / 'research.json'
+    if record_path.exists():
+        from .research_record import ResearchRecord
+        from .state import WorkflowStore
+        state = json.loads((ctx.coral_dir / 'private/autoresearch_state.json').read_text())
+        owner = state['nodes'][node_id]['research']['agent_id']
+        private_record = ResearchRecord(WorkflowStore(ctx.coral_dir), owner, node_id).read()
+        if not private_record.get('frozen') or json.loads(record_path.read_text()) != private_record:
+            raise ArtifactValidationError('research record must match the frozen host record')
+        raw_references.add(f'notes/nodes/{node_id}/research.json')
+        for path in (ctx.coral_dir / 'public/research_diagnostics' / node_id).glob('*'):
+            raw_references.add(path.relative_to(ctx.coral_dir / 'public').as_posix())
     for reference in spec.get("analysis_refs", {}).values():
         if reference is not None:
             if not isinstance(reference, str) or not re.fullmatch(
@@ -701,6 +716,13 @@ def analyze(
         with task.session() if task else nullcontext():
             analyzer_scratch = (task.workspace if task else
                                 Path(tempfile.mkdtemp(prefix="autoresearch-analyzer-")))
+            if task is None and (ctx.coral_dir / 'private/research_records' / f'{node_id}.json').exists():
+                import uuid
+
+                from .runtime_artifacts import RuntimeArtifacts
+                artifacts = RuntimeArtifacts(ctx.coral_dir)
+                artifacts.require_space(node_id)
+                analyzer_scratch = artifacts.path(node_id, f'analysis/{uuid.uuid4().hex}')
             analyzer_snapshot = _prepare_evidence_snapshot(evidence, ctx, analyzer_scratch)
             analyzer_code = code_snapshotter(evidence, ctx, analyzer_scratch)
             analyzer_roots = [analyzer_code, analyzer_snapshot]
