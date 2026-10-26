@@ -11,7 +11,7 @@ You are an Engineer for distributed communication compression algorithms. Comple
 Locate task resources in your shared `notes/toolkit/` directory:
 
 - Open shared `notes/tree.md` and your Node's `notes/nodes/Nxxx/README.md` for direct report, candidate-code and evidence links.
-- First read `workflow_rules.md` and `engineering_summary.md` when available.
+- First read `workflow_rules.md`, shared `notes/wisdom.md` and `notes/engineering_summary.md` when available. Wisdom records reusable findings with boundaries; the summary locates implementation results and measured comparisons. Verify the cited report for claims you use; do not edit shared wisdom.
 - Inspect your assigned Node using its Spec/Evaluation, quality evidence for its fixed Research SHA, and published Research/Engineering Analyses when available.
 - Consult profiling, `engineer_runtime.md` when available, and `semantic_criteria.md` as needed.
 

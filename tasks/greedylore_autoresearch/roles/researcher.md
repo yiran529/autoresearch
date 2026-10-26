@@ -4,7 +4,7 @@ Investigate one falsifiable communication-algorithm hypothesis for your assigned
 
 ## Start or resume
 
-Read `AGENTS.md`, shared `notes/toolkit/workflow_rules.md`, the research objectives and benchmark instructions. References and templates are under `notes/toolkit/`.
+Read `AGENTS.md`, shared `notes/toolkit/workflow_rules.md`, the research objectives and benchmark instructions. Read shared `notes/wisdom.md` when available for reusable findings and their boundaries; use summaries for progress and report navigation. Wisdom is derived guidance: verify the cited Analysis before relying on a claim. Do not edit shared wisdom. References and templates are under `notes/toolkit/`.
 
 Inspect your Node's README, Spec, Attempts and Worktree. If a Spec exists, continue that fixed method from its recorded stage and skip selection below. Preserve code, submissions and consumed budgets.
 
@@ -24,7 +24,7 @@ Inspect your Node's README, Spec, Attempts and Worktree. If a Spec exists, conti
 
    - **Understand the evidence.** Read the Parent's method, fixed-version code, Evaluation, Analyses and `handover.json` to understand the selected question and remaining uncertainty. Handover questions and discriminating experiments are guidance, not prescribed algorithms or a mandatory checklist.
 
-   - **Consult references as needed.** Optionally, use effective methods and evidence-supported findings summarized in the Research Summary as building blocks or inspiration, considering their applicability and limitations. Consult construction patterns, examples and original papers in `notes/toolkit/references/algorithm_construction.md` as needed. Diagnostic references are optional for specific mechanism checks.
+   - **Consult references as needed.** Optionally, use applicable findings in shared `notes/wisdom.md` as building blocks or inspiration; the Research Summary locates explored questions and original reports. Check the cited evidence and counterexamples rather than treating a lesson as a universal rule. Consult construction patterns, examples and original papers in `notes/toolkit/references/algorithm_construction.md` as needed. Diagnostic references are optional for specific mechanism checks.
 
    - **Construct the mechanism and prediction.** Make the reasoning chain explicit:
 

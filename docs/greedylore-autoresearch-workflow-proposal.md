@@ -199,9 +199,13 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 Wisdom 的单位是会影响设计、解释或实验选择的认识；同一认识的新证据合并，不能因重复就自动提升为普遍规律。不要求覆盖每个节点，没有新增认识就不更新。分数、状态和完整日志不放入 wisdom，强制流程保留在 workflow rules。
 
-Memory 读取当前 wisdom、新节点 Analysis，必要时回查直接证据，统一发布更新；Researcher/Analyzer 不直接修改共享 wisdom。宿主补充发布、输入 staging 与读取入口。每节点 60M 迁移结果已属于可供后续使用的已知证据，记录其来源与范围。
+Memory 读取当前 wisdom 与新节点 Analysis，按需查阅已覆盖的历史 Analysis；旧节点 Spec、evaluation 与原始日志不随每次调用重复加载。旧 run 缺少 wisdom 时一次性补读已有 summary 覆盖的 Analysis。原始证据仅从本次必读 Analysis 的冻结 manifest 中按路径与 SHA-256 提取，统一限制大小与数量；缺失、哈希不匹配或被裁剪均视为不可用。
+Memory 一次输出三份 Markdown 正文，宿主补充累计 `processed_analyses` 并发布；三份全部发布成功才确认该节点已整理。中途失败复用已封存结果，不重复调用模型。累计覆盖不代表每次重读所有历史；没有新增认识可保持 wisdom 正文不变。Researcher/Analyzer 不直接修改共享 wisdom。每节点 60M 迁移结果属于后续可使用的已知证据，记录其来源与范围。
+当前知识整理实现保留现有触发与单 worker，不新增角色或数据库。仅修改 Memory 写作要求、Researcher/Engineer 的 wisdom 阅读指引与 ref 问题导航；Researcher/Analyzer 的实验流程 prompt 改版仍单独处理。
 
 Ref 保留家族文件，增加一个简短的问题入口，链接表示容量、历史积累、预算分配、阶段变化等问题对应的构件；同一内容可被多个入口引用，不复制正文。跨方向组合不要求多 Parent 状态管理。
+
+知识整理验收（2026-10-26）：任务测试与 sandbox、trusted writes、dynamic agents 回归共 780 passed、2 skipped，含正常及故障恢复完整模拟；新增覆盖旧 run 迁移、三份文档中断重试、宿主累计覆盖、增量输入和冻结证据哈希。5.6-sol high review 无剩余阻塞问题。模拟替换模型与训练，验证协议和证据边界，不证明真实 Memory 的归纳质量或科学结论成立。
 
 ## 13. 实施顺序、验收与待定参数
 

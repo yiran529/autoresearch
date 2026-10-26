@@ -8,6 +8,21 @@ Read **common.md** for communication objects and comparison semantics. Use the r
 
 **Use selectively.** Start with Sections 1–3, then consult the most relevant construction pattern or example. Examples illustrate transformations, not an exhaustive menu. It is valid to use a construction not listed here.
 
+## Problem entry points
+Start from the property or uncertainty to change. The links provide reusable components, not a required menu or evidence of success in the current run. Shared `notes/wisdom.md` contains the run's evidence-bounded lessons; published Analysis remains the source to check.
+
+| Current problem | References and construction patterns | Check before transferring |
+| --- | --- | --- |
+| Representation loses useful information at a fixed budget | [Low rank](low_rank.md), [quantization](quantization.md), [hybrids](hybrid.md); C3 | Actual representable family, decoder agreement and total payload |
+| Omitted information accumulates or returns too late | [Sparsification](sparsification.md), [temporal state](temporal.md); C4–C5 | State units, decay/coverage, phase changes and optimizer-visible effects |
+| A fixed policy wastes budget across layers or training phases | [Temporal mechanisms](temporal.md); stateful protocol in §2, C4 and C6 | Observable online signal, synchronized decision, state transition and decision cost |
+| A desirable decision depends on unavailable global information | [Common aggregation semantics](common.md), [low rank](low_rank.md); C2 | What is local/shared, statistic bias and added communication stages |
+| Local reconstruction improves but training does not | [Initial diagnostics](initial_diagnostics.md), [semantic criteria](semantic_criteria.md); C6 | Actual optimizer update, state interaction, matched controls and training evidence |
+| Two components may address complementary limitations | [Hybrid mechanisms](hybrid.md); §2, C1–C3 | Whether their benefits survive composition; state/merge compatibility and complete cost |
+| Fewer bytes do not improve measured runtime | [Engineer runtime](engineer_runtime.md), [hybrids](hybrid.md) | End-to-end measurement, packing/metadata and dependent collectives |
+
+A combination needs an explanation of why the components are complementary; evaluate their interaction rather than assuming the separate benefits add. An adaptive method needs an implementable signal and explicit action/state transitions; a fixed schedule is not the only allowed design. Neither construction requires multiple code Parents, and neither gains credibility merely by appearing in this index.
+
 Distinguish three stages:
 
 - **Idea:** a structural change and its motivation; unresolved details are explicit.
