@@ -232,10 +232,14 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     if args.command == 'research':
+        if args.action == 'register':
+            _require_clean_worktree()
         data = json.loads(args.file.read_text()) if args.file else {}
         result = request_trusted(_coral_dir(), 'research_action', {
             'node_id': args.node, 'action': args.action, 'data': data,
             'request_id': args.request_id or uuid.uuid4().hex})
+        if args.action == 'register':
+            _checkout_base(result['origin']['base_commit'])
         print(json.dumps(result, indent=2))
         return
     if args.command == 'evidence':

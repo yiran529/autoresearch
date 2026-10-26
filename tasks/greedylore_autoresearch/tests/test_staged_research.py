@@ -187,3 +187,26 @@ def test_agent_cannot_override_host_checkpoint_period(tmp_path):
         h.enqueue('train', {'iteration': 1, 'sha': 'b'*40,
             'checkpoint_interval_steps': 1}, 'override', {})
     assert r.read()['iterations'][0]['status'] == 'planned'
+
+
+def test_staged_registration_checks_clean_tree_and_checks_out_fixed_parent(tmp_path, monkeypatch):
+    from autoresearch import cli
+    data = tmp_path / 'register.json'
+    data.write_text('{}')
+    calls = []
+    monkeypatch.setattr(cli, '_coral_dir', lambda: tmp_path)
+    monkeypatch.setattr(cli, '_require_clean_worktree', lambda: calls.append('clean'))
+    monkeypatch.setattr(cli, '_checkout_base', lambda sha: calls.append(('checkout', sha)))
+    def trusted(*_):
+        calls.append('host')
+        return {'origin': {'base_commit': 'b'*40}}
+    monkeypatch.setattr(cli, 'request_trusted', trusted)
+    cli.main(['research', 'register', '--node', 'N001', '--file', str(data)])
+    assert calls == ['clean', 'host', ('checkout', 'b'*40)]
+    def dirty():
+        raise SystemExit('uncommitted work')
+    monkeypatch.setattr(cli, '_require_clean_worktree', dirty)
+    calls.clear()
+    with pytest.raises(SystemExit, match='uncommitted'):
+        cli.main(['research', 'register', '--node', 'N001', '--file', str(data)])
+    assert calls == []
