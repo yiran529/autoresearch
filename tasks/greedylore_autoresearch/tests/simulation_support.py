@@ -172,14 +172,14 @@ class SyntheticGrader(TaskGrader):
         seconds = {"N000": 0.10, "N001": 0.12, "N002": 0.08, "N003": 0.09}[node]
         loss_delta = {"N000": 0.0, "N001": 0.04, "N002": 0.3, "N003": 0.03}[node]
         baseline_losses = {"llama60m_adamw": 3.0, "llama130m_muon": 4.0}
+        from greedylore_autoresearch_grader.contract import EvalContract
+        contract = EvalContract.load(coral_dir / "private/eval_contract.yaml")
         reference = {"quality": {"workloads": {
             name: {"final_eval_loss": loss} for name, loss in baseline_losses.items()
         }}, "efficiency": {"cells": {
             name: {"mean_iteration_seconds": 0.1}
-            for name in ("130m_adamw_bf16", "130m_adamw_fp32")
+            for name in contract.efficiency.cells
         }}}
-        from greedylore_autoresearch_grader.contract import EvalContract
-        contract = EvalContract.load(coral_dir / "private/eval_contract.yaml")
         quality_payload = {name: {"final_eval_loss": loss + loss_delta} for name, loss in baseline_losses.items()}
         if contract.raw["schema_version"] >= 2:
             reference["quality"]["workloads"]["resnet18_cifar100_muon"] = {"final_test_accuracy":75.91,"final_test_loss":1.27233}
@@ -200,7 +200,7 @@ class SyntheticGrader(TaskGrader):
             {name: {"mean": seconds, "relative_spread": 0.01}
              for name in reference["efficiency"]["cells"]},
             reference, contract_hash=metadata["contract_hash"], comparable=True,
-            evidence_paths=[], utility_reference=root_reference(coral_dir, mode, metadata["contract_hash"]),
+            evidence_paths=[], utility_reference=root_reference(coral_dir, mode, metadata["contract_hash"], timing_cells=contract.efficiency.cells),
             inherited_quality=inherited, timing_protocol=protocol, quality_profiles=contract.quality, utility_version=contract.utility_version,
         )
         bundle.feedback = "SIMULATED: synthetic inputs to the real scoring code; no training or timing."
@@ -560,7 +560,7 @@ def prepare(*, contract_version=1):
     cfg.task_dir = TASK
     with patch("coral.workspace.grader_env.setup_grader_env", offline_grader_env):
         paths = create_project(cfg, config_dir=TASK)
-    if contract_version in (1, 2):
+    if contract_version in (1, 2, 3):
         (paths.coral_dir / "private/eval_contract.yaml").write_text((TASK / f"taskdata/eval_contract_v{contract_version}.yaml").read_text())
     seed = git(paths.repo_dir, "rev-parse", "HEAD")
     bootstrap_root(paths.repo_dir, paths.repo_dir / "source_manifest.json")

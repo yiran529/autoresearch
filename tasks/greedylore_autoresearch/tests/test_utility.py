@@ -72,7 +72,8 @@ def test_five_percent_gate_accepts_boundary_but_rejects_six_percent():
     assert not quality_gate(3.16, 3.0)
 
 
-def test_reference_uses_fixed_root_and_matching_implementation_stage(tmp_path):
+@pytest.mark.parametrize('size', ['130m', '350m'])
+def test_reference_uses_fixed_root_and_matching_implementation_stage(tmp_path, size):
     from coral.types import Attempt
 
     public = tmp_path / "public/attempts"
@@ -96,7 +97,10 @@ def test_reference_uses_fixed_root_and_matching_implementation_stage(tmp_path):
     write("b" * 40, "engineering", 1.1)
     write("c" * 40, "engineering", 9.0, "N001")
     assert root_reference(tmp_path, "research", "contract")["commit_hash"] == "a" * 40
-    engineering = root_reference(tmp_path, "engineering", "contract")
+    cells = {f'{size}_adamw_{p}' for p in ('bf16', 'fp32')}
+    selected = root_reference(tmp_path, "research", "contract", timing_cells=cells)
+    assert selected['timing'] == {f'{size}_adamw_bf16': .1, f'{size}_adamw_fp32': .2}
+    engineering = root_reference(tmp_path, "engineering", "contract", timing_cells=cells)
     assert engineering["commit_hash"] == "b" * 40
     assert engineering["quality_source"] == "inherited (provisional)"
     assert root_reference(tmp_path, "research", "other-policy") is None

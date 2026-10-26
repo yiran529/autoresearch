@@ -6,6 +6,8 @@ import json
 import math
 from pathlib import Path
 
+from .efficiency import timing_cell_labels
+
 WORKLOADS = {"llama60m_adamw": "llama60m", "llama130m_muon": "llama130m"}
 CELLS = {"130m_adamw_bf16": "bf16", "130m_adamw_fp32": "fp32"}
 UTILITY_VERSION = "mean-log-ppl-ratio-v2"
@@ -18,7 +20,7 @@ def losses_from_attempt(attempt):
             for name, label in WORKLOADS.items()}
 
 
-def root_reference(coral_dir: Path, mode: str, contract_hash: str):
+def root_reference(coral_dir: Path, mode: str, contract_hash: str, *, timing_cells=CELLS):
     """Read the pinned Research root or the completed root's best implementation.
 
     No Parent/Dense substitution and no changing baseline during root Engineering.
@@ -60,7 +62,7 @@ def root_reference(coral_dir: Path, mode: str, contract_hash: str):
             "quality_source": "measured" if mode == "research" else "inherited (provisional)",
             "quality": losses_from_attempt(quality),
             "timing": {name: scores.get(f"{label}_timing_mean", {}).get("value")
-                       for name, label in CELLS.items()},
+                       for name, label in timing_cell_labels(timing_cells).items()},
             "timing_protocol": anchor.metadata.get("timing_protocol"),
             "hardware_comparison": anchor.metadata.get("hardware_comparison"),
         }
@@ -83,13 +85,16 @@ def advisory_utility(quality, timing, reference, *, unavailable_reason=None, ver
         result["reason"] = unavailable_reason or "fixed_root_reference_unavailable"
         return result
     try:
+        labels = timing_cell_labels(timing)
+        if set(reference['timing']) != set(labels):
+            raise ValueError('timing reference model mismatch')
         numbers = [*quality.values(), *timing.values(),
                    *reference["quality"].values(), *reference["timing"].values()]
         if any(type(x) not in (int, float) or not math.isfinite(x) or x <= 0 for x in numbers):
             raise ValueError("nonfinite or nonpositive measurement")
         deltas = [quality[k] - reference['quality'][k] for k in WORKLOADS]
         delta = max(0., *deltas) if legacy else sum(deltas) / len(WORKLOADS)
-        speedup = math.exp(sum(math.log(reference["timing"][k] / timing[k]) for k in CELLS) / 2)
+        speedup = math.exp(sum(math.log(reference["timing"][k] / timing[k]) for k in labels) / len(labels))
         result.update(value=speedup * math.exp(-delta), speedup=speedup,
                       **{'loss_penalty' if legacy else 'mean_loss_delta': delta}, reason=None)
     except (KeyError, TypeError, ValueError, OverflowError):

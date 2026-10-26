@@ -80,7 +80,7 @@ def _finite_positive(value: Any, field: str) -> float:
 
 
 def _validate_values(raw: dict[str, Any]) -> None:
-    if type(raw['schema_version']) is not int or raw['schema_version'] not in (1, 2, 3):
+    if type(raw['schema_version']) is not int or raw['schema_version'] not in (1, 2, 3, 4):
         raise ContractError('unsupported contract schema_version')
     _positive_int(raw["hardware"]["gpu_count"], "hardware.gpu_count")
     _positive_int(raw["data"]["dataloader_workers"], "data.dataloader_workers")
@@ -97,7 +97,10 @@ def _validate_values(raw: dict[str, Any]) -> None:
         raise ContractError("efficiency.measured_iterations exceeds maximum")
     _finite_positive(raw["quality"]["max_relative_eval_loss"], "quality.max_relative_eval_loss")
     cells = raw["efficiency"]["cells"]
-    if not isinstance(cells, dict) or set(cells) != {"130m_adamw_bf16", "130m_adamw_fp32"}:
+    size = '350m' if raw['schema_version'] >= 4 else '130m'
+    if raw['efficiency']['model'] != f'llama{size}':
+        raise ContractError('efficiency.model does not match contract version')
+    if not isinstance(cells, dict) or set(cells) != {f"{size}_adamw_bf16", f"{size}_adamw_fp32"}:
         raise ContractError("efficiency.cells must contain the two fixed cells")
     order = raw["efficiency"]["run_order"]
     if (
@@ -138,6 +141,7 @@ _TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "taskdata" / "eval_contra
 try:
     _SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.read_text()))
     _LEGACY_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v1.yaml').read_text()))
+    _V3_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v3.yaml').read_text()))
     _V2_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v2.yaml').read_text()))
 except OSError:
     _SCHEMA = None
@@ -240,7 +244,7 @@ class EvalContract:
             raise ContractError("contract must be a mapping")
         if _SCHEMA is None:
             raise ContractError("fixed contract schema is unavailable")
-        _check_keys(loaded, {1: _LEGACY_SCHEMA, 2: _V2_SCHEMA}.get(loaded.get('schema_version'), _SCHEMA))
+        _check_keys(loaded, {1: _LEGACY_SCHEMA, 2: _V2_SCHEMA, 3: _V3_SCHEMA}.get(loaded.get('schema_version'), _SCHEMA))
         raw = copy.deepcopy(loaded)
         _validate_values(raw)
         for key in ("c4_path", "tokenizer_path"):

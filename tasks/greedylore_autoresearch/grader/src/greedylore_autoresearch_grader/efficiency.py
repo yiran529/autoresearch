@@ -16,6 +16,15 @@ _ENV_ALLOWLIST = (
     "TOKENIZERS_PARALLELISM", "OMP_NUM_THREADS",
 )
 
+def timing_cell_labels(names):
+    """Accept one complete timing model, never a mixed-size matrix."""
+    for size in ('130m', '350m'):
+        labels = {f'{size}_adamw_{precision}': precision for precision in ('bf16', 'fp32')}
+        if set(names) == set(labels):
+            return labels
+    raise ValueError('timing requires two precision cells of one supported model')
+
+
 @dataclass(frozen=True)
 class TimingRun:
     repetition: int
@@ -33,7 +42,8 @@ def build_timing_command(
         "uv", "run", "--frozen", "--project", str(candidate),
         "python", "-m", "torch.distributed.run", "--standalone",
         "--nproc_per_node", str(cell["gpu_count"]), "c4/table_v_timing.py",
-        "--model_config", "c4/configs/llama_130m.json",
+        "--model_config", {"llama130m": "c4/configs/llama_130m.json",
+                           "llama350m": "c4/configs/llama_350m.json"}[cell["model"]],
         "--dataset_path", str(cell["c4_path"]),
         "--tokenizer_path", str(cell["tokenizer_path"]),
         "--batch_size", "1", "--max_length", str(cell["max_length"]),

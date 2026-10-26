@@ -1,4 +1,4 @@
-schema_version: 3
+schema_version: 4
 source:
   coral_commit: 0123dfb939b35228cf2c1fde224cd0561e727408
   greedylore_commit: d2c38bc2062e06fdfd73185c508e7cc652933de6
@@ -57,7 +57,7 @@ quality:
       scalar_learning_rate: 0.001
       activation_checkpointing: true
 efficiency:
-  model: llama130m
+  model: llama350m
   optimizer: adamw
   per_device_batch_size: 1
   global_batch_size: 4
@@ -72,18 +72,18 @@ efficiency:
   max_measured_iterations: 800
   repetitions: 2
   run_order:
-  - - 130m_adamw_bf16
-    - 130m_adamw_fp32
-  - - 130m_adamw_fp32
-    - 130m_adamw_bf16
+  - - 350m_adamw_bf16
+    - 350m_adamw_fp32
+  - - 350m_adamw_fp32
+    - 350m_adamw_bf16
   cell_value: arithmetic_mean_seconds_per_iteration
   report_variability: relative_spread
   aggregation: geometric_mean_dense_over_candidate
   cells:
-    130m_adamw_bf16:
+    350m_adamw_bf16:
       precision: bf16
       learning_rate: 0.0025
-    130m_adamw_fp32:
+    350m_adamw_fp32:
       precision: fp32
       learning_rate: 0.0025
 evaluation:

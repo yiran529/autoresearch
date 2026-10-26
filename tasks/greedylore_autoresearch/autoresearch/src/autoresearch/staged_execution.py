@@ -383,6 +383,7 @@ class Execution:
 
     def finish(self, host, selected):
         from greedylore_autoresearch_grader.contract import EvalContract
+        from greedylore_autoresearch_grader.efficiency import timing_cell_labels
         from greedylore_autoresearch_grader.grader import score_results
         document, state = host.record.read(), host._read()
         rows = [row for row in document['iterations'] if row['code_sha']]
@@ -410,7 +411,7 @@ class Execution:
                 timing_bundle = ScoreBundle.from_dict(timing_entry['result']['bundle'])
                 timing = {cell: {'mean': timing_bundle.scores[f'{label}_timing_mean'].value,
                                 'relative_spread': timing_bundle.scores[f'{label}_timing_spread'].value}
-                          for cell, label in [('130m_adamw_bf16','bf16'), ('130m_adamw_fp32','fp32')]}
+                          for cell, label in timing_cell_labels(contract.efficiency.cells).items()}
                 reference = self._grader(self.artifacts.path(host.node_id, f'code/{sha}'),
                     self.artifacts.path(host.node_id, 'publication'), canonical)._load_references(contract.contract_hash)
                 metadata = timing_bundle.metadata

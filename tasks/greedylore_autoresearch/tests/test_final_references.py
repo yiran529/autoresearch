@@ -21,7 +21,7 @@ def references(tmp_path):
         'resnet18_cifar100_muon': vision}}
     (root / 'quality.json').write_text(json.dumps(quality))
     efficiency = {'contract_hash': contract.contract_hash, 'cells': {
-        name: {'mean_iteration_seconds': .1} for name in ['130m_adamw_bf16', '130m_adamw_fp32']},
+        name: {'mean_iteration_seconds': .1} for name in contract.efficiency.cells},
         'environment': {'gpu_uuids': ['a','b','c','d'], 'gpu_names': ['test'] * 4,
                         'numa_nodes': [0]*4, 'topology_fingerprint': 'test', 'nccl_env': {}}}
     (root / 'efficiency.json').write_text(json.dumps(efficiency))

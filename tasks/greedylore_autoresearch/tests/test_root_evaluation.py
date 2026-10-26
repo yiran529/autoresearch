@@ -92,6 +92,8 @@ def test_root_runs_current_language_budgets_vision_and_fresh_formal_timing(tmp_p
     assert budgets == {'llama_130m.json': (4000, 20000), 'llama_60m_table_iv.json': (5000, 8393)}
     assert sum('pytorch-cifar/train_ddp.py' in cmd for cmd in grader.commands) == 1
     assert sum('c4/table_v_timing.py' in cmd for cmd in grader.commands) == 4
+    timing = [cmd for cmd in grader.commands if 'c4/table_v_timing.py' in cmd]
+    assert all(cmd[cmd.index('--model_config') + 1] == 'c4/configs/llama_350m.json' for cmd in timing)
     assert len(grader.commands) == 7
 
 

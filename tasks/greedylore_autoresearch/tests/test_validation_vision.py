@@ -12,7 +12,7 @@ from test_final_contract import final_contract
 def test_current_contract_uses_fixed_stratified_validation(tmp_path):
     contract = final_contract(tmp_path)
     profile = contract.quality['resnet18_cifar100_muon']
-    assert contract.raw['schema_version'] == 3
+    assert contract.raw['schema_version'] == 4
     assert profile['evaluation_split'] == 'validation'
     assert profile['validation_per_class'] == 50 and profile['split_seed'] == 1243
     assert profile['stop_after_steps'] == 14080

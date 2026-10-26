@@ -1,6 +1,6 @@
 # GreedyLoRE AutoResearch 工作流修改方案
 
-更新：2026-10-27。当前契约 v3 采用 **Development experiments** 和 **Final evaluation** 两阶段；当前 U 与 vision 划分见第 22 节；阶段执行见第 20 节。第 13–19 节保留早期实施记录，不代表 v2 的收尾顺序或本次验收结果。
+更新：2026-10-27。当前契约 v4 采用 **Development experiments** 和 **Final evaluation** 两阶段；当前 U 与 vision 划分见第 22 节，350M timing 见第 23 节；阶段执行见第 20 节。第 13–19 节保留早期实施记录，不代表 v2 的收尾顺序或本次验收结果。
 
 目标是在有限搜索预算下发现 quality 与 efficiency 更好的算法。保留 Researcher、独立 Analyzer、Engineer 三个角色；Researcher 在同一上下文中完成 Development experiments、按需诊断与少量迭代；节点开发结束后先冻结一个完成且合格的候选，再做 Final evaluation：独立新 timing、固定语言迁移任务和 ResNet18/CIFAR100。使用单一研究档案串联设计与证据，将 wisdom 与 summary 分开。先采用简单规则。
 
@@ -358,3 +358,11 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 - 保留 v1/v2 契约解析与旧 U/官方 test 评估语义，不迁移历史运行；原始 v2 模板存为 `eval_contract_v2.yaml`。新 hash 要求重新建立匹配的 dense/Root，历史 test accuracy 不作为新 validation 基线。固定配置与 `/tmp` 中英文说明同步；原 epoch、优化器及方法参数边界不变。
 
 本轮验证：任务与框架相关完整回归 **873 passed、2 skipped**（bubblewrap 缺失或 namespace 不可用），包括六个完整 staged CLI 模拟；另有 **8 项真实 CPU/Gloo 与 seed 校验通过**，覆盖训练／验证划分、无随机增强验证集及实际 runner。Memory 后续整理模拟确认新的最终证据可读、增量引用和重复调用幂等。`gpt-5.6-sol high` review 无剩余高／中等级问题；Ruff、语法与 diff 检查通过。证据位于 `/tmp/coral-validation-utility-20261027/`，未执行真实 GPU 训练或模型调用，不据此声称算法收益。
+
+
+## 23. Timing 模型改为 350M（2026-10-27）
+- 默认契约升为 v4，Researcher 按需 timing、最终必做 timing、Root bootstrap 与 Engineer 正式 timing 统一使用已有的 `c4/configs/llama_350m.json`。BF16/FP32 两格及反向重复顺序、四卡、每卡 batch1、warmup101、测量400／最多800步、完整周期和可比性规则保持原样。
+- 两格标识同步改为 `350m_adamw_bf16/fp32`；正式命令、dense 参考校验、评分和 Root U 参照使用同一模型。语言质量仍为开发4000步、迁移5000步，vision validation 和 U 公式不变。
+- 保存 v3 模板；v1/v2/v3 历史契约继续使用130M测时与原 hash，不自动迁移。v4 须重新建立匹配的 dense／Root 参考，不能把旧130M秒数作为新基线。
+
+按用户要求仅做简单模拟、不进行独立复核：最终 **34 项定向检查通过**，包含一个完整 staged 成功场景，以及 Root 四次正式测时命令指向350M、350M评分与U、固定Root参照、旧v3仍用130M、拒绝混用旧参考。模拟发现并修复最终发布处旧cell标识残留；重跑通过。Ruff和diff检查通过。完整回归已主动中止，不作为本轮全量验收；无真实GPU训练或模型调用。模拟证据：`/tmp/coral-timing350-20261027/simple/`。

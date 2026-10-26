@@ -26,7 +26,7 @@ def final_contract(tmp_path):
 
 def test_final_contract_separates_development_and_final_quality(tmp_path):
     contract = final_contract(tmp_path)
-    assert contract.raw['schema_version'] == 3
+    assert contract.raw['schema_version'] == 4
     assert contract.development_workload == 'llama130m_muon'
     assert contract.final_workloads == ('llama60m_adamw', 'resnet18_cifar100_muon')
     assert set(contract.quality) == {'llama130m_muon', 'llama60m_adamw', 'resnet18_cifar100_muon'}

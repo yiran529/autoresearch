@@ -22,7 +22,7 @@ def reference():
     result = {'quality': {'workloads': {name: {'final_eval_loss': loss} for name, loss in
             [('llama130m_muon', 4.0), ('llama60m_adamw', 3.0)]}},
             'efficiency': {'cells': {name: {'mean_iteration_seconds': .1} for name in
-            ['130m_adamw_bf16', '130m_adamw_fp32']}}}
+            ['350m_adamw_bf16', '350m_adamw_fp32']}}}
     result['quality']['workloads']['resnet18_cifar100_muon'] = {'final_validation_accuracy':75.91,'final_validation_loss':1.27233,'split_sha256':'a'*64}
     return result
 
@@ -128,7 +128,7 @@ def driver(output, scenario):
     codex.write_text(f'#!{sys.executable}\nfrom prompt_audit_support import main\nmain()\n')
     codex.chmod(0o755)
     os.environ['PATH'] = str(binary) + os.pathsep + os.environ['PATH']
-    config, paths = sim.prepare(contract_version=3)
+    config, paths = sim.prepare(contract_version=4)
     os.environ['CORAL_SIM_CONTRACT'] = str(paths.coral_dir / 'private/eval_contract.yaml')
     saved = yaml.safe_load((paths.coral_dir / 'config.yaml').read_text())
     saved['grader']['args'].update(staged_research=True, dynamic_artifact_root=str(output / 'tensors'),

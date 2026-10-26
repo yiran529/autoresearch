@@ -25,12 +25,15 @@ the option to require the selection lock for their uninitialized Nodes.
 
 ## Evaluation and handover policy
 
-- Contract v3 requires language final loss / same-contract Dense final loss <= **1.05**,
+- Contract v4 requires language final loss / same-contract Dense final loss <= **1.05**,
   and final-epoch ResNet18/CIFAR100 validation accuracy drop <= **1.0 percentage point**
   by default (operator configurable). See `references/evaluation_tasks.md` for fixed
-  task settings and candidate-owned compression policy. Historical v1/v2 contracts,
+  task settings and candidate-owned compression policy. Historical v1/v2/v3 contracts,
   Attempts and verdicts retain their original behavior. New matching dense/Root
   references are required; historical seed results are not authoritative new references.
+- Timing uses Llama350M/AdamW for BF16 and FP32, batch 1 per GPU on four GPUs,
+  with the existing complete-cycle and repetition policy. Saved v1/v2/v3 contracts
+  retain Llama130M timing; new matching dense/Root references are required.
 - Attempts retain optional advisory `utility`: `U = S * exp(-d)`, where `S` is
   the geometric mean BF16/FP32 speedup over a fixed, stage-matched N000 reference,
   and `d = mean(candidate minus baseline loss over the two language workloads)`.

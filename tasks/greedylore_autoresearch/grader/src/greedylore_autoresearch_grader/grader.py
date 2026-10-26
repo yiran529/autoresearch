@@ -8,7 +8,7 @@ from coral.grader import TaskGrader
 from coral.types import Score, ScoreBundle
 
 from .contract import EvalContract
-from .efficiency import build_timing_command
+from .efficiency import build_timing_command, timing_cell_labels
 from .evaluation_context import quality_policies
 from .quality import build_quality_command
 from .results import geometric_mean_speedup, quality_gate
@@ -69,7 +69,7 @@ def score_results(
         scores["quality_gate"] = Score(None, "quality_gate", "inherited (provisional)")
 
     speedups = {}
-    for cell_name, label in (("130m_adamw_bf16", "bf16"), ("130m_adamw_fp32", "fp32")):
+    for cell_name, label in timing_cell_labels(timing).items():
         cell = timing[cell_name]
         scores[f"{label}_timing_mean"] = Score(cell["mean"], f"{label}_timing_mean")
         scores[f"{label}_timing_spread"] = Score(cell["relative_spread"], f"{label}_timing_spread")
@@ -211,13 +211,14 @@ class Grader(TaskGrader):
         quality_names = {"llama60m_adamw", "llama130m_muon"}
         contract_path = Path(self.private_dir) / 'eval_contract.yaml'
         loss_fields = {name: 'final_eval_loss' for name in quality_names}
+        efficiency_names = {"130m_adamw_bf16", "130m_adamw_fp32"}
         if contract_path.exists():
             contract = EvalContract.load(contract_path)
             quality_names = set(contract.quality)
+            efficiency_names = set(contract.efficiency.cells)
             if 'resnet18_cifar100_muon' in quality_names:
                 from .vision import vision_metric_fields
                 loss_fields['resnet18_cifar100_muon'] = vision_metric_fields(contract.quality['resnet18_cifar100_muon'])[1]
-        efficiency_names = {"130m_adamw_bf16", "130m_adamw_fp32"}
         try:
             quality_workloads = quality["workloads"]
             efficiency_cells = efficiency["cells"]
@@ -492,7 +493,7 @@ class Grader(TaskGrader):
         publish_timing_protocol(evidence_root, timing_protocol)
         from .utility import losses_from_attempt, root_reference
 
-        utility_reference = root_reference(Path(self.private_dir).parent, mode, contract.contract_hash)
+        utility_reference = root_reference(Path(self.private_dir).parent, mode, contract.contract_hash, timing_cells=contract.efficiency.cells)
         inherited_quality = None
         if mode == "engineering":
             from coral.hub.attempts import read_attempts
