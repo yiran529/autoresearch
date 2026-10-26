@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 from pathlib import Path
 
@@ -121,7 +122,7 @@ def test_analysis_listing_ignores_noncanonical_and_engineering_by_mode(tmp_path)
     assert read_processed_analyses(notes / "missing_summary.md") == frozenset()
 
 
-def test_memory_worker_publishes_two_valid_summaries_per_node(tmp_path):
+def test_memory_worker_publishes_three_documents_per_node(tmp_path):
     coral_dir = tmp_path / ".coral"
     notes = coral_dir / "public" / "notes"
     refs = [_analysis(notes, f"N{index:03d}", "research", 1) for index in (1, 2, 3)]
@@ -129,6 +130,7 @@ def test_memory_worker_publishes_two_valid_summaries_per_node(tmp_path):
     output.write_text(json.dumps({
         "research_summary": _summary(refs),
         "engineering_summary": _summary(refs),
+        "wisdom": "# Wisdom\nNo reusable finding yet.",
     }))
     calls = []
 
@@ -143,7 +145,7 @@ def test_memory_worker_publishes_two_valid_summaries_per_node(tmp_path):
         publisher=lambda kind, content: published.append((kind, content)),
     )
     assert result.status == "published"
-    assert [kind for kind, _ in published] == ["research_summary", "engineering_summary"] * 3
+    assert [kind for kind, _ in published] == ["research_summary", "engineering_summary", "wisdom"] * 3
     assert len(calls) == 3
 
 
@@ -159,6 +161,7 @@ def test_memory_runner_receives_only_staged_public_inputs(tmp_path):
     output.write_text(json.dumps({
         "research_summary": _summary(refs),
         "engineering_summary": _summary(refs),
+        "wisdom": "# Wisdom\nNo reusable finding yet.",
     }))
 
     def runner(prompt, read_roots, schema, scratch):
@@ -181,6 +184,7 @@ def test_host_publisher_writes_fixed_summaries_and_partial_failure_remains_due(t
     output.write_text(json.dumps({
         "research_summary": _summary(refs),
         "engineering_summary": _summary(refs),
+        "wisdom": "# Wisdom\nNo reusable finding yet.",
     }))
     context = MemoryContext(coral_dir)
 
@@ -216,6 +220,7 @@ def test_fake_consolidation_does_not_modify_static_reference_toolkit(tmp_path):
     output.write_text(json.dumps({
         "research_summary": _summary(refs),
         "engineering_summary": _summary(refs),
+        "wisdom": "# Wisdom\nNo reusable finding yet.",
     }))
     consolidate_memory(if_due=True, context=MemoryContext(coral_dir), runner=lambda *_: output)
     assert {path: path.read_bytes() for path in reference_paths} == before
@@ -240,6 +245,7 @@ def test_processed_summaries_skip_memory_runner(tmp_path):
     refs = [_analysis(notes, f"N{index:03d}", "research", 1) for index in (1, 2, 3)]
     (notes / "research_summary.md").write_text(_summary(refs))
     (notes / "engineering_summary.md").write_text(_summary(refs))
+    (notes / 'wisdom.md').write_text(_summary(refs))
     result = consolidate_memory(
         if_due=True, context=MemoryContext(coral_dir),
         runner=lambda *_: pytest.fail("not due"),
@@ -278,7 +284,7 @@ def test_task_uses_scheduler_finalization_instead_of_memory_startup_hook():
     assert all("startup_hook" not in item["runtime_options"] for item in templates.values())
 
 
-@pytest.mark.parametrize("kind", ["research_summary", "engineering_summary"])
+@pytest.mark.parametrize("kind", ["research_summary", "engineering_summary", "wisdom"])
 def test_agent_artifact_router_cannot_publish_host_summary(kind):
     with pytest.raises(ValueError, match="unsupported artifact kind"):
         validate_artifact(kind, _summary([]), {
@@ -310,6 +316,14 @@ def test_memory_stages_only_matching_public_diagnostic_records_and_bounded_resul
     foreign = record.parent / 'foreign'
     foreign.mkdir()
     (foreign / 'record.json').write_text(json.dumps({**metadata, 'research_sha': 'b' * 40}))
+    records = []
+    for relative in ('record.json', 'results/metric.json', 'results/large.txt', 'results/model.pt',
+                     'results/link.txt', 'scripts/probe.py'):
+        path = record / relative
+        records.append({'path': path.relative_to(context.island_root).as_posix(),
+                        'status': 'present', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    (context.notes_root / ref).write_text(json.dumps({'research_sha': 'a' * 40,
+        'evidence_manifest': {'evidence_records': records}}))
     scratch = tmp_path / 'scratch'
     roots = _stage_public_inputs(context, scratch)
     staged = scratch / 'public/diagnostics/N001-research-v1/records/probe'
@@ -336,7 +350,7 @@ def test_completed_node_queue_drains_and_does_not_repeat_after_restart(tmp_path)
         refs = list_analysis_refs(roots[0])
         output = scratch / 'output.json'
         output.write_text(json.dumps({k: _summary(list(refs)) for k in
-                                     ('research_summary', 'engineering_summary')}))
+                                     ('research_summary', 'engineering_summary', 'wisdom')}))
         return output
 
     consolidate_memory(if_due=True, context=context, runner=runner)
@@ -347,16 +361,17 @@ def test_completed_node_queue_drains_and_does_not_repeat_after_restart(tmp_path)
                               runner=lambda *_: pytest.fail('duplicate')).status == 'not_due'
 
 
-def test_engineering_ref_is_required_in_both_summaries(tmp_path):
+def test_host_includes_engineering_coverage_in_all_documents(tmp_path):
     context = MemoryContext(tmp_path / '.coral')
     research = _analysis(context.notes_root, 'N001', 'research', 1)
-    _analysis(context.notes_root, 'N001', 'engineering', 1)
+    engineering = _analysis(context.notes_root, 'N001', 'engineering', 1)
     output = tmp_path / 'output.json'
     output.write_text(json.dumps({k: _summary([research]) for k in
-                                 ('research_summary', 'engineering_summary')}))
-    with pytest.raises(ValueError, match='trigger references'):
-        consolidate_memory(if_due=True, context=context, runner=lambda *_: output)
-    assert memory_due(context.notes_root).due
+                                 ('research_summary', 'engineering_summary', 'wisdom')}))
+    consolidate_memory(if_due=True, context=context, runner=lambda *_: output)
+    for name in ('research_summary.md', 'engineering_summary.md', 'wisdom.md'):
+        assert read_processed_analyses(context.notes_root / name) == {research, engineering}
+    assert not memory_due(context.notes_root).due
 
 
 def test_published_output_is_reused_after_crash_before_queue_ack(tmp_path, monkeypatch):
@@ -371,7 +386,7 @@ def test_published_output_is_reused_after_crash_before_queue_ack(tmp_path, monke
         calls.append(prompt)
         output = scratch / 'output.json'
         output.write_text(json.dumps({k: _summary([ref]) for k in
-                                     ('research_summary', 'engineering_summary')}))
+                                     ('research_summary', 'engineering_summary', 'wisdom')}))
         return output
 
     monkeypatch.setattr(memory, '_record_memory_result', lambda *a, **k:
@@ -387,15 +402,16 @@ def test_published_output_is_reused_after_crash_before_queue_ack(tmp_path, monke
 def test_new_summary_cannot_drop_previous_node_coverage(tmp_path):
     context = MemoryContext(tmp_path / '.coral')
     first = _analysis(context.notes_root, 'N000', 'research', 1)
-    for name in ('research_summary.md', 'engineering_summary.md'):
+    for name in ('research_summary.md', 'engineering_summary.md', 'wisdom.md'):
         (context.notes_root / name).write_text(_summary([first]))
     assert not memory_due(context.notes_root).due
     second = _analysis(context.notes_root, 'N001', 'research', 1)
     output = tmp_path / 'output.json'
     output.write_text(json.dumps({k: _summary([second]) for k in
-                                 ('research_summary', 'engineering_summary')}))
-    with pytest.raises(ValueError, match='trigger references'):
-        consolidate_memory(if_due=True, context=context, runner=lambda *_: output)
+                                 ('research_summary', 'engineering_summary', 'wisdom')}))
+    consolidate_memory(if_due=True, context=context, runner=lambda *_: output)
+    for name in ('research_summary.md', 'engineering_summary.md', 'wisdom.md'):
+        assert read_processed_analyses(context.notes_root / name) == {first, second}
 
 
 def test_prior_summary_refs_remain_readable_before_their_node_finishes(tmp_path):
@@ -410,7 +426,7 @@ def test_prior_summary_refs_remain_readable_before_their_node_finishes(tmp_path)
         assert (roots[0] / old).is_file()
         output = scratch / 'output.json'
         output.write_text(json.dumps({k: _summary([root, old]) for k in
-                                     ('research_summary', 'engineering_summary')}))
+                                     ('research_summary', 'engineering_summary', 'wisdom')}))
         return output
 
     consolidate_memory(if_due=True, context=context, runner=runner)

@@ -12,7 +12,7 @@ _MODES = {"research", "engineering"}
 def validate_artifact(kind: str, content: str, context: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(content, str) or not content.strip():
         raise ValueError("artifact content must be non-empty text")
-    if kind in {"research_summary", "engineering_summary"}:
+    if kind in {"research_summary", "engineering_summary", "wisdom"}:
         raise ValueError(f"unsupported artifact kind for Agent publication: {kind}")
     node_id = context.get("node_id")
     mode = context.get("mode")

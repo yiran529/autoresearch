@@ -192,6 +192,8 @@ def test_build_settings_writes(tmp_path):
     denied = set(fs["denyWrite"])
     assert set(_protected_write_paths(coral_dir, None)) <= denied
     assert str(coral_dir / "public" / "diagnostics") in denied
+    assert str(coral_dir / "public/notes/wisdom.md") in denied
+    assert str(coral_dir / "public/research_diagnostics") in denied
     assert str(coral_dir / "config.yaml") in denied
     assert str((tmp_path / "agents" / "agent-1").resolve()) in fs["allowWrite"]
     assert str(coral_dir.resolve()) in fs["allowWrite"]  # trusted socket remains reachable

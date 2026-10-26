@@ -1,8 +1,9 @@
-"""Durable completed-Node Memory queue and Summary validation."""
+"""Incremental completed-Node knowledge, navigation and durable publication."""
 
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import re
 import shutil
@@ -20,6 +21,9 @@ from coral.hub._island import island_root
 from .analysis import run_fresh_codex
 from .atomic import atomic_write_text
 
+_TARGETS = {'research_summary': 'research_summary.md',
+            'engineering_summary': 'engineering_summary.md', 'wisdom': 'wisdom.md'}
+_KNOWLEDGE_VERSION = 2
 _REF = re.compile(
     r"^nodes/(N[0-9]{3})/(research|engineering)_analysis_v[1-9][0-9]*\.md$"
 )
@@ -51,6 +55,7 @@ class MemoryResult:
     status: str
     research_summary_path: Path | None = None
     engineering_summary_path: Path | None = None
+    wisdom_path: Path | None = None
 
 
 def list_analysis_refs(notes_root: Path, mode: str | None = None) -> tuple[str, ...]:
@@ -155,16 +160,21 @@ def memory_due(notes_root: Path) -> MemoryGate:
     path = coral_dir / "private/memory_state.json"
     with trusted_writes_lock(coral_dir):
         completed = _completed_analysis_refs(notes_root)
-        processed = (read_processed_analyses(notes_root / "research_summary.md")
-                     & read_processed_analyses(notes_root / "engineering_summary.md"))
+        processed = (read_processed_analyses(notes_root / 'research_summary.md')
+                     & read_processed_analyses(notes_root / 'engineering_summary.md')
+                     & read_processed_analyses(notes_root / 'wisdom.md'))
         first_run = not path.exists()
         state = json.loads(path.read_text()) if not first_run else {"version": 1, "nodes": {}}
         before = json.dumps(state, sort_keys=True)
         for node_id, refs in sorted(completed.items()):
             row = state["nodes"].get(node_id)
-            if row is None or row["analysis_refs"] != sorted(refs):
+            legacy = row is not None and row.get('knowledge_version') != _KNOWLEDGE_VERSION
+            if (row is None or row['analysis_refs'] != sorted(refs)
+                    or legacy and (refs <= processed or row['status'] == 'completed')):
+                covered_legacy = refs <= processed and (first_run or legacy)
                 state["nodes"][node_id] = {
-                    "status": "completed" if first_run and refs <= processed else "pending",
+                    "status": "completed" if covered_legacy else "pending",
+                    "knowledge_version": _KNOWLEDGE_VERSION if covered_legacy else None,
                     "analysis_refs": sorted(refs),
                     "sequence": row["sequence"] if row else len(state["nodes"]),
                     "last_error": None,
@@ -186,22 +196,20 @@ def _record_memory_result(context, node_id, refs, error=None):
         row = state["nodes"][node_id]
         if row["analysis_refs"] == sorted(refs):
             row.update(status="pending" if error else "completed", last_error=error)
+            if not error:
+                row['knowledge_version'] = _KNOWLEDGE_VERSION
             _atomic_json(path, state)
 
 
 def _host_publish(context: MemoryContext, kind: str, content: str) -> Path:
-    targets = {
-        "research_summary": "research_summary.md",
-        "engineering_summary": "engineering_summary.md",
-    }
-    if kind not in targets:
+    if kind not in _TARGETS:
         raise ValueError("unsupported Memory Summary target")
-    target = context.notes_root / targets[kind]
+    target = context.notes_root / _TARGETS[kind]
     with trusted_writes_lock(context.coral_dir):
         return atomic_write_text(target, content, mode=0o644)
 
 
-def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None) -> tuple[Path, ...]:
+def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None, evidence_refs=None, analysis_refs=None) -> tuple[Path, ...]:
     """Copy only public navigation/evidence files for the Memory session."""
     staged_notes = scratch / "public" / "notes"
     staged_logs = scratch / "public" / "eval_logs"
@@ -213,7 +221,7 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
 
-    for name in ("tree.md", "research_summary.md", "engineering_summary.md"):
+    for name in ("tree.md", *_TARGETS.values()):
         copy_file(context.notes_root / name, staged_notes / name)
     nodes = context.notes_root / "nodes"
     if nodes.is_dir() and not nodes.is_symlink():
@@ -224,97 +232,73 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None
                 continue
             for name in ("spec.md", "evaluation.md"):
                 copy_file(node / name, staged_notes / "nodes" / node.name / name)
-    for ref in list_analysis_refs(context.notes_root):
-        if node_ids is not None and ref.split("/")[1] not in node_ids:
-            continue
+    for ref in (list_analysis_refs(context.notes_root) if analysis_refs is None else sorted(analysis_refs)):
+        if _REF.fullmatch(ref) is None:
+            raise ValueError("invalid Memory Analysis reference")
         copy_file(context.notes_root / ref, staged_notes / ref)
         copy_file((context.notes_root / ref).with_suffix('.json'), (staged_notes / ref).with_suffix('.json'))
 
-    log_root = context.island_root / "eval_logs"
-    if log_root.is_dir() and not log_root.is_symlink():
-        for source in log_root.rglob("*"):
-            if (source.is_file() and not source.is_symlink()
-                    and source.suffix in {".json", ".jsonl", ".log", ".md", ".txt"}
-                    and source.stat().st_size <= 1_000_000
-                    and not any(parent.is_symlink() for parent in source.parents if parent != log_root)):
-                copy_file(source, staged_logs / source.relative_to(log_root))
-    staged_diagnostics = _stage_diagnostics(context, staged_notes, scratch)
-    return staged_notes, staged_logs, staged_diagnostics
+    # History reports are cheap to make available; only the newly required
+    # reports supply raw evidence. Never sweep all runtime logs into a session.
+    from .runtime_artifacts import safe_path
+    from .validation import load_document
 
-
-
-def _stage_diagnostics(context: MemoryContext, staged_notes: Path, scratch: Path) -> Path:
-    """Stage bounded text evidence only for published Analysis identities."""
-    destination = scratch / "public" / "diagnostics"
-    destination.mkdir(parents=True, exist_ok=True)
-    source_root = context.island_root / "diagnostics"
-    if not source_root.is_dir() or source_root.is_symlink():
-        return destination
-    remaining_bytes, remaining_files = 8_000_000, 256
-
-    def safe_file(path: Path) -> bool:
-        return (path.is_file() and not path.is_symlink()
-                and path.resolve().is_relative_to(source_root.resolve())
-                and not any(p.is_symlink() for p in path.parents if p.is_relative_to(source_root))
-                and path.stat().st_size <= 1_000_000)
-
-    def copy_file(path: Path) -> None:
-        nonlocal remaining_bytes, remaining_files
-        if not safe_file(path):
-            return
-        size = path.stat().st_size
-        if remaining_files <= 0 or size > remaining_bytes:
-            return
-        target = destination / path.relative_to(source_root)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, target)
-        remaining_bytes -= size
-        remaining_files -= 1
-
-    for ref in list_analysis_refs(staged_notes):
-        match = _REF.fullmatch(ref)
-        node_id, mode = match.groups()
-        version = int(Path(ref).stem.rsplit("_v", 1)[1])
+    budget = {'files': 256, 'bytes': 8_000_000}
+    research_diagnostics = scratch / 'public/research_diagnostics'
+    staged_diagnostics = scratch / 'public/diagnostics'
+    for root in (research_diagnostics, staged_diagnostics):
+        root.mkdir(parents=True, exist_ok=True)
+    selected = list_analysis_refs(staged_notes) if evidence_refs is None else evidence_refs
+    for ref in sorted(selected):
+        if _REF.fullmatch(ref) is None:
+            raise ValueError('invalid Memory evidence Analysis reference')
         try:
-            from .validation import load_document
-
-            analysis = load_document(staged_notes / ref)
-            sha = analysis["research_sha"]
-        except (OSError, ValueError, KeyError, TypeError):
+            document = load_document(staged_notes / ref)
+        except (OSError, ValueError):
             continue
-        identity = f"{node_id}-{mode}-v{version}"
-        records = source_root / identity / "records"
-        if not records.is_dir() or any(p.is_symlink() for p in (records, records.parent)):
+        manifest = document.get('evidence_manifest')
+        records = manifest.get('evidence_records', []) if isinstance(manifest, dict) else []
+        if not isinstance(records, list):
             continue
-        for record in sorted(records.iterdir()):
-            if remaining_files <= 0 or remaining_bytes <= 0:
-                return destination
-            if not record.is_dir() or record.is_symlink() or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", record.name):
+        for record in records:
+            if not isinstance(record, dict) or record.get('status') != 'present':
                 continue
-            metadata = record / "record.json"
-            if not safe_file(metadata):
+            reference = record.get('path')
+            if not isinstance(reference, str):
                 continue
+            relative = Path(reference)
+            if (relative.is_absolute() or '..' in relative.parts or not relative.parts
+                    or relative.parts[0] not in {'eval_logs', 'research_diagnostics', 'diagnostics', 'notes'}
+                    or relative.parts[0] == 'notes' and not re.fullmatch(
+                        r'notes/nodes/N[0-9]{3}/research\.json', reference)):
+                continue
+            source = context.island_root / relative
             try:
-                data = json.loads(metadata.read_text())
-            except (OSError, ValueError):
+                safe_path(source)
+            except ValueError:
                 continue
-            if (not isinstance(data, dict) or data.get("node_id") != node_id or data.get("mode") != mode
-                    or data.get("analysis_version") != version or data.get("research_sha") != sha
-                    or data.get("diagnostic_id") != f"{identity}/{record.name}"):
+            if (not source.is_file() or source.suffix not in
+                    {'.json', '.jsonl', '.log', '.md', '.txt', '.csv', '.tsv'}):
                 continue
-            copy_file(metadata)
-            if not (destination / metadata.relative_to(source_root)).is_file():
+            size = source.stat().st_size
+            if size > 1_000_000 or size > budget['bytes'] or budget['files'] <= 0:
                 continue
-            for name in ("stdout.log", "stderr.log"):
-                copy_file(record / name)
-            results = record / "results"
-            if results.is_dir() and not results.is_symlink():
-                for path in sorted(results.rglob("*")):
-                    if remaining_files <= 0 or remaining_bytes <= 0:
-                        return destination
-                    if path.suffix in {".json", ".jsonl", ".csv", ".tsv", ".txt", ".md", ".log"}:
-                        copy_file(path)
-    return destination
+            destination = scratch / 'public' / relative
+            if destination.exists():
+                continue
+            # Read bounded bytes once: the copy must be exactly what was hashed,
+            # not a later filesystem version. Missing legacy hashes stay omitted.
+            with source.open('rb') as stream:
+                data = stream.read(1_000_001)
+            if len(data) > 1_000_000 or hashlib.sha256(data).hexdigest() != record.get('sha256'):
+                continue
+            if len(data) > budget['bytes']:
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            budget['bytes'] -= len(data)
+            budget['files'] -= 1
+    return staged_notes, staged_logs, staged_diagnostics, research_diagnostics
 
 
 def consolidate_memory(
@@ -342,7 +326,8 @@ def consolidate_memory(
             if not gate.due and (if_due or published):
                 return MemoryResult("published" if published else "not_due",
                                     context.notes_root / "research_summary.md" if published else None,
-                                    context.notes_root / "engineering_summary.md" if published else None)
+                                    context.notes_root / "engineering_summary.md" if published else None,
+                                    context.notes_root / "wisdom.md" if published else None)
             node_id = gate.pending_nodes[0] if gate.pending_nodes else None
             try:
                 _consolidate_node(context, gate, runner, publisher)
@@ -352,53 +337,84 @@ def consolidate_memory(
                 raise
             if node_id is None:
                 return MemoryResult("published", context.notes_root / "research_summary.md",
-                                    context.notes_root / "engineering_summary.md")
+                                    context.notes_root / "engineering_summary.md", context.notes_root / "wisdom.md")
             _record_memory_result(context, node_id, gate.trigger_refs)
             published = True
 
 
+def _body(content):
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError('Memory document body must be nonempty Markdown')
+    if content.startswith('---\n'):
+        # Accept old response formatting, but never trust model-authored coverage.
+        _parse_summary(content)
+        return content[content.find('\n---\n', 4) + 5:].strip()
+    return content.strip()
+
+
+def _with_coverage(content, covered):
+    header = yaml.safe_dump({'processed_analyses': sorted(covered)}, sort_keys=False).rstrip()
+    return '---\n' + header + '\n---\n' + _body(content) + '\n'
+
+
+def _validate_wisdom(content, notes_root, covered):
+    # Exact source versions are mandatory in the writing contract. This boundary
+    # checks cited Analysis paths, not whether a scientific claim is true.
+    for ref in re.findall(r'nodes/[^\s<>\[\]()]+?_analysis_v[^\s<>\[\](),;]+?\.(?:md|json)', _body(content)):
+        if ref not in covered or _REF.fullmatch(ref) is None:
+            raise ValueError(f'wisdom reference is outside covered Analyses: {ref}')
+        path = notes_root / ref
+        if not path.is_file() or any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError(f'wisdom reference is unavailable: {ref}')
+
+
 def _consolidate_node(context, gate, runner, publisher):
-    prompt_path = Path(__file__).resolve().parents[3] / "prompts/global_memory_manager.md"
-    schema_path = Path(__file__).resolve().parents[2] / "schemas/memory.schema.json"
-    required = (gate.trigger_refs
-                | read_processed_analyses(context.notes_root / "research_summary.md")
-                | read_processed_analyses(context.notes_root / "engineering_summary.md"))
-    prompt = prompt_path.read_text(encoding="utf-8") + "\n\n" + json.dumps({
-        "trigger_node": gate.pending_nodes[0] if gate.pending_nodes else None,
-        "trigger_refs": sorted(gate.trigger_refs),
-        "required_refs": sorted(required),
-        "research_summary": "research_summary.md",
-        "engineering_summary": "engineering_summary.md",
+    prompt_path = Path(__file__).resolve().parents[3] / 'prompts/global_memory_manager.md'
+    schema_path = Path(__file__).resolve().parents[2] / 'schemas/memory.schema.json'
+    prior = frozenset().union(*(read_processed_analyses(context.notes_root / name)
+                                for name in _TARGETS.values()))
+    covered = prior | gate.trigger_refs
+    wisdom_covered = read_processed_analyses(context.notes_root / 'wisdom.md')
+    # Bootstrap legacy summaries once. Afterwards only the trigger Node is
+    # mandatory reading; retained provenance is cumulative, not a reread claim.
+    required_read = gate.trigger_refs | (prior - wisdom_covered)
+    prompt = prompt_path.read_text(encoding='utf-8') + '\n\n' + json.dumps({
+        'trigger_node': gate.pending_nodes[0] if gate.pending_nodes else None,
+        'trigger_refs': sorted(gate.trigger_refs), 'required_refs': sorted(required_read),
+        'covered_refs': sorted(covered), **_TARGETS,
     }, sort_keys=True)
     node_id = gate.pending_nodes[0] if gate.pending_nodes else None
-    sealed = context.coral_dir / "private/memory_outputs" / f"{node_id}.json" if node_id else None
+    sealed = context.coral_dir / 'private/memory_outputs' / f'{node_id}.json' if node_id else None
     document = None
     if sealed is not None and sealed.exists():
         cached = json.loads(sealed.read_text())
-        if cached["trigger_refs"] == sorted(gate.trigger_refs) and all(
-            required <= _parse_summary(cached["document"][kind])
-            for kind in ("research_summary", "engineering_summary")
-        ):
-            document = cached["document"]
+        candidate = cached.get('document', {})
+        if (cached.get('version') == _KNOWLEDGE_VERSION
+                and cached.get('trigger_refs') == sorted(gate.trigger_refs)
+                and isinstance(candidate, dict) and set(candidate) == set(_TARGETS)
+                and all(covered <= _parse_summary(candidate[kind]) for kind in _TARGETS)):
+            document = candidate
     if document is None:
-        with tempfile.TemporaryDirectory(prefix="autoresearch-memory-") as scratch_dir:
+        with tempfile.TemporaryDirectory(prefix='autoresearch-memory-') as scratch_dir:
             scratch = Path(scratch_dir)
-            with trusted_writes_lock(context.coral_dir):
-                completed = _completed_analysis_refs(context.notes_root)
-            staged_nodes = set(completed) | {ref.split("/")[1] for ref in required}
-            read_roots = _stage_public_inputs(context, scratch, node_ids=staged_nodes)
+            staged_nodes = {ref.split('/')[1] for ref in required_read}
+            read_roots = _stage_public_inputs(context, scratch, node_ids=staged_nodes,
+                                             evidence_refs=required_read, analysis_refs=covered)
             output = runner(prompt, read_roots, schema_path, scratch)
-            document = json.loads(Path(output).read_text(encoding="utf-8"))
-    if not isinstance(document, dict) or set(document) != {"research_summary", "engineering_summary"}:
-        raise ValueError("Memory worker output has an invalid schema")
-    for kind in ("research_summary", "engineering_summary"):
-        validate_summary(document[kind], context.notes_root, required_refs=required)
+            authored = json.loads(Path(output).read_text(encoding='utf-8'))
+        if not isinstance(authored, dict) or set(authored) != set(_TARGETS):
+            raise ValueError('Memory worker output requires research_summary, engineering_summary and wisdom')
+        document = {kind: _with_coverage(authored[kind], covered) for kind in _TARGETS}
+    for kind in _TARGETS:
+        validate_summary(document[kind], context.notes_root, required_refs=covered)
+    _validate_wisdom(document['wisdom'], context.notes_root, covered)
     if sealed is not None:
         with trusted_writes_lock(context.coral_dir):
-            _atomic_json(sealed, {"trigger_refs": sorted(gate.trigger_refs), "document": document})
+            _atomic_json(sealed, {'version': _KNOWLEDGE_VERSION,
+                'trigger_refs': sorted(gate.trigger_refs), 'document': document})
     publish = publisher or (lambda kind, content: _host_publish(context, kind, content))
-    publish("research_summary", document["research_summary"])
-    publish("engineering_summary", document["engineering_summary"])
+    for kind in _TARGETS:
+        publish(kind, document[kind])
 
 
 def run_worker(coral_dir: str) -> dict[str, str]:

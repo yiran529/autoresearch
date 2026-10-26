@@ -426,9 +426,11 @@ def _protected_write_paths(coral_dir: Path, island_id: str | None) -> list[str]:
                 root / "attempts",
                 root / "eval_logs",
                 root / "diagnostics",
+                root / "research_diagnostics",
                 root / "notes" / "tree.md",
                 root / "notes" / "research_summary.md",
                 root / "notes" / "engineering_summary.md",
+                root / "notes" / "wisdom.md",
                 root / "notes" / "nodes",
             ]
         )

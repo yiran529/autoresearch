@@ -717,7 +717,7 @@ def test_one_shot_memory_child_publishes_after_short_lived_launcher(tmp_path):
         "    summary = '---\\nprocessed_analyses:\\n' + ''.join(f'  - {ref}\\n' for ref in refs) + '---\\n# Summary\\n\\nA finding.\\n'\n"
         "    def fake_runner(prompt, read_roots, schema, scratch):\n"
         "        output = scratch / 'output.json'\n"
-        "        output.write_text(json.dumps({'research_summary': summary, 'engineering_summary': summary}))\n"
+        "        output.write_text(json.dumps({'research_summary': summary, 'engineering_summary': summary, 'wisdom': '# Wisdom'}))\n"
         "        return output\n"
         "    result = consolidate_memory(if_due=True, context=context, runner=fake_runner)\n"
         "    return {'status': result.status}\n"
@@ -738,10 +738,14 @@ def test_one_shot_memory_child_publishes_after_short_lived_launcher(tmp_path):
     )
     assert launcher.returncode == 0
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and not (notes / "engineering_summary.md").is_file():
+    while time.monotonic() < deadline:
+        wisdom = notes / "wisdom.md"
+        if wisdom.is_file() and "nodes/N003/research_analysis_v1.md" in wisdom.read_text():
+            break
         time.sleep(0.02)
     assert "nodes/N003/research_analysis_v1.md" in (notes / "research_summary.md").read_text()
     assert "nodes/N003/research_analysis_v1.md" in (notes / "engineering_summary.md").read_text()
+    assert "nodes/N003/research_analysis_v1.md" in (notes / "wisdom.md").read_text()
 
 
 def test_agent_workflow_operation_cannot_supply_identity_or_state(tmp_path):

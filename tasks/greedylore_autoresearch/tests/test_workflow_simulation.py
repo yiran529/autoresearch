@@ -73,6 +73,11 @@ def test_complete_workflow_without_models_or_training(tmp_path, scenario):
     assert report["parallel_research_verified"] is True
     assert report["retired_worktrees"] is True
     assert report["memory_idempotent"] is True
+    assert report['wisdom_published'] is True
+    from autoresearch.memory import read_processed_analyses
+    expected = {f'nodes/{n}/research_analysis_v1.md' for n in ('N000', 'N001', 'N002', 'N003')}
+    expected |= {f'nodes/{n}/engineering_analysis_v1.md' for n in ('N000', 'N001', 'N003')}
+    assert read_processed_analyses(root / 'run/.coral/public/notes/wisdom.md') == expected
     assert report["authority_rejections"] == ["other_node", "reconcile", "spec", "tree"]
     assert report["blocked_command_invocations"] == []
     assert report["remaining_simulation_processes"] == []
@@ -322,8 +327,7 @@ def _check_delivered_prompts(root, scenario):
             assert 'notes/nodes/N000/research_analysis_v1.md' in capture['evidence_files']
     for capture in (p for p in captures if p['role'] == 'memory'):
         assert capture['stdin'].startswith((task / 'prompts/global_memory_manager.md').read_text())
-        assert set(capture['schema']['required']) == {'research_summary', 'engineering_summary'}
-        assert 'new mechanistic evidence' in capture['stdin']
+        assert set(capture['schema']['required']) == {'research_summary', 'engineering_summary', 'wisdom'}
         assert '--ephemeral' in capture['argv'] and 'resume' not in capture['argv']
         assert all('/private/' not in r['path'] for r in capture['read_roots'])
         assert capture['analysis_refs']
@@ -331,10 +335,12 @@ def _check_delivered_prompts(root, scenario):
         for ref, digest in capture['analysis_hashes'].items():
             source = root / 'run/.coral/public/notes' / ref
             assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
-        trigger = json.JSONDecoder().raw_decode(
-            capture['stdin'][re.search(r'\{\s*"engineering_summary"\s*:', capture['stdin']).start():])[0]
+        memory_prompt = (task / 'prompts/global_memory_manager.md').read_text()
+        trigger = json.JSONDecoder().raw_decode(capture['stdin'][len(memory_prompt):].lstrip())[0]
         assert trigger['trigger_refs']
         assert set(trigger['trigger_refs']) <= set(capture['analysis_refs'])
+        assert set(trigger['required_refs']) == set(trigger['trigger_refs'])
+        assert set(trigger['required_refs']) <= set(trigger['covered_refs'])
     if scenario == 'faults':
         resumed = [p for p in producers if p['agent_id'] == 'research-N002']
         assert len(resumed) >= 2

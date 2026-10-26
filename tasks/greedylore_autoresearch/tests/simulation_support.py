@@ -653,7 +653,7 @@ def make_report(paths):
     recorded = events()
     notes = paths.coral_dir / "public/notes"
     before = [
-        (notes / name).read_bytes() for name in ("research_summary.md", "engineering_summary.md")
+        (notes / name).read_bytes() for name in ("research_summary.md", "engineering_summary.md", "wisdom.md")
     ]
     result = consolidate_memory(
         if_due=True,
@@ -661,7 +661,7 @@ def make_report(paths):
         runner=lambda *_: (_ for _ in ()).throw(RuntimeError("duplicate Memory")),
     )
     after = [
-        (notes / name).read_bytes() for name in ("research_summary.md", "engineering_summary.md")
+        (notes / name).read_bytes() for name in ("research_summary.md", "engineering_summary.md", "wisdom.md")
     ]
     starts = [
         e for e in recorded if e["event"] == "runtime_start" and e["agent"] == "research-N002"
@@ -700,6 +700,7 @@ def make_report(paths):
         "retired_worktrees": all(not (paths.agents_dir / f"research-{n}").exists() for n in roots)
         and all(not (paths.agents_dir / c["agent"]).exists() for c in claims),
         "memory_idempotent": result.status == "not_due" and before == after,
+        "wisdom_published": (notes / "wisdom.md").is_file(),
         "same_session_resumed": len(starts) >= 2
         and starts[1]["resume"] == starts[0]["session"]
         and starts[1]["worktree"] == starts[0]["worktree"],

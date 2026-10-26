@@ -76,7 +76,7 @@ def main() -> None:
     roots = _fixed_roots(prompt)
     record = {'argv': argv, 'stdin': prompt, 'schema': schema,
               'read_roots': [{'path': str(p), 'exists': p.is_dir()} for p in roots]}
-    if set(schema['required']) == {'research_summary', 'engineering_summary'}:
+    if set(schema['required']) == {'research_summary', 'engineering_summary', 'wisdom'}:
         from autoresearch.memory import list_analysis_refs
 
         refs = list(list_analysis_refs(roots[0]))
@@ -87,7 +87,8 @@ def main() -> None:
         event('memory_model', refs=refs)
         summary = ('---\n' + yaml.safe_dump({'processed_analyses': refs})
                    + '---\n# SIMULATED Summary\n\nWorkflow exercise only; no scientific conclusions.\n')
-        output.write_text(json.dumps({'research_summary': summary, 'engineering_summary': summary}))
+        output.write_text(json.dumps({'research_summary': summary, 'engineering_summary': summary,
+            'wisdom': '# Wisdom\nSimulation only; no reusable scientific conclusion.'}))
         return
 
     evidence_root = next(p for p in roots if (p / 'spec.md').is_file())
