@@ -112,9 +112,9 @@ Researcher 通过宿主入口提交档案变更，不能直接修改公开档案
 
 诊断分支不得污染主轨迹的模型、RNG 或数据位置，不提供免费训练步。Synthetic 检查仅支持已测性质，短 continuation 仅支持相应状态和时域。对于 adaptive 方法确认真实触发；必要时比较固定动作及相同动作比例但时机随机/错位的对照，计入判断和切换成本。
 
-## 7. 评估的 fidelity、efficiency 与候选保留（先不做）
+## 7. 评估的 fidelity、efficiency 与候选保留（预算已调整，其余待校准）
 
-正式开发、baseline 和对照使用相同的固定预算与数据协议。复盘运行的 130M 为 2500 步、warmup 2000 步，后段证据有限；是否延长训练或调整 schedule 需校准后确定，改变时建立新契约并补匹配基线，不重标历史结果。
+正式开发、baseline 和对照使用相同的固定预算与数据协议。复盘运行的 130M 为 2500 步、warmup 2000 步，后段证据有限；当前默认契约已将开发任务延长到 4000 步，语言迁移延长到 5000 步，保留原 schedule 与 warmup。新预算需建立匹配的 dense/Root 基线，不重标历史结果；其余保真与开销优化仍待校准。
 
 - 持久化本地 loss、学习率、训练时间与实际动作记录，不依赖外部 W&B 才能分析。
 - 开发验证可校准后使用较小子集，减少无决策价值的初始验证；先确认它能保持代表性候选的差值方向、分辨有用收益，暂不固定 token 数。
@@ -340,3 +340,12 @@ Checkpoint 正确性单独用真实 CPU PyTorch 小模型执行：使用变化�
 - `gpt-5.6-sol high` 完成独立复核，修复恢复、固定训练字段、dense 参考、质量元数据和 seed manifest 校验问题后，无剩余高／中优先级发现。微型 CPU/Gloo 跑通真实 vision runner；六个完整 CLI 模拟通过，覆盖成功、语言与 vision 各自质量／执行失败、无合格候选。模拟证据位于 `/tmp/coral-final-evaluation-20261026/accepted-staged/`；不证明真实 GPU 算法收益。正式运行前仍需建立新契约的 dense/Root 参考。
 
 本轮全量相关回归：**858 passed、2 skipped**（环境缺少 bubblewrap）；包含六个完整 staged CLI 模拟及微型 CPU/Gloo vision 执行。修改文件的 Ruff、Python 语法与 diff 检查通过。未运行真实 GPU 训练或模型服务。
+
+
+## 21. 延长语言预算并核验 Root（2026-10-26）
+- 当前默认契约将开发任务改为 **4000 updates**、语言迁移任务改为 **5000 updates**；对应学习率 schedule 仍为 20000/8393，warmup 仍为 2000/1000。只延长停止端点，不改变压缩策略、视觉任务、timing、质量门槛或迭代次数。已保存的 v1/v2 私有契约与历史结果保持原样；默认契约 hash 随预算变化，旧预算 dense/Root 结果不能复用为新基线。
+- Root bootstrap 固定 S0 和 A0 后，走正式 grader，按同一契约执行全部三项质量任务及 BF16/FP32 各两次 timing；Root 没有选题、开发迭代或候选选择环节。现有遍历逻辑已覆盖 ResNet18，本次以实际 grader/命令/评分路径的离线测试确认新预算和任务覆盖，不另造 Root 专用评估协议。新运行须先准备匹配 dense，再评估新的固定 Root；不重开历史完成节点。
+- 修复 Root 正式视觉结果校验失败时异常未分类的问题；缺失／不完整的视觉证据与非对象 JSON 结果现在正常形成 candidate failure。保留进程和资源证据，不将其当成宿主基础设施故障。
+- 固定配置参考、README 及 `/tmp` 中英文任务说明已同步；Researcher/Analyzer 正文继续使用阶段名称。完整 staged 模拟确认暂停／续跑在 4000 步结束，成功语言迁移在 5000 步结束。`gpt-5.6-sol high` review 后无剩余高／中优先级问题；最终 Root/正式评估专项 **71 passed**，覆盖新预算、三质量＋四 timing、旧契约参考提前拒绝、不完整视觉结果、数组/null/字符串结果失败归档。
+
+本轮全量相关回归 **861 passed、2 skipped**（缺少 bubblewrap），包含六个完整 CLI 模拟；新增 JSON 类型补丁及三个回归场景后，Root/正式评估专项 **71 passed**。Ruff 与 diff 检查通过。模拟证据：`/tmp/coral-root-budget-20261026/staged/`。没有执行真实 GPU 训练或模型服务。

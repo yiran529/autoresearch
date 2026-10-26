@@ -280,6 +280,8 @@ class Grader(TaskGrader):
             payload = json.loads((output / "all_results.json").read_text())
         except (OSError, ValueError) as exc:
             raise CandidateError(f"candidate result is unavailable: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise CandidateError('candidate result must be a JSON object')
         if payload.get("status") != "completed":
             raise CandidateError("candidate result is not completed")
         return payload
@@ -364,7 +366,10 @@ class Grader(TaskGrader):
                     payload = self._completed_json(spec, output)
                     if profile['model'] == 'resnet18':
                         from .vision import validate_vision_result
-                        validate_vision_result(payload, profile)
+                        try:
+                            validate_vision_result(payload, profile)
+                        except (TypeError, ValueError) as exc:
+                            raise CandidateError(f'invalid quality result for {name}: {exc}') from exc
                     elif (payload.get("contract_hash") != contract.contract_hash
                             or payload.get("world_size") != contract.hardware.gpu_count
                             or payload.get("update_step") != profile["stop_after_steps"]

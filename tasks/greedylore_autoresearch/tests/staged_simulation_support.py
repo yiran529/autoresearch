@@ -334,6 +334,7 @@ def driver(output, scenario):
             action('train', {'iteration': 1, 'sha': sha}, 'resume')
             host = drain()
             assert host.record.read()['iterations'][0]['status'] == 'completed', host.status()
+            assert host.record.read()['iterations'][0]['observations'][-1]['update_step'] == 4000
             assert timing_count() == timing_before_resume  # Quality completion never starts timing.
             budget = False
             if scenario == 'no_eligible':
@@ -374,6 +375,10 @@ def driver(output, scenario):
             assert any(item['path'].startswith(f'research_diagnostics/{node}/probe/') for item in records)
             timings = host.record.read()['iterations'][0]['timings']
             final_records = host.record.read().get('final_evaluation', {})
+            language_results = final_records.get('llama60m_adamw', [])
+            for entry in language_results:
+                if entry['result']['status'] == 'completed':
+                    assert entry['result']['update_step'] == 5000
             timing_records = timings + final_records.get('timing', [])
             assert timing_records
             assert all(any(item['path'].startswith(t['result']['evidence_path'] + '/') for item in records) for t in timing_records)

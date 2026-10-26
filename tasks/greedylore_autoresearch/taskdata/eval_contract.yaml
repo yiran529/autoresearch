@@ -43,7 +43,7 @@ quality:
       precision: bf16
       per_device_batch_size: 128
       scheduler_steps: 8393
-      stop_after_steps: 4000
+      stop_after_steps: 5000
       learning_rate: 0.0025
       activation_checkpointing: true
     llama130m_muon:
@@ -52,7 +52,7 @@ quality:
       precision: bf16
       per_device_batch_size: 128
       scheduler_steps: 20000
-      stop_after_steps: 2500
+      stop_after_steps: 4000
       matrix_learning_rate: 0.01
       scalar_learning_rate: 0.001
       activation_checkpointing: true
