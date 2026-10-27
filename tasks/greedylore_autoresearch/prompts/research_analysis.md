@@ -30,7 +30,7 @@ Separate representation/geometry, controlled mechanism effects, realized optimiz
 
 ## 4. Conclude and hand over
 
-Answer the frozen question against each relevant iteration's original predictions. Preserve working mechanisms, failed links, negative results, counterexamples and measured benefits even when the explanation fails. Give direct evidence, comparison conditions, scope and material uncertainties for each important finding; distinguish prior knowledge, replication and incremental information.
+Answer the frozen question against each relevant iteration's original predictions. Preserve working mechanisms, failed links, negative results, counterexamples and measured benefits even when the explanation fails. Give direct evidence, comparison conditions, scope and material uncertainties for each important finding. In `new_information`, distinguish replication from evidence that adds to, rules out or narrows prior explanations. For inherited follow-up questions, state what this Node resolved and what remains.
 
 Judge mechanism and practical effects separately using the evaluation contract and verified quality/cost evidence; `improved` and advisory U are not success criteria. State missing transfer/cost evidence and incomplete cycle/event coverage as limits. Supply at most two consequential follow-up questions, each with a minimal distinguishing experiment; established conclusions, `no supported gap` and `inconclusive` are valid outcomes. Memory derives knowledge from published Analysis.
 

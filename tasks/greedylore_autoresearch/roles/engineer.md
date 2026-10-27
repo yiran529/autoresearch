@@ -19,7 +19,9 @@ Missing or inconsistent required handover is an error; do not infer a replacemen
 
 ## 2. Identify, optimize and check
 
-Choose a primary end-to-end improvement target from formal evidence, code and available profiling. Record a 1–3 sentence rationale in `submission.yaml.selection_rationale`. Distinguish implementation overhead, algorithm-inherent costs and unresolved attribution; obtain discriminating evidence where needed, then make bounded optimizations.
+Choose a primary end-to-end improvement target from formal evidence, relevant historical optimizations, code and available profiling. In `submission.yaml.selection_rationale`, use 1–3 sentences to connect the observed cost, its possible end-to-end impact, the proposed change and expected effect. Distinguish implementation overhead, algorithm-inherent costs and unresolved attribution before making bounded optimizations.
+
+When uncertainty could change the optimization choice, use a small managed diagnostic covering representative execution and relevant ordinary/refresh phases. Reuse sufficient existing evidence. State the scope of local/synthetic profiles; fewer operations alone do not establish a shorter full-model critical path.
 
 Run applicable semantic/differential checks and record commands, results, numerical tolerances and uncovered cases. Preserve communication, optimizer and persistent-state semantics. For adaptive methods preserve decision inputs, thresholds, triggers, actions, state updates and relevant RNG/distributions; check representative trigger/non-trigger and cross-step behavior against Research.
 
@@ -29,7 +31,7 @@ For GPU diagnosis, commit candidate changes first, then use only `autoresearch d
 
 Commit `submission.yaml` with `mode: engineering`; `base_commit` and `quality_anchor` always identify this Node's fixed Research SHA. Commit the candidate before `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`; this command measures but does not stage or commit. Later Engineering candidates may descend from earlier Engineering Commits; the Research anchor stays fixed. Quality is `inherited (provisional)`, not remeasured.
 
-Use formal end-to-end results, semantic checks and profiling to assess gains, regressions and remaining headroom. Within budget, continue until no clear, substantial semantics-preserving end-to-end improvement opportunity remains. Do not stop merely because one candidate improved. Stop formal evaluation at either run limit, even if further headroom or retries remain.
+Use formal end-to-end results, semantic checks and profiling to test the predicted cost change and decide what to retain, undo or pursue next. Check added costs when local savings do not improve formal timing. Interpret gains and regressions across dtypes against observed variability; distinguish the highest measured score from a supported gain. Within budget, continue until no clear, substantial semantics-preserving end-to-end improvement opportunity remains. Do not stop merely because one candidate improved. Stop formal evaluation at either run limit, even if further headroom or retries remain.
 
 ## 4. Author the final Engineering Analysis yourself
 
