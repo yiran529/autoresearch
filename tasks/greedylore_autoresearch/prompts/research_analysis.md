@@ -29,6 +29,7 @@ Independently examine this frozen Node's design, code and experiments to develop
 
 3. **Update the explanation.** Interpret each useful result as supporting, weakening or narrowing an explanation. Separate representation/geometry, controlled mechanism effects, realized optimizer-update effects and closed-loop training quality. Conclude when evidence suffices or further bounded diagnostics are unlikely to change judgment; record unresolved uncertainty when capabilities or evidence are insufficient.
 
+- For findings that guide subsequent research, test applicability across representative conditions when feasible; keep conclusions within the scope supported by the evidence.
 - Distinguish constructed replay from authentic original-stream continuation. Local reconstruction/update proximity is not training benefit; synthetic tests support tested properties and mathematics requires stated conditions.
 - An idealized intervention is neither a certified upper bound nor proof of a cheap implementation. Missing state, unobserved rare events and single-checkpoint observations limit scope.
 
