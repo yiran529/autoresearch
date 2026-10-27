@@ -14,3 +14,7 @@ Analyzer 验收：发现两处嵌套 tmpfs 可见性问题，非缺少系统安�
 最终定向回归：114 passed、2 skipped，包含实际进程持卡测试与一个完整 staged 成功模拟；额外的环境故障阻断新节点准入检查通过。真实离线安装、两次四卡CUDA借用和真实Analyzer随机证据读取均通过。新run不设置六小时时限；先保留单节点准入闸门，通过真实节点后放开两节点并清理旧失败Worktree/动态产物。
 
 正式首节点进一步定位到租约取消原因：例行 `stop_workflow_worker(cancel_diagnostics=False)` 轮换 Analyzer 时曾短暂发布全局 `workflow_stopping`，令并行 Researcher keeper 退出。改为轮换专用 `workflow_recovering`，仅暂停模型准入；全局关闭继续使用原停止标记并释放研究资源。真实 keeper/注册任务回归先复现失败再通过，相关84项测试通过。新 run 保留首节点方法与失败记录，修复后恢复同一会话，不重置实验预算。
+
+恢复运行：`/home/wyr/coral-experiments/greedylore-v4-restart-20261027/run`，执行源码固定为 `085c43f356d3ae15fe5d558bbf22f62d850f5ec8`。真实四卡 CUDA 探针在 Analyzer 轮换期间两次连续借卡均通过；首节点 N001 已进入真实开发训练并持续记录 loss，GPU 租约正常。首节点完整验收与旧失败节点清理仍待后台监督器执行，不能据此声称完整科学评估已通过。
+
+新增全链路成功模拟在宿主完成（1 passed），覆盖入口、暂停/同 SHA 续跑、独立最终 timing、语言/视觉最终评估、Analyzer、Engineering 和动态产物清理。受限执行沙箱中的同一模拟曾在 Root 初始化处超时，未作为通过证据；进程身份/IPC 集成验收使用宿主执行结果。新的搜索、启动记录和 run 契约均不设六小时时限。
