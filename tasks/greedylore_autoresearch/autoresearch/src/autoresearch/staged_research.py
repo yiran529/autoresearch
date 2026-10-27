@@ -200,6 +200,7 @@ class StagedResearch:
                             from greedylore_autoresearch_grader.gpu import InfraFailure
                             job['result'] = {'status': 'infra_failed' if isinstance(exc, (InfraFailure, OSError)) else 'failed',
                                              'reason': f'{type(exc).__name__}: {exc}',
+                                             **({'phase': exc.phase} if getattr(exc, 'phase', None) else {}),
                                              **self._failure_evidence(job)}
                         self._save(state)
                     result = job['result']
@@ -247,7 +248,8 @@ class StagedResearch:
                         failure = recovery_error
                     job['result'] = recovered or {
                         'status': 'infra_failed' if isinstance(failure, (InfraFailure, OSError)) else 'failed',
-                        'reason': f'{type(failure).__name__}: {failure}', **self._failure_evidence(job)}
+                        'reason': f'{type(failure).__name__}: {failure}',
+                        **({'phase': failure.phase} if getattr(failure, 'phase', None) else {}), **self._failure_evidence(job)}
             self._save(state)
         publisher = getattr(self.backend, 'publish_timing', None)
         if publisher:

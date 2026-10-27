@@ -482,7 +482,8 @@ class WorkflowStore:
                 if node_id != "N000" and node_id in admitted
             )
             changed = not self.state_path.is_file()
-            while live_research < max_researchers and self._node_completed_unlocked(state, "N000"):
+            while (live_research < max_researchers and self._node_completed_unlocked(state, "N000")
+                   and not (self.coral_dir / "private/research_infrastructure_block.json").exists()):
                 if (self.max_active_nodes
                         and len(self._unfinished_node_ids_unlocked(state)) >= self.max_active_nodes):
                     break

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,7 +70,6 @@ class Execution:
         from .engineer_diagnostics import _snapshot_commit
 
         root = self.artifacts.require_space(host.node_id)
-        self._ready(job['context'])
         document = host.record.read()
         row = document['iterations'][job['iteration'] - 1]
         sha = job.get('sha') or row['code_sha']
@@ -80,6 +80,13 @@ class Execution:
         public = self.coral / 'public/eval_logs' / sha / run_id
         work.mkdir(parents=True, exist_ok=True)
         public.mkdir(parents=True, exist_ok=True)
+        if job['kind'] != 'diagnostic':
+            self._prepare_environment(code, work)
+        try:
+            self._ready(job['context'])
+        except InfraFailure as exc:
+            exc.phase = 'before_launch'
+            raise
         contract = EvalContract.load(self.coral / 'private/eval_contract.yaml')
         if job['kind'] == 'diagnostic':
             return self._diagnostic(job, code, work, public, row)
@@ -319,9 +326,32 @@ class Execution:
             'result_sha256': hashlib.sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()})
         return result
 
+    def _prepare_environment(self, code, work):
+        """Warm a snapshot's locked environment before reserving training GPUs."""
+        import subprocess
+
+        from greedylore_autoresearch_grader.gpu import InfraFailure
+
+        environment = {**os.environ, **self._environment(work), 'UV_OFFLINE': '1'}
+        command = ['uv', 'sync', '--frozen', '--offline', '--project', str(code)]
+        command_path = work / 'environment-command.json'
+        _atomic_json(command_path, {'command': command, 'uv_cache_dir': environment['UV_CACHE_DIR']})
+        try:
+            with (work / 'environment.stdout.log').open('w') as stdout, (work / 'environment.stderr.log').open('w') as stderr:
+                result = subprocess.run(command, cwd=code, env=environment, stdout=stdout, stderr=stderr, timeout=600)
+            if result.returncode:
+                raise RuntimeError((work / 'environment.stderr.log').read_text()[-4000:])
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as error:
+            detail = {'phase': 'environment_setup', 'node_id': self.host.node_id,
+                      'reason': str(error), 'evidence': str(command_path)}
+            _atomic_json(self.coral / 'private/research_infrastructure_block.json', detail)
+            failure = InfraFailure(f'candidate environment preparation failed: {error}')
+            failure.phase = 'environment_setup'
+            raise failure from error
+
     def _environment(self, work):
         root = self.artifacts.node_root(self.host.node_id) / 'caches'
-        return {'TMPDIR': str(work), 'UV_CACHE_DIR': str(root / 'uv'),
+        return {'TMPDIR': str(work), 'UV_CACHE_DIR': str(Path(self.options.get('research_uv_cache_dir') or os.environ.get('UV_CACHE_DIR') or Path.home() / '.cache/uv').expanduser()),
                 'TORCHINDUCTOR_CACHE_DIR': str(root / 'torchinductor'),
                 'TRITON_CACHE_DIR': str(root / 'triton'), 'CUDA_CACHE_PATH': str(root / 'cuda'),
                 'XDG_CACHE_HOME': str(root / 'xdg'), 'HF_HOME': str(root / 'huggingface'),
@@ -345,7 +375,10 @@ class Execution:
                     roots.append((value['update_step'], path.parent))
         if roots:
             return max(roots, key=lambda item: item[0])[1]
-        if len(row['runs']) > 1:
+        setup_only = row.get('observations') and all(
+            observation.get('status') == 'infra_failed' and observation.get('phase') in {'environment_setup', 'before_launch'}
+            for observation in row['observations'])
+        if len(row['runs']) > 1 and not setup_only:
             raise InfraFailure('no complete checkpoint remains for exact continuation; stop and redesign')
         return None
 

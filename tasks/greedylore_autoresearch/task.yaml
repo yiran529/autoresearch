@@ -17,6 +17,7 @@ grader:
     # New runs use staged Research; saved configurations keep their recorded protocol.
     staged_research: true
     research_checkpoint_interval_steps: 1000
+    research_uv_cache_dir: /home/wyr/.cache/uv
     dynamic_artifact_root: /dev/shm/wyr_tmp
     dynamic_artifact_min_free_bytes: 1073741824
     research_infra_retry_limit: 2
