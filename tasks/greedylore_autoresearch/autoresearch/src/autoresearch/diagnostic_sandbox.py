@@ -16,8 +16,9 @@ import yaml
 
 from coral.grader.timeouts import DIAGNOSTIC_QUEUE_TIMEOUT
 
+from .artifact_paths import WORKSPACE_VIEW, diagnostic_view
+
 _NVIDIA_DRIVER_ROOT = Path('/proc/driver/nvidia/gpus')
-WORKSPACE_VIEW = Path('/workspace')
 
 
 def device_minors_for_uuids(uuids, *, driver_root=None) -> list[int]:
@@ -124,18 +125,23 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
     # Both the model's nested sandbox and diagnostic commands use this view.
     # Keep original paths available for existing scripts; both views share the
     # same frozen writable inputs, never the live Analyzer inputs during execution.
-    for view in dict.fromkeys((workspace, WORKSPACE_VIEW)):
-        command.extend(['--ro-bind', str(workspace), str(view)])
+    view = diagnostic_view(workspace, checkpoint_paths=checkpoints)
+    # Bind targets must exist beneath the read-only workspace before mounting it.
+    for _source, target in view.mounts[1:]:
+        mountpoint = workspace / target.relative_to(WORKSPACE_VIEW)
+        _no_symlinks(mountpoint)
+        mountpoint.mkdir(parents=True, exist_ok=True)
+    for root in dict.fromkeys((workspace, view.path(workspace))):
+        command.extend(['--ro-bind', str(workspace), str(root)])
         for name in ('experiments', 'results'):
             source = Path((write_sources or {}).get(name, str(workspace / name)))
             _no_symlinks(source)
             if not source.is_relative_to(workspace.parent):
                 raise ValueError('diagnostic writable mount escapes this task')
-            command.extend(['--bind', str(source), str(view / name)])
-    records = workspace.parent / 'records'
-    if records.is_dir():
-        _no_symlinks(records)
-        command.extend(['--ro-bind', str(records), str(WORKSPACE_VIEW / 'records')])
+            command.extend(['--bind', str(source), str(root / name)])
+    for source, target in view.mounts[1:]:
+        _no_symlinks(source)
+        command.extend(['--ro-bind', str(source), str(target)])
     for index in devices:
         path = f'/dev/nvidia{index}'
         command.extend(['--dev-bind', path, path])

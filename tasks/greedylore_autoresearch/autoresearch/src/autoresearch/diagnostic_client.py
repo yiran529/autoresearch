@@ -8,7 +8,6 @@ import socket
 import sys
 import time
 import uuid
-from pathlib import Path
 
 
 def main():
@@ -47,20 +46,7 @@ def main():
                     raise SystemExit('diagnostic response exceeds 64 KiB')
         result = json.loads(response)
         if result.get('ok'):
-            document = result['result']
-            # The host ledger retains original evidence paths. Only this model
-            # CLI view uses aliases surviving Codex's fresh /tmp and /dev/shm.
-            records = os.environ.get('CORAL_DIAGNOSTIC_RECORDS')
-            if records:
-                for key in ('record_path', 'stdout_path', 'stderr_path', 'results_path'):
-                    if not document.get(key):
-                        continue
-                    try:
-                        relative = Path(document[key]).relative_to(records)
-                    except ValueError:
-                        continue
-                    document[key] = str(Path('/workspace/records') / relative)
-            print(json.dumps(document))
+            print(json.dumps(result['result']))
             return
         error = result.get('error', 'diagnostic rejected')
         if 'active Analyzer diagnostic task' not in error or time.monotonic() >= deadline:

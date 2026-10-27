@@ -64,3 +64,37 @@ def test_runtime_preflight_failure_is_infra_before_gpu_launch(tmp_path):
         backend._prepare_runtime(code, work)
     assert 'AF_UNIX' in (work / 'runtime-preflight.stderr.log').read_text()
     assert (backend.coral / 'private/research_infrastructure_block.json').exists()
+
+
+def test_research_diagnostic_returns_public_paths_and_preserves_host_record(tmp_path, monkeypatch):
+    import json
+
+    from autoresearch import staged_diagnostics
+
+    backend = execution(tmp_path)
+    work = backend.artifacts.path('N001', 'runs/probe')
+    work.mkdir(parents=True)
+    public = backend.coral / 'public/eval_logs/candidate/probe'
+
+    def probe(_backend, job, code, work, row):
+        record = work / 'records/probe'
+        (record / 'results').mkdir(parents=True)
+        (record / 'stdout.log').write_text('research probe output')
+        (record / 'stderr.log').write_text('')
+        result = {'status': 'failed', 'stdout_path': str(record / 'stdout.log'),
+                  'stderr_path': str(record / 'stderr.log'), 'results_path': str(record / 'results')}
+        (record / 'record.json').write_text(json.dumps(result))
+        result['record_path'] = str(record / 'record.json')
+        return result
+
+    monkeypatch.setattr(staged_diagnostics, 'execute', probe)
+    result = backend._diagnostic({'request_id': 'probe'}, work / 'code', work, public, {})
+    for field in ('record_path', 'stdout_path', 'stderr_path'):
+        assert Path(result[field]).is_relative_to(public), result
+        assert Path(result[field]).exists()
+    assert 'results_path' not in result  # Empty results directories are not archived.
+    assert 'results_path' in result['unavailable_artifacts']
+    record = json.loads(Path(result['record_path']).read_text())
+    assert record['stdout_path'].startswith(str(backend.artifacts.root))
+    backend.artifacts.cleanup_node('N001', terminal=True)
+    assert Path(result['stdout_path']).read_text() == 'research probe output'

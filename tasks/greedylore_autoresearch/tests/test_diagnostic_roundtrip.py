@@ -10,11 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from autoresearch import diagnostic_client, diagnostic_sandbox, diagnostics
-from coral.grader.trusted_writes import TrustedWriteServer, TrustedWriteService
-
+from autoresearch.artifact_paths import diagnostic_view
 from test_diagnostics import task as task
+
+from coral.grader.trusted_writes import TrustedWriteServer, TrustedWriteService
 
 
 def test_analyzer_can_read_failure_correct_script_and_run_again(task, tmp_path, monkeypatch):
@@ -30,8 +30,13 @@ def test_analyzer_can_read_failure_correct_script_and_run_again(task, tmp_path, 
     shutil.copyfile(diagnostic_client.__file__, tools / 'autoresearch')
     secret = tmp_path / 'host-secret'
     secret.write_text('not an experiment input')
+    checkpoint = task.coral_dir / 'public/eval_logs/attempt/run/checkpoints/model'
+    checkpoint.mkdir(parents=True)
+    (checkpoint / 'model.pt').write_text('matching checkpoint')
+    checkpoint_alias = diagnostic_view(task.workspace, checkpoint_paths=[checkpoint]).path(checkpoint)
     state = task.read()
-    state['runtime'] = {'readonly_paths': [str(code)], 'path': '/usr/bin:/bin'}
+    state['checkpoint_paths'] = [str(checkpoint)]
+    state['runtime'] = {'readonly_paths': [str(code), str(checkpoint)], 'path': '/usr/bin:/bin'}
     diagnostics._atomic_json(task.path, state)
 
     class CpuReservation:
@@ -56,9 +61,11 @@ root = Path('/workspace')
 sha = __SHA__
 assert not Path(__HOST_SECRET__).exists()
 assert (root/'code'/sha/'c4/__init__.py').read_text() == 'VALUE = "fixed candidate"\n'
+assert (Path(__CHECKPOINT__)/'model.pt').read_text() == 'matching checkpoint'
 script = root/'experiments/probe.py'
 prefix = ('import sys\nfrom pathlib import Path\nsys.path.insert(0, '
           + repr('/workspace/code/'+sha) + ')\nfrom c4 import VALUE\nprint(VALUE, flush=True)\n')
+prefix += 'assert (Path('+repr(__CHECKPOINT__)+')/"model.pt").read_text() == "matching checkpoint"\n'
 script.write_text(prefix + 'print("x"*12000)\nprint(VALUE, flush=True)\n'
                   + 'print("y"*12000, file=sys.stderr)\nraise ValueError("probe needs correction")\n')
 def run(request):
@@ -94,7 +101,8 @@ assert fixed['status'] == 'completed', fixed
 assert (Path(fixed['results_path'])/'value.json').read_text() == 'fixed candidate'
 assert (root/'results/value.json').read_text() == 'fixed candidate'
 (root/'results/roundtrip.json').write_text(json.dumps({'failed': failed, 'fixed': fixed}))
-'''.replace('__HOST_SECRET__', repr(str(secret))).replace('__SHA__', repr('a' * 40))
+'''.replace('__HOST_SECRET__', repr(str(secret))).replace('__SHA__', repr('a' * 40)).replace(
+        '__CHECKPOINT__', repr(str(checkpoint_alias)))
     (task.workspace / 'experiments/controller.py').write_text(controller)
     bwrap = shutil.which('bwrap')
     inner = [bwrap, '--die-with-parent', '--unshare-all', '--share-net', '--ro-bind', '/', '/',
@@ -110,10 +118,9 @@ assert (root/'results/value.json').read_text() == 'fixed candidate'
     server.start()
     try:
         command = diagnostic_sandbox.build_sandbox(task.workspace,
-            [task.coral_dir / 'public/trusted.sock', Path(bwrap).resolve().parent], [], inner,
-            network=True, coral_dir=str(task.coral_dir))
-        environment = {'PATH': '/usr/bin:/bin', 'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir),
-                       'CORAL_DIAGNOSTIC_RECORDS': str(task.records)}
+            [task.coral_dir / 'public/trusted.sock', Path(bwrap).resolve().parent, checkpoint], [], inner,
+            network=True, checkpoint_paths=[checkpoint], coral_dir=str(task.coral_dir))
+        environment = {'PATH': '/usr/bin:/bin', 'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir)}
         result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=50)
         assert result.returncode == 0, result.stdout + result.stderr
     finally:

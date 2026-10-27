@@ -544,7 +544,9 @@ class Execution:
         host.store.advance()
 
     def _diagnostic(self, job, code, work, public, row):
+        from .artifact_paths import PathView
         from .staged_diagnostics import execute
         result = execute(self, job, code, work, row)
         self._archive(work, public)
-        return {**result, 'evidence_path': public.relative_to(self.coral / 'public').as_posix()}
+        return {**PathView([(work, public)]).project_result(result, published=True),
+                'evidence_path': public.relative_to(self.coral / 'public').as_posix()}

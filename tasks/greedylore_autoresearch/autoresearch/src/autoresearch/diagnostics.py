@@ -281,7 +281,11 @@ def handle_diagnostic(payload: dict, context: dict, *, executor=None) -> dict:
         if task.read().get('source_role') != 'engineer' and _live_descendant(peer, task.read().get('process')):
             if 'scripts_dir' in payload:
                 raise ValueError('Analyzer scripts belong in its supplied workspace')
-            return task.run(payload, peer, executor)
+            from .artifact_paths import diagnostic_view
+
+            result = task.run(payload, peer, executor)
+            return diagnostic_view(task.workspace,
+                checkpoint_paths=task.read().get('checkpoint_paths', [])).project_result(result)
     from .engineer_diagnostics import run_engineer_diagnostic
 
     return run_engineer_diagnostic(coral_dir, peer, payload, executor)

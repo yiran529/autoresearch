@@ -15,8 +15,9 @@ import yaml
 
 from coral.grader.trusted_writes import _atomic_json
 
+from .artifact_paths import diagnostic_view
 from .atomic import atomic_write_text
-from .diagnostic_sandbox import WORKSPACE_VIEW, build_sandbox
+from .diagnostic_sandbox import build_sandbox
 
 
 def settings(coral_dir: Path) -> dict:
@@ -110,7 +111,8 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                                 checkpoint_paths=checkpoint_paths, coral_dir=str(task.coral_dir))
         command = command[:-2]  # replace the placeholder command following '--'
         # build_sandbox supplies the same stable view to model and experiments.
-        model_workspace = WORKSPACE_VIEW
+        view = diagnostic_view(task.workspace, checkpoint_paths=checkpoint_paths)
+        model_workspace = view.path(task.workspace)
         command.extend(['--bind', str(home), str(home)])
         if auth.is_file():
             command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
@@ -140,8 +142,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                         '--output-schema', str(schema), '--output-last-message', str(output), '-'])
         environment = {'PATH': f"{model_workspace / 'tools'}:{isolation_binary.parent}:{runtime_path}", 'HOME': str(home),
                        'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
-                       'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': '',
-                       'CORAL_DIAGNOSTIC_RECORDS': str(task.records)}
+                       'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
         # API-key based installations may not have auth.json.
         # Preserve model API proxy configuration. Diagnostic experiments receive a
         # separate sanitized environment in diagnostic_sandbox, not these variables.
@@ -178,7 +179,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                 '- Cite record_ref or records/<request-id>/... in the final document.\n\n'
                 'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
             )
-            _stdout, stderr = process.communicate((prompt + location).replace(str(task.workspace), str(model_workspace)),
+            _stdout, stderr = process.communicate(view.rewrite_text(prompt + location),
                                                   timeout=remaining())
             atomic_write_text(task.private / 'session.stdout.log', _stdout)
             atomic_write_text(task.private / 'session.stderr.log', stderr)

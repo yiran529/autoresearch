@@ -179,6 +179,11 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
     schema.write_text('{}')
     code_root = task.workspace / 'code/fixed-sha'
     code_root.mkdir(parents=True)
+    checkpoint = task.coral_dir / 'public/eval_logs/attempt/run/checkpoints/model'
+    checkpoint.mkdir(parents=True)
+    state = task.read()
+    state['checkpoint_paths'] = [str(checkpoint)]
+    diagnostics._atomic_json(task.path, state)
 
     class Process:
         pid = os.getpid()
@@ -201,6 +206,8 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             assert command[command.index('--cd') + 1] == '/workspace/results'
             assert command[command.index('--add-dir') + 1] == '/workspace/experiments'
             assert 'Workspace root: /workspace' in prompt
+            assert str(checkpoint) not in prompt
+            assert '/workspace/checkpoints/' in prompt
             assert 'resolved relative to the workspace root' in prompt
             assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
             assert 'model_reasoning_effort="medium"' in command
@@ -220,7 +227,8 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
     monkeypatch.setattr('coral.grader.trusted_worker.register_workflow_model', lambda *_, **__: None)
     monkeypatch.setattr('coral.grader.trusted_worker.stop_workflow_model', lambda *_, **__: None)
     monkeypatch.setattr(diagnostic_session.subprocess, 'Popen', Process)
-    output = diagnostic_session.run_diagnostic_codex('analyze', [code_root], schema, task.workspace, task)
+    output = diagnostic_session.run_diagnostic_codex(f'Inspect {checkpoint}/manifest.json',
+        [code_root, checkpoint], schema, task.workspace, task)
     assert output.read_text() == '{}'
     assert task.read()['process'] is None
 

@@ -130,8 +130,11 @@ def run_engineer_diagnostic(coral: Path, peer: int, payload: dict, executor):
             'path': config.get('diagnostic_path', '/usr/local/bin:/usr/bin:/bin'),
             'gpu_lock_dir': config.get('gpu_lock_dir')})
 
-    return task.run(payload, peer, executor, prepare=prepare,
-                    authorize=lambda: _authorize(coral, binding))
+    from .artifact_paths import PathView
+
+    result = task.run(payload, peer, executor, prepare=prepare,
+                      authorize=lambda: _authorize(coral, binding))
+    return PathView([(task.records, task.root / 'records')]).project_result(result, published=True)
 
 
 @contextmanager

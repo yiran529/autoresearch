@@ -57,6 +57,46 @@ def test_live_engineer_runs_with_frozen_candidate_and_separate_budget(engineer):
         'peer_pid': os.getpid()}, executor=lambda *_: pytest.fail('duplicate')) == result
 
 
+def test_dynamic_engineer_returns_public_paths_without_rewriting_host_evidence(engineer, tmp_path):
+    import yaml
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+
+    coral, _, _, agent, scripts = engineer
+    state = _state(coral)
+    node_id = state['engineering_workers'][agent]['node_id']
+    state['nodes'][node_id]['research'].update(protocol='staged-v2', transfer_terminal=True)
+    (coral / 'private/autoresearch_state.json').write_text(json.dumps(state))
+    (coral / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {
+        'staged_research': True, 'dynamic_artifact_root': str(tmp_path / 'dynamic'),
+        'dynamic_artifact_min_free_bytes': 0}}}))
+    RuntimeArtifacts(coral).node_root(node_id)
+
+    def execute(task, payload, cancelled):
+        cancelled()
+        record = task.records / payload['request_id']
+        (record / 'stdout.log').write_text('engineer probe output')
+        (record / 'stderr.log').write_text('')
+        (record / 'results').mkdir()
+        (record / 'results/value.json').write_text('{"valid":true}')
+        return {'status': 'completed', 'started': True,
+                'stdout_path': str(record / 'stdout.log'), 'stderr_path': str(record / 'stderr.log'),
+                'results_path': str(record / 'results')}
+
+    payload = request(scripts_dir=str(scripts))
+    context = {'coral_dir': str(coral), 'peer_pid': os.getpid()}
+    result = diagnostics.handle_diagnostic(payload, context, executor=execute)
+    for field in ('record_path', 'stdout_path', 'stderr_path', 'results_path'):
+        assert Path(result[field]).is_relative_to(coral / 'public'), result
+        assert Path(result[field]).exists()
+    record = json.loads(Path(result['record_path']).read_text())
+    assert record['stdout_path'].startswith(str(tmp_path / 'dynamic'))
+    assert diagnostics.handle_diagnostic(payload, context,
+        executor=lambda *_: pytest.fail('reexecuted')) == result
+    RuntimeArtifacts(coral).cleanup_node(node_id, terminal=True)
+    assert Path(result['stdout_path']).read_text() == 'engineer probe output'
+    assert json.loads((Path(result['results_path']) / 'value.json').read_text()) == {'valid': True}
+
+
 @pytest.mark.parametrize('change', ['completed', 'finalizing', 'foreign', 'dirty', 'escape'])
 def test_engineer_diagnostic_rejects_invalid_owner_stage_or_inputs(engineer, change, tmp_path):
     coral, repo, _, agent, scripts = engineer
