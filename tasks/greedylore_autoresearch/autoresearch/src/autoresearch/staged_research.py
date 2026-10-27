@@ -38,7 +38,11 @@ class StagedResearch:
 
     def status(self):
         self.record._owner()
-        return copy.deepcopy(self._read())
+        from .diagnostics import DIAGNOSTIC_SUCCESS_LIMIT, DIAGNOSTIC_TOTAL_LIMIT
+
+        state = copy.deepcopy(self._read())
+        state['diagnostic_limits'] = {'successful': DIAGNOSTIC_SUCCESS_LIMIT, 'total': DIAGNOSTIC_TOTAL_LIMIT}
+        return state
 
     def wait(self, request_id):
         """One authenticated read; waiting and retry delays stay in the CLI."""
@@ -46,6 +50,7 @@ class StagedResearch:
         if request_id not in state['jobs']:
             raise ValueError('unknown research request ID')
         job = state['jobs'][request_id]
+        job['diagnostic_limits'] = state['diagnostic_limits']
         # Older journals may contain an outer controller error without a result.
         if job['status'] in {'failed', 'cancelled'} and 'result' not in job:
             job['result'] = {'status': job['status'], 'reason': job.get('error', job['status'])}

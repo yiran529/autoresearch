@@ -74,6 +74,16 @@ def test_research_diagnostic_budget_survives_reopening(tmp_path, result_status, 
     assert len(reopened.status()['jobs']) == limit + 1  # Includes training.
 
 
+def test_status_and_wait_report_current_diagnostic_limits_without_changing_history(tmp_path):
+    h, _, _ = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b'*40}, 'train', {})
+    h.drain()
+    saved = h.path.read_bytes()
+    assert h.status()['diagnostic_limits'] == {'successful': 10, 'total': 20}
+    assert h.wait('train')['diagnostic_limits'] == {'successful': 10, 'total': 20}
+    assert h.path.read_bytes() == saved
+
+
 def test_pause_resume_freeze_transfer_is_idempotent_and_no_retuning(tmp_path):
     h, r, b = host(tmp_path)
     h.enqueue('train', {'iteration': 1, 'sha': 'b'*40, 'pause_after_steps': 1000}, 'run1', {})

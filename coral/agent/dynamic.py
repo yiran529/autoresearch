@@ -72,7 +72,7 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         "or either cap, the host freezes Research once all runs end, selects its fixed result, and retires you; only then do independent Research "
         "Analysis over all Attempts and quality-gated Engineering start."
         if spec.workflow_role == "research" else
-        "- Use at most 3 successful formal Engineering runs and 10 total formal Engineering runs, including "
+        "- Use at most 4 successful formal Engineering runs and 10 total formal Engineering runs, including "
         "failures, same-SHA retries and all resumes. A valid scored regression counts as success.\n"
         "- Stop evaluating at either limit. Otherwise, continue while evidence supports a clear, substantial end-to-end improvement opportunity; "
         "do not stop merely because one candidate improved.\n"

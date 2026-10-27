@@ -44,7 +44,7 @@
 
 - Engineering reads the claim's design source: the frozen selected iteration in `research.json` and matching Research SHA, or Root's fixed baseline Spec/A0. Required handover must be present and consistent. Preserve adaptive policy decisions, triggers and state semantics.
 - Commit candidates and measure only through `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`. The command waits and uses the existing timing contract. Same-SHA infrastructure recovery adds `--retry` with a new ID; a lost reply reuses the original ID/SHA/flags. Direct formal submission cannot bypass this entrypoint.
-- Engineering has at most 3 successful formal runs and 10 total formal runs per assignment, across all resumes.
+- Engineering has at most 4 successful formal runs and 10 total formal runs per assignment, across all resumes.
 - A completed evaluation with a valid score counts as successful even when performance regresses.
 - Failures and permitted same-SHA infrastructure retries count toward the total; pending submissions/retries reserve capacity.
 - Stop evaluating when either limit is reached, even if infrastructure retries remain.

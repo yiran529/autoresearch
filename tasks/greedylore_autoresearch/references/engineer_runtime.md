@@ -2,7 +2,7 @@
 
 **Primary reader:** Engineer. This document owns **measured execution time and performance attribution**: step/wall-clock time, collective latency, encode/decode cost, critical path, communication–computation overlap, memory movement and performance regressions. It is separate from Research Analyzer's study of information loss, optimization updates and **algorithmic state evolution across training steps**.
 
-**Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the repository's trusted `workflow_rules.md`, `roles/engineer.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **3 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
+**Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the repository's trusted `workflow_rules.md`, `roles/engineer.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **4 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
 
 ### Controlled GPU diagnostics
 
@@ -80,7 +80,7 @@ First establish exact configuration and comparators: frozen Research SHA, select
 
 ## 5. Optimization Toolkit — select a semantics-preserving implementation change
 
-**Usage:** First verify a bottleneck using E1–E6 and a SYS diagnosis card. Choose **one primary critical-path target** for a bounded engineering change. The Engineer may design and implement optimizations; validate with small differential correctness checks and separate profiling before spending formal evaluation budget. The repository currently allows **3 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**, not a parameter sweep.
+**Usage:** First verify a bottleneck using E1–E6 and a SYS diagnosis card. Choose **one primary critical-path target** for a bounded engineering change. The Engineer may design and implement optimizations; validate with small differential correctness checks and separate profiling before spending formal evaluation budget. The repository currently allows **4 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**, not a parameter sweep.
 
 Document each recipe as: `observed bottleneck + evidence → proposed implementation-only change → preserved semantics → minimum differential checks → end-to-end confirmation / stop condition`. **Technical feasibility is not evidence of either equivalence or speedup.**
 

@@ -8,7 +8,7 @@ Resources are under shared `notes/toolkit/`. Read `workflow_rules.md`, `notes/tr
 
 Read the execution boundaries, controlled-diagnostic/formal-timing procedures and completion requirements in `references/engineer_runtime.md` before using them. Consult its profiling/optimization recipes selectively and `semantic_criteria.md` for checks.
 
-On start/resume inspect branch, Worktree, Attempts, successful/total counts and completion stage; preserve existing changes and frozen submissions. On first setup in a clean Worktree, use `autoresearch engineering claim Nxxx` to confirm the assigned binding and start from its fixed Research Commit.
+On start/resume inspect branch, Worktree, Attempts, successful/total counts and completion stage; preserve existing changes and frozen submissions. On first setup in a clean Worktree, use `autoresearch engineering claim Nxxx` to confirm the assigned binding, read its current host `run_limits` and start from its fixed Research Commit. The claim's run limits take precedence over earlier launch-time budget text.
 
 Verify the claim's design source:
 
@@ -65,7 +65,7 @@ Write JSON in authorized scratch outside the tracked Worktree, with exactly:
 
 ## 5. Hard boundaries
 
-- At most **3 successful formal Engineering runs / 10 total formal runs** per assignment. A valid scored evaluation counts as successful even if performance regresses. Failures and permitted same-SHA retries count toward the total; pending work reserves capacity. Counts persist across resumes, crashes and archived Attempts discarded by rewind.
+- At most **4 successful formal Engineering runs / 10 total formal runs** per assignment. A valid scored evaluation counts as successful even if performance regresses. Failures and permitted same-SHA retries count toward the total; pending work reserves capacity. Counts persist across resumes, crashes and archived Attempts discarded by rewind.
 - Formal measurement uses only `engineering timing`. Retry only host-classified infrastructure failure at the same SHA, with `--retry` and a new ID. A lost reply reuses the original ID/SHA/flags; never create an empty commit to retry.
 - Diagnostics have a separate budget: **10 successful / 20 total executions**, 1–4 GPUs, **600 seconds per execution**, 3600 seconds per queue wait. They do not consume or replace formal runs; inspect failures before rerunning and retain their records.
 - GPU work uses host-managed entrypoints only. Direct writes stay in authorized Worktree/scratch; shared publication uses host commands. Preserve historical records, evaluation data and private-test boundaries. Follow shared retry/evidence/waiting rules; use supported long waits. Optional subagents have bounded tasks and inherit all permissions.

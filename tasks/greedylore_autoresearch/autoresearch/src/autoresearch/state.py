@@ -32,6 +32,9 @@ from .research import (
 )
 from .validation import load_document, validate_analysis
 
+ENGINEERING_SUCCESS_LIMIT = 4
+FORMAL_TOTAL_LIMIT = 10
+
 
 class WorkflowError(ValueError):
     """An ownership transition or persisted workflow state is invalid."""
@@ -550,6 +553,7 @@ class WorkflowStore:
                 return {
                     "agent_id": agent_id, "node_id": node_id,
                     "status": "active", "research_sha": worker["research_sha"],
+                    "run_limits": {"successful": ENGINEERING_SUCCESS_LIMIT, "total": FORMAL_TOTAL_LIMIT},
                     **({'design_source': self._engineering_design_source(node_id, worker['research_sha'])}
                        if self._staged_enabled() else {}),
                 }
@@ -893,7 +897,7 @@ class WorkflowStore:
         if not attempts:
             raise WorkflowError(f"Node {node_id} requires an Engineering Attempt")
         successful, total, _ = _engineering_budget(attempts)
-        budget_exhausted = successful >= 3 or total >= 10
+        budget_exhausted = successful >= ENGINEERING_SUCCESS_LIMIT or total >= FORMAL_TOTAL_LIMIT
         if any(attempt.status == "pending" or (
             attempt.status in {"crashed", "timeout"}
             and attempt.metadata.get("failure_class") == "infra"
@@ -971,8 +975,10 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
         if not existing or context.get("retry"):
             successful, total, pending = (_engineering_budget(attempts) if mode == "engineering"
                                           else run_budget(attempts))
-            if successful + pending >= 3 or total >= 10:
-                raise WorkflowError(f"{label} run limit reached: at most 3 successful runs and 10 total runs")
+            success_limit = ENGINEERING_SUCCESS_LIMIT if mode == 'engineering' else 3
+            if successful + pending >= success_limit or total >= FORMAL_TOTAL_LIMIT:
+                raise WorkflowError(f"{label} run limit reached: at most {success_limit} successful runs "
+                                    f"and {FORMAL_TOTAL_LIMIT} total runs")
     return {"allow_multiple_research": True} if iterative else {}
 
 

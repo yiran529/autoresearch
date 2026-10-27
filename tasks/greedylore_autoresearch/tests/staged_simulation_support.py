@@ -236,7 +236,7 @@ def driver(output, scenario):
                 thread = threading.Thread(target=grade, daemon=True)
                 thread.start()
                 try:
-                    for index in range(1, 4):
+                    for index in range(1, 5):
                         sim.declaration(paths.coral_dir, target, 'engineering', base, index)
                         sim.git(repo, 'add', 'submission.yaml', 'simulation_marker.txt')
                         sim.git(repo, 'commit', '-m', f'SIMULATED Engineering {index}')
@@ -253,15 +253,15 @@ def driver(output, scenario):
                         assert result['metadata']['quality_anchor'] == base
                         repeated = json.loads(sim.cli('autoresearch.cli', *args).stdout)
                         assert repeated['metadata']['grader_invocation_count'] == result['metadata']['grader_invocation_count']
-                    sim.declaration(paths.coral_dir, target, 'engineering', base, 4)
+                    sim.declaration(paths.coral_dir, target, 'engineering', base, 5)
                     sim.git(repo, 'add', 'submission.yaml', 'simulation_marker.txt')
                     sim.git(repo, 'commit', '-m', 'SIMULATED over-budget Engineering')
-                    fourth = sim.cli('autoresearch.cli', 'engineering', 'timing', '--sha', sim.git(repo, 'rev-parse', 'HEAD'),
-                                     '--request-id', 'timing-4', check=False)
-                    assert fourth.returncode != 0 and 'run limit' in fourth.stderr
+                    fifth = sim.cli('autoresearch.cli', 'engineering', 'timing', '--sha', sim.git(repo, 'rev-parse', 'HEAD'),
+                                     '--request-id', 'timing-5', check=False)
+                    assert fifth.returncode != 0 and 'run limit' in fifth.stderr
                     sim.event('engineering_timing_verified', node=target, anchor=base,
                               selected_iteration=claim['design_source']['iteration'],
-                              formal_runs=3, duplicate_no_execution=True, fourth_rejected=True)
+                              formal_runs=4, duplicate_no_execution=True, fifth_rejected=True)
                 finally:
                     stop.set()
                     thread.join(timeout=5)
