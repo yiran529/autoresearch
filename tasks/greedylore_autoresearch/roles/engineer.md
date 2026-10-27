@@ -19,33 +19,49 @@ Missing or inconsistent required handover is an error; do not infer a replacemen
 
 ## 2. Identify, optimize and check
 
-Choose a primary end-to-end improvement target from formal evidence, relevant historical optimizations, code and available profiling. In `submission.yaml.selection_rationale`, use 1–3 sentences to connect the observed cost, its possible end-to-end impact, the proposed change and expected effect. Distinguish implementation overhead, algorithm-inherent costs and unresolved attribution before making bounded optimizations.
+1. **Choose a target.** Select a primary end-to-end improvement target from formal evidence, relevant historical optimizations, code and available profiling. Distinguish implementation overhead, algorithm-inherent costs and unresolved attribution.
 
-When uncertainty could change the optimization choice, use a small managed diagnostic covering representative execution and relevant ordinary/refresh phases. Reuse sufficient existing evidence. State the scope of local/synthetic profiles; fewer operations alone do not establish a shorter full-model critical path.
+   - In `submission.yaml.selection_rationale`, connect the observed cost, its possible end-to-end impact, the proposed change and expected effect in 1–3 sentences.
 
-Run applicable semantic/differential checks and record commands, results, numerical tolerances and uncovered cases. Preserve communication, optimizer and persistent-state semantics. For adaptive methods preserve decision inputs, thresholds, triggers, actions, state updates and relevant RNG/distributions; check representative trigger/non-trigger and cross-step behavior against Research.
+2. **Diagnose as needed and optimize.** When uncertainty could change the optimization choice, use a small managed diagnostic covering representative execution and relevant ordinary/refresh phases. Reuse sufficient existing evidence and follow the runtime reference for scripts, isolated snapshots and durable outputs. Use the evidence to make bounded optimizations.
 
-For GPU diagnosis, commit candidate changes first, then use only `autoresearch diagnostic run`. Follow the runtime reference for scripts, isolated code snapshots and durable outputs; instrumentation should stay out of formal candidates. Retain successful/failed IDs, SHAs and results. Diagnostics support attribution, not formal scores.
+   - Commit candidate changes before GPU diagnosis; use only `autoresearch diagnostic run` and keep instrumentation out of formal candidates.
+   - Retain successful/failed IDs, SHAs and results. State local/synthetic profile scope; fewer operations alone do not establish a shorter full-model critical path. Diagnostics support attribution, not formal scores.
+
+3. **Check semantics.** Run applicable semantic/differential checks against Research; record commands, results, numerical tolerances and uncovered cases.
+
+   - Preserve communication, optimizer and persistent-state semantics.
+   - For adaptive methods preserve decision inputs, thresholds, triggers, actions, state updates and relevant RNG/distributions; check representative trigger/non-trigger and cross-step behavior.
 
 ## 3. Measure and iterate
 
-Commit `submission.yaml` with `mode: engineering`; `base_commit` and `quality_anchor` always identify this Node's fixed Research SHA. Commit the candidate before `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`; this command measures but does not stage or commit. Later Engineering candidates may descend from earlier Engineering Commits; the Research anchor stays fixed. Quality is `inherited (provisional)`, not remeasured.
+1. **Measure.** Commit the candidate and use `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` for formal end-to-end results.
 
-Use formal end-to-end results, semantic checks and profiling to test the predicted cost change and decide what to retain, undo or pursue next. Check added costs when local savings do not improve formal timing. Interpret gains and regressions across dtypes against observed variability; distinguish the highest measured score from a supported gain. Within budget, continue until no clear, substantial semantics-preserving end-to-end improvement opportunity remains. Do not stop merely because one candidate improved. Stop formal evaluation at either run limit, even if further headroom or retries remain.
+   - Commit `submission.yaml` with `mode: engineering`; `base_commit` and `quality_anchor` always identify this Node's fixed Research SHA. Later candidates may descend from earlier Engineering Commits; the Research anchor stays fixed.
+   - The timing command does not stage or commit. Quality is `inherited (provisional)`, not remeasured.
+
+2. **Interpret and iterate.** Use formal results, semantic checks and profiling to test the predicted cost change and decide what to retain, undo or pursue next. Check added costs when local savings do not improve formal timing.
+
+   - Interpret gains and regressions across dtypes against observed variability; distinguish the highest measured score from a supported gain.
+   - Within budget, continue until no clear, substantial semantics-preserving end-to-end improvement opportunity remains; one improved candidate is not sufficient to stop. Stop formal evaluation at either run limit, even if further headroom or retries remain.
 
 ## 4. Author the final Engineering Analysis yourself
 
-After at least one terminal formal Attempt and once the stopping condition or a formal-run limit is reached, cover all claim Attempts, fixed candidate SHAs, failures/regressions, formal measurements and checks actually run. Explain why you stopped and any remaining headroom.
+**Write the Analysis.** After at least one terminal formal Attempt and once the stopping condition or a formal-run limit is reached, cover all claim Attempts, fixed candidate SHAs, failures/regressions, formal measurements and checks actually run. Explain why you stopped and any remaining headroom. Distinguish implementation headroom, algorithm-inherent limitations and mixed/unresolved attribution.
 
-Distinguish implementation headroom, algorithm-inherent limitations and mixed/unresolved attribution. Cite persistent evidence and counterobservations. Profiler durations cannot be added to claim measured step time; current implementation costs are not algorithmic lower bounds, and inherited quality is not fresh training evidence.
+- Cite persistent evidence and counterobservations. Profiler durations cannot be added to claim measured step time; current implementation costs are not algorithmic lower bounds, and inherited quality is not fresh training evidence.
+- Wait for every diagnostic to finish and archive needed self-check scripts/logs with `autoresearch evidence archive`. Attachments preserve agent-provided material, not certified execution.
 
-Wait for every diagnostic to finish and archive needed self-check scripts/logs with `autoresearch evidence archive`. Attachments preserve agent-provided material, not certified execution. Write JSON in authorized scratch outside the tracked Worktree, with exactly:
+Write JSON in authorized scratch outside the tracked Worktree, with exactly:
 
 - `summary`: nonempty string;
 - `findings`, `limitations`: nonempty string arrays;
 - `attempt_shas`: every distinct formal candidate SHA in this claim exactly once, including failures/regressions.
 
-Submit through `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`. `finalizing` acknowledges durable submission, not completed publication. After submission, reuse identical contents on interruption, submit no more candidates, and wait for host validation, versioned publication and retirement. No independent Engineering Analyzer runs; Parent eligibility also requires published Research Analysis.
+**Submit and wait.** Use `autoresearch engineering finish --analysis-file /absolute/scratch/final.json` and wait for host validation, versioned publication and retirement.
+
+- `finalizing` acknowledges durable submission, not completed publication. On interruption reuse identical contents; submit no more candidates after submission.
+- No independent Engineering Analyzer runs; Parent eligibility also requires published Research Analysis.
 
 ## 5. Hard boundaries
 
