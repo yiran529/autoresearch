@@ -2,6 +2,7 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from greedylore_autoresearch_grader.process import ProcessSpec, run_process_group
 
 
@@ -21,8 +22,9 @@ def test_process_records_logs_and_allowlisted_env(tmp_path):
     assert "TOKEN" not in result.env
 
 
-def test_reported_ipc_failure_stops_a_live_process_and_preserves_cause(tmp_path):
-    code = "import sys,time; print('OSError: AF_UNIX path too long',file=sys.stderr,flush=True); time.sleep(30)"
+@pytest.mark.parametrize('prefix', ['', '[rank0]: '])
+def test_reported_ipc_failure_stops_a_live_process_and_preserves_cause(tmp_path, prefix):
+    code = f"import sys,time; print({prefix + 'OSError: AF_UNIX path too long'!r},file=sys.stderr,flush=True); time.sleep(30)"
     result = run_process_group(ProcessSpec((sys.executable, '-c', code), tmp_path,
         {}, (), 5, terminate_grace=.1))
     assert result.infra_failure == 'OSError: AF_UNIX path too long'
@@ -46,8 +48,9 @@ def test_startup_marker_allows_measurement_and_generic_candidate_errors_stay_can
     assert result.infra_failure is None
 
 
-def test_dataloader_failure_stops_waiting_without_converting_candidate_error_to_infra(tmp_path):
-    code = "import sys,time; print('RuntimeError: DataLoader worker (pid 123) exited unexpectedly',file=sys.stderr,flush=True); time.sleep(30)"
+@pytest.mark.parametrize('prefix', ['', '[rank2]: '])
+def test_dataloader_failure_stops_waiting_without_converting_candidate_error_to_infra(tmp_path, prefix):
+    code = f"import sys,time; print({prefix + 'RuntimeError: DataLoader worker (pid 123) exited unexpectedly'!r},file=sys.stderr,flush=True); time.sleep(30)"
     result = run_process_group(ProcessSpec((sys.executable, '-c', code), tmp_path,
         {}, (), 5, terminate_grace=.1))
     assert result.failure_phase == 'data_loading' and not result.timed_out

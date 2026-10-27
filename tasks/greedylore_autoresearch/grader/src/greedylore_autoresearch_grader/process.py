@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import time
@@ -92,7 +93,8 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
 
             def check_logs():
                 nonlocal startup_complete, failure_phase
-                lines = tail(stderr_path).splitlines()
+                lines = [re.sub(r'^\[rank[0-9]+\]:\s*', '', line)
+                         for line in tail(stderr_path).splitlines()]
                 if 'OSError: AF_UNIX path too long' in lines:
                     failure_phase = 'runtime_ipc'
                     raise InfraFailure('OSError: AF_UNIX path too long')
