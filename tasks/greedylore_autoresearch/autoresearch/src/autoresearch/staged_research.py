@@ -40,6 +40,17 @@ class StagedResearch:
         self.record._owner()
         return copy.deepcopy(self._read())
 
+    def wait(self, request_id):
+        """One authenticated read; waiting and retry delays stay in the CLI."""
+        state = self.status()
+        if request_id not in state['jobs']:
+            raise ValueError('unknown research request ID')
+        job = state['jobs'][request_id]
+        # Older journals may contain an outer controller error without a result.
+        if job['status'] in {'failed', 'cancelled'} and 'result' not in job:
+            job['result'] = {'status': job['status'], 'reason': job.get('error', job['status'])}
+        return job
+
     def _save(self, value):
         _atomic_json(self.path, value)
 
@@ -370,6 +381,10 @@ def handle_action(store, owner, payload, context):
         return result
     if action == 'status':
         return host.status()
+    if action == 'wait':
+        if data:
+            raise ValueError('wait accepts no action data')
+        return host.wait(request_id)
     if action == 'design':
         return host.record.append_design(data, request_id)
     if action == 'decision':

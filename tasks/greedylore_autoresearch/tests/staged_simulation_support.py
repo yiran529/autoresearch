@@ -150,8 +150,36 @@ def driver(output, scenario):
     def action(kind, data=None, request_id=None, check=True, target=None):
         file = output / 'action.json'
         file.write_text(json.dumps(data or {}))
-        return sim.cli('autoresearch.cli', 'research', kind, '--node', target or node,
-                       '--file', str(file), '--request-id', request_id or kind, check=check)
+        stop = threading.Event()
+        failures = []
+        def execute():
+            while not stop.is_set():
+                try:
+                    StagedResearch(store, aid, target or node).drain()
+                except Exception as exc:
+                    failures.append(exc)
+                    return
+                stop.wait(.02)
+        # Actual CLI stays alive while an independent host worker runs the job.
+        thread = threading.Thread(target=execute, daemon=True) if kind in {'train', 'timing', 'diagnostic', 'finish'} else None
+        if thread:
+            thread.start()
+        try:
+            args = [] if kind == 'wait' else ['--file', str(file)]
+            result = sim.cli('autoresearch.cli', 'research', kind, '--node', target or node,
+                             *args, '--request-id', request_id or kind, check=check)
+            if kind in {'train', 'timing', 'diagnostic', 'finish', 'wait'} and result.stdout:
+                job = json.loads(result.stdout)
+                assert job['status'] in {'completed', 'failed', 'cancelled'}, job
+                sim.event('research_cli_returned', action=kind, request_id=job['request_id'],
+                          status=job['status'], outcome=job.get('result', {}).get('status'))
+            return result
+        finally:
+            stop.set()
+            if thread:
+                thread.join(timeout=5)
+                assert not thread.is_alive()
+            assert not failures, failures
     with ExitStack() as stack:
         # Scheduling is controlled by the driver, while queueing/draining remain real.
         stack.enter_context(patch('coral.grader.trusted_worker.start_task_worker', lambda *_a, **_k: None))
@@ -318,6 +346,9 @@ def driver(output, scenario):
             host = drain()
             assert host.record.read()['iterations'][0]['status'] == 'paused', host.status()
             before = len([e for e in sim.events() if e['event'] == 'quality_segment'])
+            waited = json.loads(action('wait', request_id='pause').stdout)
+            assert waited['result']['status'] == 'paused'
+            assert len([e for e in sim.events() if e['event'] == 'quality_segment']) == before
             action('train', {'iteration': 1, 'sha': sha, 'pause_after_steps': 1000}, 'pause')
             drain()
             repeated = len([e for e in sim.events() if e['event'] == 'quality_segment']) == before
@@ -326,7 +357,7 @@ def driver(output, scenario):
             scripts.mkdir()
             (scripts / 'probe.py').write_text("print('SIMULATED probe')\n")
             action('diagnostic', {'iteration': 1, 'argv': ['python', '/workspace/experiments/probe.py'],
-                    'timeout': 5, 'scripts_dir': str(scripts)}, 'probe')
+                    'timeout': 5, 'scripts_dir': str(scripts)}, 'probe', check=False)
             drain()
             if timing_phase == 'paused':
                 action('timing', {'iteration': 1, 'sha': sha}, 'paused-timing')
@@ -350,12 +381,12 @@ def driver(output, scenario):
                 action('decision', {'iteration': 2, 'action': 'stop',
                        'reason': 'No justified refinement; retain eligible iteration 1'}, 'stop-2')
             finish = {'selected_iteration': None if scenario == 'no_eligible' else 1, 'reason': 'frozen synthetic result'}
-            action('finish', finish, 'finish')
+            action('finish', finish, 'finish', check=scenario not in {'transfer_failed', 'vision_failed'})
             host = drain()
             assert host.status()['transfer_terminal'], host.status()
             expected_timing = timing_before_resume + (0 if scenario=='no_eligible' else 1)
             assert timing_count() == expected_timing
-            action('finish', finish, 'finish')
+            action('finish', finish, 'finish', check=scenario not in {'transfer_failed', 'vision_failed'})
             drain()
             frozen_rejected = action('design', design, 'late', check=False).returncode != 0
             # Freeze evidence, launch exactly one independent Research Analysis, publish and reclaim.
@@ -400,6 +431,11 @@ def driver(output, scenario):
                 timing_evidence_survives=all((paths.coral_dir / 'public' / t['result']['evidence_path']).exists() for t in timing_records))
             report.update(final_timing_executions=sum(e['event']=='timing_execution' and e['mode']=='timing' and e['frozen'] for e in sim.events()),
                 vision_runs=sum(e['workload']=='resnet18_cifar100_muon' for e in segments), freeze_before_final=True)
+            required_actions = {'train', 'diagnostic', 'finish', 'wait'}
+            if timing_phase != 'finish_fallback':
+                required_actions.add('timing')
+            report['blocking_research_cli'] = required_actions <= {
+                e['action'] for e in sim.events() if e['event'] == 'research_cli_returned'}
             (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         finally:
             server.stop()

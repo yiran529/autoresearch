@@ -60,3 +60,4 @@ def test_staged_workflow_simulation(tmp_path, scenario):
     assert report['final_timing_executions'] == (0 if scenario=='no_eligible' else 1)
     assert report['vision_runs'] == (0 if scenario=='no_eligible' else 1)
     assert report['freeze_before_final']
+    assert report['blocking_research_cli']

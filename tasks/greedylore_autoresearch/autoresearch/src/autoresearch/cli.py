@@ -7,12 +7,13 @@ import base64
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
-from autoresearch.client import request_trusted
+from autoresearch.client import TrustedWriteError, request_trusted
 from autoresearch.evaluation import refresh_node_evaluation
 from coral.grader.timeouts import DIAGNOSTIC_CLIENT_TIMEOUT, DIAGNOSTIC_EXECUTION_TIMEOUT
 from coral.hub._island import island_root
@@ -22,6 +23,18 @@ from coral.workspace.breadcrumbs import (
     find_coral_breadcrumb,
     read_island_breadcrumb,
 )
+
+_RESEARCH_POLL_INTERVAL = 0.2
+_RESEARCH_EXECUTIONS = {'train', 'timing', 'diagnostic', 'finish'}
+
+
+def _wait_research(coral_dir, node_id, request_id, job):
+    """Keep this CLI alive; the model waits on its terminal session, not records."""
+    while job.get('status') not in {'completed', 'failed', 'cancelled'}:
+        time.sleep(_RESEARCH_POLL_INTERVAL)
+        job = request_trusted(coral_dir, 'research_action', {
+            'node_id': node_id, 'action': 'wait', 'data': {}, 'request_id': request_id})
+    return job
 
 
 def _workflow_context() -> tuple[Path, Path, str | None]:
@@ -148,10 +161,11 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     research = commands.add_parser('research', help='host-controlled staged research (opt-in)')
-    research.add_argument('action', choices=('register', 'design', 'decision', 'train', 'timing', 'diagnostic', 'finish', 'status', 'recover'))
+    research.add_argument('action', choices=('register', 'design', 'decision', 'train', 'timing', 'diagnostic', 'finish', 'status', 'recover', 'wait'))
     research.add_argument('--node', required=True)
-    research.add_argument('--file', type=Path, help='JSON action data; status/recover need no file')
+    research.add_argument('--file', type=Path, help='JSON action data; status/recover/wait need no file')
     research.add_argument('--request-id', default=None, help='reuse after timeout for idempotency')
+    research.add_argument('--no-wait', action='store_true', help='submit only; defaults to waiting for execution results')
 
     evidence = commands.add_parser('evidence', help='archive small supporting scripts and logs')
     evidence_commands = evidence.add_subparsers(dest='evidence_command', required=True)
@@ -234,17 +248,38 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
     if args.command == 'research':
+        if args.action == 'wait' and (not args.request_id or args.file or args.no_wait):
+            parser.error('research wait requires --request-id and accepts no --file or --no-wait')
+        if args.no_wait and args.action not in _RESEARCH_EXECUTIONS:
+            parser.error('--no-wait is only valid for train, timing, diagnostic and finish')
         if args.action == 'register':
             _require_clean_worktree()
         data = json.loads(args.file.read_text()) if args.file else {}
-        result = request_trusted(_coral_dir(), 'research_action', {
-            'node_id': args.node, 'action': args.action, 'data': data,
-            'request_id': args.request_id or uuid.uuid4().hex})
+        coral_dir = _coral_dir()
+        request_id = args.request_id or uuid.uuid4().hex
+        waiting = args.action == 'wait' or args.action in _RESEARCH_EXECUTIONS and not args.no_wait
+        if args.action in _RESEARCH_EXECUTIONS or args.action == 'wait':
+            print(f'research request: {request_id}', file=sys.stderr, flush=True)
+        try:
+            result = request_trusted(coral_dir, 'research_action', {
+                'node_id': args.node, 'action': args.action, 'data': data,
+                'request_id': request_id})
+            if waiting:
+                result = _wait_research(coral_dir, args.node, request_id, result)
+        except TrustedWriteError as exc:
+            if waiting:
+                raise SystemExit(f'{exc}\nReconnect without resubmitting: autoresearch research wait '
+                                 f'--node {args.node} --request-id {request_id}') from exc
+            raise
         if args.action == 'register':
             _checkout_base(result['origin']['base_commit'])
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2), flush=True)
+        if waiting and (result.get('status') in {'failed', 'cancelled'}
+                        or result.get('result', {}).get('status') in {'failed', 'infra_failed', 'cancelled'}):
+            raise SystemExit(1)
         return
     if args.command == 'evidence':
         from autoresearch.attachments import MAX_ATTACHMENT_BYTES

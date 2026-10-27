@@ -87,6 +87,12 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
                   'Commit candidates and use `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` '
                   'for formal measurement; infrastructure retries add `--retry` with a new ID.')
     progress = "research.json, Spec, Evaluation/Attempts" if staged_research and spec.workflow_role == "research" else "Spec, Evaluation/Attempts"
+    recovery = (
+        f"- Run `autoresearch research status --node {spec.node_id}` to read saved jobs/results. "
+        f"Reconnect with `autoresearch research wait --node {spec.node_id} --request-id <saved-id>`; "
+        "do not submit a duplicate execution or write a watcher.\n"
+        if staged_research and spec.workflow_role == 'research' else ''
+    )
     prompt = (
         f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`.\n\n"
         "## Read first\n\n"
@@ -95,7 +101,8 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         "## Recover progress\n\n"
         f"- On start or resume, inspect the existing {progress} and Worktree first; "
         "continue from the recorded stage and preserve existing changes and frozen submissions.\n"
-        "- Do not restart completed steps, choose another Node or reset the candidate count.\n\n"
+        "- Do not restart completed steps, choose another Node or reset the candidate count.\n"
+        f"{recovery}\n"
         f"## Workflow limits and completion\n\n{scope}\n\n"
         "Work autonomously within these steps and limits."
     )

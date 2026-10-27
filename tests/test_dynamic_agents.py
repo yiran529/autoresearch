@@ -360,6 +360,8 @@ def test_staged_startup_and_generated_instructions_share_development_protocol(re
     startup = prompt_for_assignment(spec, instruction_file='AGENTS.md', shared_dir='.codex',
                                     resuming=resuming, staged_research=True)
     instructions = generate_coral_md(config, spec.agent_id, workflow_role='research', node_id=spec.node_id)
+    assert 'autoresearch research status --node N001' in startup
+    assert 'autoresearch research wait --node N001 --request-id <saved-id>' in startup
     for content in (startup, instructions):
         assert 'autoresearch research register' in content
         assert 'origin' in content and 'design' in content
