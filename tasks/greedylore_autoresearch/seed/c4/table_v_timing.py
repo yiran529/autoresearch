@@ -13,6 +13,20 @@ import time
 import torch
 
 
+def optional_git_head():
+    """Host-exported snapshots carry their identity without a Git directory."""
+    sha = os.environ.get('CORAL_CODE_SHA')
+    if sha:
+        if len(sha) != 40 or any(c not in '0123456789abcdef' for c in sha):
+            raise ValueError('invalid host code SHA')
+        return sha
+    try:
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def summarize_timing(rank_elapsed, rank_steps, expected_steps):
     if expected_steps <= 0 or not rank_elapsed or len(rank_elapsed) != len(rank_steps):
         raise ValueError('Invalid timing window')
@@ -415,7 +429,7 @@ def main():
                       gradient_accumulation=1, status='running',
                       measurement=f'max_rank(continuous_{args.measured_iterations}_iteration_wall_time)/{args.measured_iterations}; includes data fetch, H2D, forward/backward, DDP hook, clipping, optimizer, scheduler and zero_grad',
                       torch_version=torch.__version__, gpu=torch.cuda.get_device_name(),
-                      git_head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+                      git_head=optional_git_head(),
                       nccl_environment={key: os.environ.get(key) for key in [
                           'NCCL_P2P_DISABLE', 'NCCL_SHM_DISABLE', 'NCCL_DEBUG',
                           'NCCL_CUMEM_HOST_ENABLE', 'NCCL_MAX_CTAS', 'NCCL_MIN_CTAS',

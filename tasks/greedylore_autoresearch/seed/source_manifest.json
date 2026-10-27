@@ -5,8 +5,8 @@
       "seed_sha256": "def6f2400f2d6c1101e1d0808482cf2cd9fb63010bd319deae1619a92333be5f"
     },
     "c4/table_v_timing.py": {
-      "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.; apply frozen candidate-owned per-workload compression policy",
-      "seed_sha256": "46f8d6b8ef11c1c09558747dea4fb6f1feaec8360878c78b776e032f3d19232c"
+      "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.; apply frozen candidate-owned per-workload compression policy; tolerate archive snapshots without Git and accept host-supplied source identity",
+      "seed_sha256": "743f92e9c40dbe7cd6183e0542d1ebd45425a704be898fbf8db35b71ee0c4b43"
     },
     "comm_hooks/subspace_hook.py": {
       "reason": " Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",

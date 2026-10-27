@@ -307,7 +307,7 @@ class Execution:
         recovered = self.recover_timing(job)
         if recovered is not None:
             return recovered
-        grader = self._grader(code, work / 'timing', job['canonical'])
+        grader = self._grader(code, work / 'timing', {**job['canonical'], 'commit_hash': job['sha']})
         reference = grader._load_references(contract.contract_hash)
         bundle = grader._formal(contract, 'timing', reference)
         # This is an efficiency measurement, not an Engineering Attempt or a
@@ -315,7 +315,8 @@ class Execution:
         bundle.scores = {key: value for key, value in bundle.scores.items()
                          if key.endswith(('_timing_mean', '_timing_spread', '_speedup')) or key == 'efficiency_score'}
         bundle.metadata.pop('utility', None)
-        bundle.metadata.update(measurement_kind='research_timing', quality_source='not_measured')
+        bundle.metadata.update(measurement_kind='research_timing', quality_source='not_measured',
+                               source_commit=job['sha'])
         result = {'status': 'completed', 'bundle': bundle.to_dict(),
                   'performance_eligible': bool(bundle.metadata.get('performance_eligible')),
                   'evidence_path': public.relative_to(self.coral / 'public').as_posix()}

@@ -13,7 +13,7 @@ from .process import ProcessSpec
 _ENV_ALLOWLIST = (
     "CUDA_VISIBLE_DEVICES", "NCCL_P2P_DISABLE", "NCCL_SHM_DISABLE",
     "NCCL_DEBUG", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
-    "TOKENIZERS_PARALLELISM", "OMP_NUM_THREADS",
+    "TOKENIZERS_PARALLELISM", "OMP_NUM_THREADS", "CORAL_CODE_SHA",
 )
 
 def timing_cell_labels(names):
@@ -80,6 +80,7 @@ def build_timing_command(
         "TRANSFORMERS_OFFLINE": "1", "TOKENIZERS_PARALLELISM": "false",
         "OMP_NUM_THREADS": "4", "PYTHONPATH": str(candidate),
         "CORAL_WORKLOAD": str(cell['name']),
+        "CORAL_CODE_SHA": str(cell.get('code_sha') or ''),
     }
     return ProcessSpec(tuple(command), output.parent / f"{output.name}.process", env,
                        _ENV_ALLOWLIST, 2 * 60 * 60, cwd=candidate)

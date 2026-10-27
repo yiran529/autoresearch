@@ -468,7 +468,11 @@ class Grader(TaskGrader):
                                       repetition=repetition, cell=name)
                         output = evidence_root / "efficiency" / f"r{repetition + 1}-{name}"
                         cell = {**contract.efficiency.cells[name],
-                                "measured_iterations": timing_protocol["measured_iterations"]}
+                                "measured_iterations": timing_protocol["measured_iterations"],
+                                "code_sha": self.tasks[0].metadata.get('commit_hash')}
+                        (evidence_root / 'source_identity.json').write_text(json.dumps({
+                            'commit_sha': cell['code_sha'], 'contract_hash': contract.contract_hash,
+                            'source': 'host_assignment'}, indent=2) + '\n')
                         spec = build_timing_command(
                             cell, repetition, candidate, output, reservation.indices, hardware
                         )
