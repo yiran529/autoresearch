@@ -38,6 +38,7 @@ def staged_research_scope(node_id: str) -> str:
         "- Use managed training, timing and diagnostics; verify mechanism predictions and practical effects yourself. "
         "Use optional `autoresearch research timing` before training, while paused or after completion when efficiency "
         "evidence can change a decision; reuse matching development results. Development timing caps are 5 completed/15 total executions. "
+        "Define compression mapping in committed `method_policy.py` and the shared hook; verify matrix and convolution gradient support. "
         "Read `notes/toolkit/references/evaluation_tasks.md` for fixed task settings. Do not wait for an Analyzer between iterations. "
         "Diagnostic caps are 10 successful/20 total executions, 600 seconds each.\n"
         "- Finish when no justified refinement remains or the budget is exhausted. Use `autoresearch research finish` "
