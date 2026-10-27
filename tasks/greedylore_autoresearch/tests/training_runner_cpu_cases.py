@@ -15,7 +15,6 @@ def main():
     seed, output = map(Path, sys.argv[1:3])
     sys.path.insert(0, str(seed))
     import c4.run_llama_pretraining as runner
-    from diagnostic_checkpoint import load_checkpoint
 
     fetched = []
     evaluations = []
@@ -38,7 +37,7 @@ def main():
             return {'input_ids': torch.tensor([[value, value + 1, 0]]),
                     'attention_mask': torch.tensor([[1, 1, 0]])}
 
-    config = SimpleNamespace(to_dict=lambda: {'tiny': True}, pad_token_id=0)
+    config = SimpleNamespace(to_dict=lambda: {'tiny': True, 'id2label': {0: 'LABEL_0'}}, pad_token_id=0)
 
     class Model(torch.nn.Module):
         def __init__(self, config):

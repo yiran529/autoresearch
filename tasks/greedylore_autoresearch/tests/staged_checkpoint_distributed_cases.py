@@ -34,6 +34,7 @@ def worker(rank, seed, output):
     dist.init_process_group('gloo', init_method=f'file://{output}/staged-rendezvous', rank=rank, world_size=2)
     try:
         for optimizer_name in ('adamw', 'muon'):
+            config = {'contract_hash': 'staged-ddp', 'model': {'id2label': {0: 'LABEL_0'}}}
             def batches():
                 torch.rand(1)  # Iterator construction is part of replay, not training RNG.
                 for i in range(12):
@@ -49,7 +50,7 @@ def worker(rank, seed, output):
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.9)
                 if resume is not None:
                     prepare_ddp_for_resume(resume, model, contract_hash='staged-ddp',
-                                           expected_config={'contract_hash': 'staged-ddp'})
+                                           expected_config=config)
                 else:
                     setup_rng = capture_rng_state()
                     stabilize_ddp_buckets(model, next(batches()))
@@ -62,7 +63,8 @@ def worker(rank, seed, output):
                 stream = ReplayTrainingStream(batches, identity={
                     'workers': 0, 'rank': rank, 'world_size': 2, 'batch_size': 2, 'seed': 31})
                 if resume is not None:
-                    load_checkpoint(resume, model, optimizer, scheduler, hook, data_stream=stream)
+                    load_checkpoint(resume, model, optimizer, scheduler, hook,
+                                    data_stream=stream, expected_config=config)
                 return model, optimizer, scheduler, hook, stream
 
             def step(objects):
@@ -86,7 +88,7 @@ def worker(rank, seed, output):
                     batch = step(partial)
                     completed += 1
                 root = output / optimizer_name / f'step-{completed:08d}'
-                saved = save_final_checkpoint(root, *partial[:4], config={'contract_hash': 'staged-ddp'},
+                saved = save_final_checkpoint(root, *partial[:4], config=config,
                     update_step=completed, batch=batch, min_free_bytes=0,
                     training_state={'update_step': completed}, data_stream_state=partial[4].state_dict())
                 assert saved['status'] == 'complete', saved

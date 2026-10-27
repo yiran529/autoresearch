@@ -4,11 +4,13 @@ import importlib.util
 import json
 import random
 import sys
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import torch
+from transformers import AutoConfig
 
 
 def main():
@@ -33,8 +35,15 @@ def main():
                            iter=12, error_dict={0: torch.tensor([2., 3.])},
                            ms_dict={0: [torch.eye(2)]}, rng=torch.Generator().manual_seed(123),
                            generator={0: torch.Generator().manual_seed(8)})
+    config = {
+        'compressor': 'top_subspace', 'contract_hash': 'test-contract',
+        'lr': 0.01, 'code_sha256': 'a' * 64,
+        'model': AutoConfig.from_pretrained(seed / 'c4/configs/llama_130m.json').to_dict(),
+        'phases': (1, 2), 'metadata': {'optional': None},
+    }
+    assert 0 in config['model']['id2label']  # Real HF configuration uses integer keys.
     status = module.save_final_checkpoint(output / 'final', model, optimizer, scheduler, hook,
-        config={'compressor': 'top_subspace', 'contract_hash': 'test-contract'},
+        config=config,
         update_step=1, batch={'input_ids': batch}, min_free_bytes=0)
     assert status['status'] == 'complete', status
     manifest = json.loads((output / 'final/manifest.json').read_text())
@@ -46,7 +55,9 @@ def main():
     expected = {k: v.clone() for k, v in model.state_dict().items()}
     hook.error_dict[0].zero_()
     module.load_checkpoint(output / 'final', model, optimizer, scheduler, hook,
-                           contract_hash='test-contract')
+                           contract_hash='test-contract', expected_config=config)
+    assert status['config'] == manifest['config'] == json.loads(json.dumps(config))
+    assert 0 in config['model']['id2label']  # Saving must not mutate the caller's config.
     assert torch.equal(torch.rand(2), expected_rng[0])
     assert random.random() == expected_rng[1]
     assert np.random.rand() == expected_rng[2]
@@ -56,6 +67,33 @@ def main():
                        torch.rand(2, generator=torch.Generator().manual_seed(123)))
     step()
     assert all(torch.equal(expected[k], v) for k, v in model.state_dict().items())
+    changes = []
+    for key, value in [('lr', 0.02), ('code_sha256', 'b' * 64)]:
+        changed = deepcopy(config)
+        changed[key] = value
+        changes.append((changed, key))
+    changed = deepcopy(config)
+    changed['model']['id2label'][0] = 'changed label'
+    changes.append((changed, 'model.id2label.0'))
+    changed = deepcopy(config)
+    changed['phases'] = (1, 3)
+    changes.append((changed, 'phases[1]'))
+    changed = deepcopy(config)
+    del changed['metadata']['optional']
+    changes.append((changed, 'metadata.optional'))
+    changed = deepcopy(config)
+    changed['extra'] = None
+    changes.append((changed, 'extra'))
+    for changed, path in changes:
+        before = {key: value.clone() for key, value in model.state_dict().items()}
+        try:
+            module.load_checkpoint(output / 'final', model, expected_config=changed)
+        except ValueError as exc:
+            assert 'checkpoint code/config mismatch' in str(exc)
+            assert path in str(exc), (path, str(exc))
+        else:
+            raise AssertionError(f'changed configuration accepted: {path}')
+        assert all(torch.equal(before[key], value) for key, value in model.state_dict().items())
     class DDP:
         def register_comm_hook(self, state, callback):
             self.state, self.callback = state, callback
@@ -103,6 +141,11 @@ def main():
         config={}, update_step=2, min_free_bytes=10**30)
     assert low_disk['status'] == 'unavailable'
     assert not (output / 'low-disk/model.pt').exists()
+    nonfinite = module.save_final_checkpoint(output / 'nonfinite', model, optimizer, scheduler, None,
+        config={'lr': float('nan')}, update_step=2, min_free_bytes=0)
+    assert nonfinite['status'] == 'unavailable'
+    assert json.loads((output / 'nonfinite/manifest.json').read_text())['status'] == 'unavailable'
+    assert not (output / 'nonfinite/model.pt').exists()
     with (output / 'final/rank-0.pt').open('ab') as stream:
         stream.write(b'corrupt')
     try:

@@ -10,11 +10,37 @@ import json
 import os
 import random
 import shutil
+from itertools import islice
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.distributed as dist
+
+
+def _normalize_config(config):
+    """Use the on-disk JSON representation without mutating the caller's config."""
+    return json.loads(json.dumps(config, allow_nan=False))
+
+
+def _config_differences(saved, expected, path=''):
+    """Yield differing field paths, including missing fields and list entries."""
+    if isinstance(saved, dict) and isinstance(expected, dict):
+        for key in sorted(saved.keys() | expected.keys()):
+            child = f'{path}.{key}' if path else key
+            if key not in saved or key not in expected:
+                yield child
+            else:
+                yield from _config_differences(saved[key], expected[key], child)
+    elif isinstance(saved, list) and isinstance(expected, list):
+        for index in range(max(len(saved), len(expected))):
+            child = f'{path}[{index}]'
+            if index >= len(saved) or index >= len(expected):
+                yield child
+            else:
+                yield from _config_differences(saved[index], expected[index], child)
+    elif saved != expected:
+        yield path or '<root>'
 
 
 def _hash(path):
@@ -133,10 +159,12 @@ def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, conf
     if (root / 'manifest.json').exists():
         return {'status': 'unavailable', 'reason': 'checkpoint already exists; refusing replacement'}
     files = {}
+    normalized_config = {}
     try:
         root.mkdir(parents=True, exist_ok=True)
         if root.is_symlink():
             raise ValueError('checkpoint root must not be a symlink')
+        normalized_config = _normalize_config(config)
         estimated = sum(t.numel() * t.element_size() for t in model.parameters()) * (8 * world + 1)
         if shutil.disk_usage(root).free < min_free_bytes + estimated:
             raise OSError('insufficient free disk space for final checkpoint')
@@ -175,7 +203,7 @@ def save_final_checkpoint(root, model, optimizer, scheduler, hook_state, *, conf
         'version': 1, 'status': 'unavailable' if errors else 'complete',
         'world_size': world, 'update_step': update_step,
         'contract_hash': config.get('contract_hash', ''),
-        'config': config, 'model_layout': _layout(model),
+        'config': normalized_config, 'model_layout': _layout(model),
         'files': {} if errors else {name: info for item in ranks for name, info in item['files'].items()},
         'data_stream_replay': 'exact' if data_stream_state is not None else 'unavailable',
         'limitations': (['Replay requires unchanged deterministic data, tokenizer, code and ordered DataLoader settings.']
@@ -215,8 +243,13 @@ def load_checkpoint(root, model, optimizer=None, scheduler=None, hook_state=None
         raise ValueError('checkpoint world size/rank mismatch')
     if contract_hash is not None and manifest['contract_hash'] != contract_hash:
         raise ValueError('checkpoint contract mismatch')
-    if expected_config is not None and manifest['config'] != expected_config:
-        raise ValueError('checkpoint code/config mismatch')
+    if expected_config is not None:
+        saved = _normalize_config(manifest['config'])
+        expected = _normalize_config(expected_config)
+        if saved != expected:
+            paths = list(islice(_config_differences(saved, expected), 21))
+            detail = ', '.join(paths[:20]) + (', ...' if len(paths) > 20 else '')
+            raise ValueError('checkpoint code/config mismatch fields: ' + detail)
     if manifest['model_layout'] != _layout(model):
         raise ValueError('checkpoint model layout mismatch')
     expected = {'model.pt', *(f'rank-{i}.pt' for i in range(world))}
