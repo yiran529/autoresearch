@@ -16,7 +16,7 @@ import yaml
 from coral.grader.trusted_writes import _atomic_json
 
 from .atomic import atomic_write_text
-from .diagnostic_sandbox import build_sandbox
+from .diagnostic_sandbox import WORKSPACE_VIEW, build_sandbox
 
 
 def settings(coral_dir: Path) -> dict:
@@ -77,6 +77,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         _atomic_json(task.path, state)
     tools = task.workspace / 'tools'
     tools.mkdir(exist_ok=True)
+    (task.workspace / 'records').mkdir(exist_ok=True)
     client = tools / 'autoresearch'
     shutil.copyfile(Path(__file__).with_name('diagnostic_client.py'), client)
     client.chmod(0o755)
@@ -108,12 +109,8 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         command = build_sandbox(task.workspace, mounts, [], ['true'], network=True,
                                 checkpoint_paths=checkpoint_paths, coral_dir=str(task.coral_dir))
         command = command[:-2]  # replace the placeholder command following '--'
-        # Inner Codex isolation replaces /dev/shm and /tmp. A stable view keeps
-        # dynamic evidence visible without widening any writable mount.
-        model_workspace = Path('/workspace')
-        command.extend(['--ro-bind', str(task.workspace), str(model_workspace)])
-        for directory in ('experiments', 'results'):
-            command.extend(['--bind', str(task.workspace / directory), str(model_workspace / directory)])
+        # build_sandbox supplies the same stable view to model and experiments.
+        model_workspace = WORKSPACE_VIEW
         command.extend(['--bind', str(home), str(home)])
         if auth.is_file():
             command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
@@ -143,7 +140,8 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                         '--output-schema', str(schema), '--output-last-message', str(output), '-'])
         environment = {'PATH': f"{model_workspace / 'tools'}:{isolation_binary.parent}:{runtime_path}", 'HOME': str(home),
                        'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
-                       'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
+                       'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': '',
+                       'CORAL_DIAGNOSTIC_RECORDS': str(task.records)}
         # API-key based installations may not have auth.json.
         # Preserve model API proxy configuration. Diagnostic experiments receive a
         # separate sanitized environment in diagnostic_sandbox, not these variables.
@@ -175,6 +173,9 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                 '- '
                 'The authoritative diagnostic command argv is resolved relative to the workspace root, '
                 'not this initial working directory.\n- Do not change code/ or evidence/.\n\n'
+                '- Diagnostic commands use the same /workspace paths.\n'
+                '- Read returned logs/results under /workspace/records/<request-id>/; records are read-only.\n'
+                '- Cite record_ref or records/<request-id>/... in the final document.\n\n'
                 'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
             )
             _stdout, stderr = process.communicate((prompt + location).replace(str(task.workspace), str(model_workspace)),

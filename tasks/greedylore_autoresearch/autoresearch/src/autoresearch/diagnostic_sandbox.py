@@ -17,6 +17,7 @@ import yaml
 from coral.grader.timeouts import DIAGNOSTIC_QUEUE_TIMEOUT
 
 _NVIDIA_DRIVER_ROOT = Path('/proc/driver/nvidia/gpus')
+WORKSPACE_VIEW = Path('/workspace')
 
 
 def device_minors_for_uuids(uuids, *, driver_root=None) -> list[int]:
@@ -74,7 +75,7 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
                   write_sources=None, checkpoint_paths=(), coral_dir=None) -> list[str]:
     """Create a minimal namespace; devices are NVIDIA minors, not NVML indices."""
     workspace = Path(workspace).absolute()
-    for path in (workspace, workspace / 'experiments', workspace / 'results'):
+    for path in (workspace, workspace / 'experiments', workspace / 'results', workspace / 'records'):
         _no_symlinks(path)
     command = [shutil.which('bwrap') or 'bwrap', '--die-with-parent', '--unshare-all', '--new-session',
                '--cap-drop', 'ALL']
@@ -120,14 +121,21 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
                     and path != coral_root / 'public/trusted.sock' and path not in checkpoints):
                 raise ValueError('diagnostic runtime mount exposes another task or private run data')
         command.extend(['--ro-bind', str(path), str(path)])
-    command.extend(['--ro-bind', str(workspace), str(workspace)])
-    for name in ('experiments', 'results'):
-        path = str(workspace / name)
-        source = Path((write_sources or {}).get(name, path))
-        _no_symlinks(source)
-        if not source.is_relative_to(workspace.parent):
-            raise ValueError('diagnostic writable mount escapes this task')
-        command.extend(['--bind', str(source), path])
+    # Both the model's nested sandbox and diagnostic commands use this view.
+    # Keep original paths available for existing scripts; both views share the
+    # same frozen writable inputs, never the live Analyzer inputs during execution.
+    for view in dict.fromkeys((workspace, WORKSPACE_VIEW)):
+        command.extend(['--ro-bind', str(workspace), str(view)])
+        for name in ('experiments', 'results'):
+            source = Path((write_sources or {}).get(name, str(workspace / name)))
+            _no_symlinks(source)
+            if not source.is_relative_to(workspace.parent):
+                raise ValueError('diagnostic writable mount escapes this task')
+            command.extend(['--bind', str(source), str(view / name)])
+    records = workspace.parent / 'records'
+    if records.is_dir():
+        _no_symlinks(records)
+        command.extend(['--ro-bind', str(records), str(WORKSPACE_VIEW / 'records')])
     for index in devices:
         path = f'/dev/nvidia{index}'
         command.extend(['--dev-bind', path, path])
@@ -232,6 +240,13 @@ def snapshot_files(source: Path, target: Path, limit=64 * 1024 * 1024) -> None:
         os.close(target_fd)
 
 
+def _log_tail(path, limit=4096):
+    with path.open('rb') as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - limit))
+        return stream.read(limit).decode('utf-8', errors='replace')
+
+
 def execute_diagnostic(task, payload, cancelled, *, borrowed=None) -> dict:
     """Reserve existing GPU locks, execute only inside bubblewrap, then release."""
     if not shutil.which('bwrap'):
@@ -244,6 +259,8 @@ def execute_diagnostic(task, payload, cancelled, *, borrowed=None) -> dict:
     # Validate all mount paths before acquiring GPUs.
     record = task.records / payload['request_id']
     try:
+        _no_symlinks(task.workspace / 'records')
+        (task.workspace / 'records').mkdir(exist_ok=True)
         build_sandbox(task.workspace, runtime.get('readonly_paths', []), [], payload['argv'],
                       checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir))
     except (ValueError, OSError) as exc:
@@ -347,4 +364,10 @@ def execute_diagnostic(task, payload, cancelled, *, borrowed=None) -> dict:
             snapshot_files(frozen / 'results', task.workspace / 'results')
         except (ValueError, OSError) as exc:
             result.update(status='failed', reason=f'could not preserve result evidence: {exc}')
+        result['stdout_tail'] = _log_tail(record / 'stdout.log')
+        result['stderr_tail'] = _log_tail(record / 'stderr.log')
+        if result['status'] != 'completed' and not result.get('reason'):
+            lines = result['stderr_tail'].strip().splitlines()
+            if lines:
+                result['reason'] = lines[-1][-1000:]
         return result

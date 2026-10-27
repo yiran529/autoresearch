@@ -11,7 +11,6 @@ import threading
 import time
 from contextlib import ExitStack
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import simulation_support as sim
@@ -29,8 +28,15 @@ def reference():
 
 class InventoryLease:
     """Simulated GPU ownership; lease flocks have a separate multiprocess test."""
+    class Reservation:
+        indices = (0, 1, 2, 3)
+        uuids = tuple(f'GPU-simulated-{index}' for index in range(4))
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def check_exclusive(self, *_): pass
+
     def __init__(self, *_):
-        self.reservation = SimpleNamespace(indices=(0, 1, 2, 3), check_exclusive=lambda *_: None)
+        self.reservation = self.Reservation()
     def ensure(self, context):
         sim.event('gpu_inventory_simulated', owner=context['agent_id'])
         return True
@@ -184,6 +190,9 @@ def driver(output, scenario):
         # Scheduling is controlled by the driver, while queueing/draining remain real.
         stack.enter_context(patch('coral.grader.trusted_worker.start_task_worker', lambda *_a, **_k: None))
         stack.enter_context(patch('autoresearch.lease.ResearchLease', InventoryLease))
+        # When bubblewrap is installed, run the diagnostic's real CPU process
+        # while retaining simulated GPU ownership and exposing no GPU devices.
+        stack.enter_context(patch('autoresearch.diagnostic_sandbox.device_minors_for_uuids', lambda _: []))
         stack.enter_context(patch('greedylore_autoresearch_grader.process.run_process_group', quality_process))
         stack.enter_context(patch('greedylore_autoresearch_grader.grader.Grader._load_references', lambda *_: reference()))
         stack.enter_context(patch('autoresearch.staged_execution.Execution._prepare_environment',

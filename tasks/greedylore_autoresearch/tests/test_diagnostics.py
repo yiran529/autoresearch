@@ -306,7 +306,7 @@ def test_sandbox_exposes_only_selected_devices_and_writable_subdirectories(task)
     assert ['/dev/nvidia5', '/dev/nvidia5'] in binds
     assert ['/dev/nvidia0', '/dev/nvidia0'] not in binds
     writable = [command[index + 1] for index, arg in enumerate(command) if arg == '--bind']
-    assert writable == [str(task.workspace / 'experiments'), str(task.workspace / 'results')]
+    assert set(writable) == {str(task.workspace / 'experiments'), str(task.workspace / 'results')}
 
 
 def test_only_host_selected_checkpoint_can_cross_task_boundary(task):

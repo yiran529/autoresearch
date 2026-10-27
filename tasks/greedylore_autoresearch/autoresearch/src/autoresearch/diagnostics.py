@@ -226,7 +226,8 @@ class DiagnosticTask:
             except Exception as exc:
                 result = {'status': 'failed', 'started': True, 'reason': str(exc)}
             result = {**result, 'diagnostic_id': diagnostic_id,
-                      'record_path': str(record_dir / 'record.json')}
+                      'record_path': str(record_dir / 'record.json'),
+                      'record_ref': f'diagnostics/{self.task_id}/records/{request_id}/record.json'}
             if result.get('started') is False:
                 state['executions'] -= 1
             state['requests'][request_id]['result'] = result
@@ -260,7 +261,7 @@ def create_task(coral_dir: Path, node_id: str, mode: str, version: int,
             if any(state.get(key) != value for key, value in identity.items()):
                 raise ValueError('analysis task identity conflicts with stored evidence')
         else:
-            for directory in ('experiments', 'results'):
+            for directory in ('experiments', 'results', 'records'):
                 (task.workspace / directory).mkdir(parents=True, exist_ok=True)
             _atomic_json(task.path, {**identity, 'process': None,
                                     'executions': 0, 'requests': {}})
