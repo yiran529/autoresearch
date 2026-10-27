@@ -79,7 +79,7 @@ autoresearch research diagnostic --node N001 --file /tmp/diagnostic1.json --requ
 ```
 Use a real script directory inside your Worktree or `/tmp/<your-agent-id>/`, and the host-provided interpreter. Scripts are staged as `experiments/`; commands start at the diagnostic workspace root. Write persistent results to `results/`. The host supplies `CORAL_DIAGNOSTIC_CODE` and permitted checkpoint paths; do not substitute arbitrary host paths. Inspect returned records/stdout/stderr and cite persistent evidence. Record your conclusion in `/tmp/decision1.json`:
 ```json
-{"iteration": 1, "action": "continue", "reason": "Assessment against predictions with persistent run/diagnostic references"}
+{"iteration": 1, "action": "continue", "reason": "State which mechanism predictions are supported, contradicted or untested; cite persistent run/diagnostic evidence and explain why remaining uncertainty permits continuation."}
 ```
 ```bash
 autoresearch research decision --node N001 --file /tmp/decision1.json --request-id n001-decision1

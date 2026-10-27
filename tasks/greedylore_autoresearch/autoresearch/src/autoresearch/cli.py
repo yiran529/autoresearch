@@ -24,7 +24,7 @@ from coral.workspace.breadcrumbs import (
     read_island_breadcrumb,
 )
 
-_RESEARCH_POLL_INTERVAL = 0.2
+_RESEARCH_POLL_INTERVAL = 2.0
 _RESEARCH_EXECUTIONS = {'train', 'timing', 'diagnostic', 'finish'}
 
 
