@@ -84,6 +84,20 @@ def test_parent_traversal_is_rejected_even_when_lexically_contained(tmp_path):
         safe_path(tmp_path / 'owned' / '..' / 'foreign')
 
 
+def test_short_temporary_paths_retain_ownership_through_node_access_and_cleanup(tmp_path):
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+
+    store = RuntimeArtifacts(configured(tmp_path))
+    a = store.temporary_directory('N001', 'a' * 200)
+    b = store.temporary_directory('N002', 'a' * 200)
+    assert a != b and a.parent == store.root / 'tmp'
+    assert len(a.name) == 24
+    assert store.temporary_directory('N001', 'a' * 200) == a
+    store.path('N001', 'another/result.json')
+    assert store.cleanup_node('N001', terminal=True)
+    assert not a.exists() and b.exists()
+
+
 def test_staged_analyzer_dynamic_results_are_external_and_only_small_evidence_persists(tmp_path):
     import os
 

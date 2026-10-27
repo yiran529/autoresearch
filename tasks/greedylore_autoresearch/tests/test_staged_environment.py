@@ -48,3 +48,19 @@ def test_setup_only_retry_does_not_require_nonexistent_checkpoint(tmp_path):
     row={'runs':[{'request_id':'one.begin'},{'request_id':'two.begin'}],
          'observations':[{'status':'infra_failed','phase':'environment_setup'}]}
     assert backend._resume(row,'llama130m_muon') is None
+
+
+def test_runtime_preflight_failure_is_infra_before_gpu_launch(tmp_path):
+    from greedylore_autoresearch_grader.runtime import InfraFailure
+    backend = execution(tmp_path)
+    work = backend.artifacts.path('N001', 'runs/preflight')
+    work.mkdir(parents=True)
+    code = work / 'code'
+    interpreter = code / '.venv/bin/python'
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text('#!/bin/sh\necho "OSError: AF_UNIX path too long" >&2\nexit 1\n')
+    interpreter.chmod(0o755)
+    with pytest.raises(InfraFailure, match='preflight'):
+        backend._prepare_runtime(code, work)
+    assert 'AF_UNIX' in (work / 'runtime-preflight.stderr.log').read_text()
+    assert (backend.coral / 'private/research_infrastructure_block.json').exists()

@@ -65,9 +65,27 @@ class RuntimeArtifacts:
             if ledger['nodes'].get(node_id, {}).get('cleaned'):
                 raise ValueError('dynamic artifacts for this node were cleaned')
             target.mkdir(parents=True, exist_ok=True, mode=0o700)
-            row = {'path': str(target), 'cleaned': False}
+            row = ledger['nodes'].get(node_id, {'path': str(target), 'cleaned': False})
             ledger['nodes'][node_id] = row
             _atomic_json(self.ledger_path, ledger)
+        return target
+
+    def temporary_directory(self, node_id, execution_id):
+        """Keep Unix socket names short, while retaining private node ownership."""
+        self.node_root(node_id)
+        identity = f'{self.run_id}/{node_id}/{execution_id}'
+        name = hashlib.sha256(identity.encode()).hexdigest()[:24]
+        target = safe_path(self.root / 'tmp' / name)
+        with trusted_writes_lock(self.coral_dir):
+            ledger = self._read()
+            row = ledger['nodes'][node_id]
+            if row.get('cleaned') or row.get('cleanup_requested'):
+                raise ValueError('temporary artifacts for this node are being cleaned')
+            paths = row.setdefault('temporary_paths', [])
+            if str(target) not in paths:
+                paths.append(str(target))
+                _atomic_json(self.ledger_path, ledger)
+            target.mkdir(parents=True, exist_ok=True, mode=0o700)
         return target
 
     def path(self, node_id, relative):
@@ -147,6 +165,12 @@ class RuntimeArtifacts:
             _atomic_json(self.ledger_path, ledger)
             if root.exists():
                 shutil.rmtree(root)
+            for value in row.get('temporary_paths', []):
+                temporary = safe_path(Path(value))
+                if temporary.parent != self.root / 'tmp' or not re.fullmatch('[a-f0-9]{24}', temporary.name):
+                    raise ValueError('temporary cleanup ownership mismatch')
+                if temporary.exists():
+                    shutil.rmtree(temporary)
             row['cleaned'] = True
             _atomic_json(self.ledger_path, ledger)
         return True

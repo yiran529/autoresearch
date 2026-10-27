@@ -348,10 +348,43 @@ class Execution:
             failure = InfraFailure(f'candidate environment preparation failed: {error}')
             failure.phase = 'environment_setup'
             raise failure from error
+        self._prepare_runtime(code, work)
+
+    def _prepare_runtime(self, code, work):
+        """Exercise actual DataLoader tensor IPC before reserving any GPUs."""
+        from greedylore_autoresearch_grader.process import ProcessSpec, run_process_group
+        from greedylore_autoresearch_grader.runtime import InfraFailure
+
+        script = (
+            'import torch\n'
+            'from torch.utils.data import DataLoader, TensorDataset\n'
+            'loader = DataLoader(TensorDataset(torch.arange(8)), batch_size=2, '
+            'num_workers=1, timeout=10)\n'
+            'assert sum(batch[0].sum().item() for batch in loader) == 28\n'
+            'print("CPU tensor IPC preflight passed", flush=True)\n'
+        )
+        environment = {**os.environ, **self._environment(work),
+                       'CUDA_VISIBLE_DEVICES': '', 'OMP_NUM_THREADS': '1'}
+        try:
+            result = run_process_group(ProcessSpec(
+                (str(code / '.venv/bin/python'), '-c', script), work / 'runtime-preflight.process',
+                environment, (), 30, terminate_grace=1, cwd=code))
+            for name in ('stdout', 'stderr'):
+                (work / f'runtime-preflight.{name}.log').write_bytes(Path(getattr(result, f'{name}_log')).read_bytes())
+            if result.returncode or result.timed_out or result.infra_failure:
+                raise RuntimeError(result.infra_failure or result.stderr_tail or 'CPU IPC preflight timed out')
+        except (OSError, RuntimeError) as error:
+            detail = {'phase': 'runtime_preflight', 'node_id': self.host.node_id,
+                      'reason': str(error), 'evidence': str(work / 'runtime-preflight.stderr.log')}
+            _atomic_json(self.coral / 'private/research_infrastructure_block.json', detail)
+            failure = InfraFailure(f'runtime preflight failed: {error}')
+            failure.phase = 'runtime_preflight'
+            raise failure from error
 
     def _environment(self, work):
         root = self.artifacts.node_root(self.host.node_id) / 'caches'
-        return {'TMPDIR': str(work), 'UV_CACHE_DIR': str(Path(self.options.get('research_uv_cache_dir') or os.environ.get('UV_CACHE_DIR') or Path.home() / '.cache/uv').expanduser()),
+        temporary = self.artifacts.temporary_directory(self.host.node_id, str(work))
+        return {'TMPDIR': str(temporary), 'UV_CACHE_DIR': str(Path(self.options.get('research_uv_cache_dir') or os.environ.get('UV_CACHE_DIR') or Path.home() / '.cache/uv').expanduser()),
                 'TORCHINDUCTOR_CACHE_DIR': str(root / 'torchinductor'),
                 'TRITON_CACHE_DIR': str(root / 'triton'), 'CUDA_CACHE_PATH': str(root / 'cuda'),
                 'XDG_CACHE_HOME': str(root / 'xdg'), 'HF_HOME': str(root / 'huggingface'),
@@ -376,7 +409,7 @@ class Execution:
         if roots:
             return max(roots, key=lambda item: item[0])[1]
         setup_only = row.get('observations') and all(
-            observation.get('status') == 'infra_failed' and observation.get('phase') in {'environment_setup', 'before_launch'}
+            observation.get('status') == 'infra_failed' and observation.get('phase') in {'environment_setup', 'runtime_preflight', 'before_launch'}
             for observation in row['observations'])
         if len(row['runs']) > 1 and not setup_only:
             raise InfraFailure('no complete checkpoint remains for exact continuation; stop and redesign')
