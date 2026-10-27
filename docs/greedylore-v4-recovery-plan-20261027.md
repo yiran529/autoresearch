@@ -12,3 +12,5 @@
 Analyzer 验收：发现两处嵌套 tmpfs 可见性问题，非缺少系统安装包。Codex 临时 home 的 helper 路径须位于宿主小型私有会话目录；模型使用只读 `/workspace` 视图，并只开放 experiments/results 写入，真实产物仍在节点 tmpfs。真实模型成功执行 shell 并返回未在提示词中暴露的随机文件内容。证据：`/home/wyr/coral-experiments/analyzer-runtime-probe-20261027/report.json`。
 
 最终定向回归：114 passed、2 skipped，包含实际进程持卡测试与一个完整 staged 成功模拟；额外的环境故障阻断新节点准入检查通过。真实离线安装、两次四卡CUDA借用和真实Analyzer随机证据读取均通过。新run不设置六小时时限；先保留单节点准入闸门，通过真实节点后放开两节点并清理旧失败Worktree/动态产物。
+
+正式首节点进一步定位到租约取消原因：例行 `stop_workflow_worker(cancel_diagnostics=False)` 轮换 Analyzer 时曾短暂发布全局 `workflow_stopping`，令并行 Researcher keeper 退出。改为轮换专用 `workflow_recovering`，仅暂停模型准入；全局关闭继续使用原停止标记并释放研究资源。真实 keeper/注册任务回归先复现失败再通过，相关84项测试通过。新 run 保留首节点方法与失败记录，修复后恢复同一会话，不重置实验预算。

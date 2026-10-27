@@ -131,7 +131,8 @@ def prepare_workflow_model(environment: dict) -> Path | None:
     registry = os.environ.get("CORAL_WORKFLOW_CORAL_DIR")
     if not registry:
         return None
-    if (Path(registry) / 'private/workflow_stopping').exists():
+    if any((Path(registry) / 'private' / name).exists()
+           for name in ('workflow_stopping', 'workflow_recovering')):
         raise PermissionError('workflow is stopping')
     path = _model_registry_path(registry, environment['CORAL_WORKFLOW_PROCESS_TOKEN'])
     _atomic_json(path, {"phase": "spawning", "token": environment["CORAL_WORKFLOW_PROCESS_TOKEN"]})
@@ -174,15 +175,20 @@ def stop_workflow_worker(
                         f"diagnostic {path.parent.name} is active; workflow restart deferred"
                     ) from None
                 held.add(path)
-        _stop_workflow_worker(private, drain_timeout=drain_timeout, held=held)
+        _stop_workflow_worker(private, drain_timeout=drain_timeout, held=held,
+                              cancel_diagnostics=cancel_diagnostics)
         if not cancel_diagnostics:
             # Let diagnostics acquire the shared gate only after cancellation
             # has been lifted, including tasks created during the lock scan.
-            (private / 'workflow_stopping').unlink(missing_ok=True)
+            (private / 'workflow_recovering').unlink(missing_ok=True)
 
 
-def _stop_workflow_worker(private: Path, *, drain_timeout: float, held: set[Path]) -> None:
-    (private / "workflow_stopping").touch()
+def _stop_workflow_worker(private: Path, *, drain_timeout: float, held: set[Path],
+                          cancel_diagnostics: bool = True) -> None:
+    # Analyzer rotation pauses model admission without cancelling live research
+    # leases or training. Only global shutdown publishes workflow_stopping.
+    marker = 'workflow_stopping' if cancel_diagnostics else 'workflow_recovering'
+    (private / marker).touch()
     # Models have their own session so worker death cannot hide live descendants.
     def stop_registered(path):
         try:
@@ -253,7 +259,8 @@ def run_workflow_model(command, *, input: str, timeout: float = 18000):
 
     def invoke(remaining, attempt):
         registry = os.environ.get('CORAL_WORKFLOW_CORAL_DIR')
-        if registry and (Path(registry) / 'private/workflow_stopping').exists():
+        if registry and any((Path(registry) / 'private' / name).exists()
+                            for name in ('workflow_stopping', 'workflow_recovering')):
             raise PermissionError('workflow is stopping')
         result = _run_workflow_model_once(command, input=input, timeout=remaining)
         check_connection_failure(result)

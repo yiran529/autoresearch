@@ -16,6 +16,20 @@ import pytest
 from coral.grader.trusted_writes import process_start_time
 
 
+@pytest.mark.parametrize('marker', ['workflow_stopping', 'workflow_recovering'])
+def test_model_admission_waits_during_shutdown_and_rotation(tmp_path, monkeypatch, marker):
+    from coral.grader.trusted_worker import prepare_workflow_model, run_workflow_model
+
+    private = tmp_path / 'private'
+    private.mkdir()
+    (private / marker).touch()
+    monkeypatch.setenv('CORAL_WORKFLOW_CORAL_DIR', str(tmp_path))
+    with pytest.raises(PermissionError, match='stopping'):
+        prepare_workflow_model({'CORAL_WORKFLOW_PROCESS_TOKEN': 'unused'})
+    with pytest.raises(PermissionError, match='stopping'):
+        run_workflow_model([sys.executable, '-c', 'raise AssertionError()'], input='')
+
+
 def test_recovery_stops_orphan_model_when_worker_is_already_dead(tmp_path):
     from coral.grader.trusted_worker import stop_workflow_worker
 

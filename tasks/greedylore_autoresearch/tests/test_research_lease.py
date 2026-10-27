@@ -92,6 +92,41 @@ def test_keeper_preserves_four_gpu_locks_across_borrower_exit(lease_env):
     wait_until(lambda: can_reserve(locks))
 
 
+def test_workflow_rotation_preserves_research_lease_and_job(lease_env, monkeypatch):
+    from coral.grader import trusted_worker
+
+    lease, context, _, _ = lease_env
+    ready(lease, context)
+    job = subprocess.Popen(['sleep', '30'], start_new_session=True)
+    try:
+        lease.register_job(job.pid)
+        original = trusted_worker._stop_record
+
+        def inspect_during_recovery(record, **kwargs):
+            # Rotation may spend seconds reaping an old Analyzer process.
+            time.sleep(.2)
+            assert lease.check(), 'routine Analyzer recovery revoked Researcher GPUs'
+            assert job.poll() is None
+            return original(record, **kwargs)
+
+        monkeypatch.setattr(trusted_worker, '_stop_record', inspect_during_recovery)
+        path = lease.coral_dir / 'private/workflow_process.json'
+        path.write_text(json.dumps({'pid': 0, 'start_time': None, 'pgid': 0}))
+        trusted_worker.stop_workflow_worker(lease.coral_dir, cancel_diagnostics=False)
+        assert lease.check()
+        assert job.poll() is None
+        assert not (lease.coral_dir / 'private/workflow_recovering').exists()
+        # Global shutdown still revokes Researcher resources and stops its job.
+        monkeypatch.setattr(trusted_worker, '_stop_record', original)
+        trusted_worker.stop_workflow_worker(lease.coral_dir)
+        wait_until(lambda: job.poll() is not None)
+        assert not lease.check()
+    finally:
+        if job.poll() is None:
+            job.kill()
+        job.wait()
+
+
 def can_reserve(locks):
     try:
         held = reserve_idle_gpus(4, locks, IdleGpuPolicy(0, 512, 5), inventory_provider=inventory)
