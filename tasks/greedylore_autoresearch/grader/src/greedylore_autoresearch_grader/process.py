@@ -24,6 +24,8 @@ class ProcessSpec:
     timeout: float | None
     terminate_grace: float = 15.0
     cwd: Path | None = None
+    startup_timeout: float | None = None
+    startup_marker: str | None = None
 
     @property
     def argv(self) -> tuple[str, ...]:
@@ -43,6 +45,7 @@ class ProcessResult:
     stderr_log: str
     stderr_tail: str
     infra_failure: str | None = None
+    failure_phase: str | None = None
 
 
 def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = None,
@@ -57,6 +60,7 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
     infra_failure = None
     cleanup: list[str] = []
     process: subprocess.Popen[bytes] | None = None
+    failure_phase = None
     environment = {key: value for key, value in os.environ.items() if not key.startswith("NCCL_")}
     environment.update(spec.env)
     if check_cancelled:
@@ -74,11 +78,43 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
             if on_start:
                 on_start(process.pid)
             deadline = None if spec.timeout is None else time.monotonic() + spec.timeout
+            startup_deadline = (None if spec.startup_timeout is None or not spec.startup_marker
+                                else time.monotonic() + spec.startup_timeout)
+            startup_complete = startup_deadline is None
             next_monitor = 0.0
+            next_log_check = 0.0
+
+            def tail(path):
+                with path.open('rb') as stream:
+                    stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, stream.tell() - 65536))
+                    return stream.read().decode(errors='replace')
+
+            def check_logs():
+                nonlocal startup_complete, failure_phase
+                lines = tail(stderr_path).splitlines()
+                if 'OSError: AF_UNIX path too long' in lines:
+                    failure_phase = 'runtime_ipc'
+                    raise InfraFailure('OSError: AF_UNIX path too long')
+                if any(line.startswith(('RuntimeError: DataLoader worker',
+                                        'RuntimeError: DataLoader timed out after')) for line in lines):
+                    failure_phase = 'data_loading'
+                    return True
+                if not startup_complete and spec.startup_marker in tail(stdout_path):
+                    startup_complete = True
+                return False
+
             while process.poll() is None:
                 if check_cancelled:
                     check_cancelled()
                 now = time.monotonic()
+                if now >= next_log_check:
+                    if check_logs():
+                        break
+                    next_log_check = now + .1
+                if not startup_complete and now >= startup_deadline:
+                    timed_out, failure_phase = True, 'startup'
+                    break
                 if monitor is not None and now >= next_monitor:
                     monitor(process.pid)
                     next_monitor = time.monotonic() + monitor_interval
@@ -89,6 +125,7 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
                     process.wait(timeout=0.05)
                 except subprocess.TimeoutExpired:
                     pass
+            check_logs()
         except InfraFailure as exc:
             infra_failure = str(exc)
         except Exception as exc:
@@ -140,4 +177,5 @@ def run_process_group(spec: ProcessSpec, *, check_cancelled: Callable | None = N
         str(stderr_path),
         stderr_tail,
         infra_failure,
+        failure_phase,
     )

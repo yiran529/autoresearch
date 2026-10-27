@@ -82,8 +82,13 @@ def build_timing_command(
         "CORAL_WORKLOAD": str(cell['name']),
         "CORAL_CODE_SHA": str(cell.get('code_sha') or ''),
     }
+    startup_timeout = cell.get('startup_timeout_seconds', 600)
+    if type(startup_timeout) not in (int, float) or not 0 < startup_timeout <= 7200:
+        raise ValueError('timing startup timeout must be positive and at most 7200 seconds')
     return ProcessSpec(tuple(command), output.parent / f"{output.name}.process", env,
-                       _ENV_ALLOWLIST, 2 * 60 * 60, cwd=candidate)
+                       _ENV_ALLOWLIST, 2 * 60 * 60, cwd=candidate,
+                       startup_timeout=startup_timeout if cell['warmup_iterations'] else None,
+                       startup_marker='WARMUP step=1 ' if cell['warmup_iterations'] else None)
 
 def iter_timing_runs(
     plan: EfficiencyPlan, candidate: str | Path, output: str | Path,

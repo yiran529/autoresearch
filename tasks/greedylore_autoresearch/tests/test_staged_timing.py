@@ -254,6 +254,23 @@ def test_candidate_timing_failure_requires_new_design_instead_of_same_sha_retry(
         measure(h, 'retry')
 
 
+def test_identified_ipc_infra_retains_phase_and_allows_bounded_same_sha_recovery(tmp_path):
+    from greedylore_autoresearch_grader.runtime import InfraFailure
+    h, r, b = timing_host(tmp_path)
+    original = b.run
+    error = InfraFailure('OSError: AF_UNIX path too long')
+    error.phase = 'runtime_ipc'
+    b.run = lambda *_: (_ for _ in ()).throw(error)
+    measure(h, 'ipc-failure')
+    result = h.status()['jobs']['ipc-failure']['result']
+    assert result['status'] == 'infra_failed' and result['phase'] == 'runtime_ipc'
+    assert 'AF_UNIX' in result['reason']
+    b.run = original
+    measure(h, 'ipc-recovered')
+    assert h.status()['jobs']['ipc-recovered']['status'] == 'completed'
+    assert len(r.read()['iterations']) == 1 and not r.read()['iterations'][0]['runs']
+
+
 @pytest.mark.parametrize('corruption', [None, 'sha', 'context', 'digest', 'bundle', 'contract', 'protocol', 'nonfinite', 'eligibility'])
 @pytest.mark.parametrize('phase', ['queued', 'running'])
 def test_executor_durable_timing_cache_recovers_without_gpu_reexecution(tmp_path, contract, corruption, phase):

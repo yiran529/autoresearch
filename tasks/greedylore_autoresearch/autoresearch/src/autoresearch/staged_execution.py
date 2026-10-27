@@ -133,10 +133,13 @@ class Execution:
             _atomic_json(work / 'process.json', {
                 'command': list(spec.command), 'returncode': result.returncode,
                 'timed_out': result.timed_out, 'infra_failure': result.infra_failure,
+                'failure_phase': getattr(result, 'failure_phase', None),
                 'stdout_log': result.stdout_log, 'stderr_log': result.stderr_log}, mode=0o644)
             self._archive(work, public)
             if result.infra_failure:
-                raise InfraFailure(result.infra_failure)
+                failure = InfraFailure(result.infra_failure)
+                failure.phase = getattr(result, 'failure_phase', None)
+                raise failure
             if result.returncode != 0 or result.timed_out:
                 raise ValueError(f'candidate training failed: {result.stderr_tail}')
             try:

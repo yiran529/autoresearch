@@ -282,15 +282,21 @@ class Grader(TaskGrader):
             "stdout_log": getattr(result, "stdout_log", None),
             "stderr_log": getattr(result, "stderr_log", None),
             "infra_failure": getattr(result, "infra_failure", None),
+            "failure_phase": getattr(result, "failure_phase", None),
         }, indent=2) + "\n")
         if getattr(result, "infra_failure", None):
             from .gpu import InfraFailure
-            raise InfraFailure(result.infra_failure)
+            failure = InfraFailure(result.infra_failure)
+            failure.phase = getattr(result, 'failure_phase', None)
+            raise failure
         if result.timed_out or result.returncode != 0:
-            raise CandidateError(
+            failure = CandidateError(
                 f"candidate process failed with return code {result.returncode}; "
+                f"phase={getattr(result, 'failure_phase', None)}; timed_out={result.timed_out}; "
                 f"stderr: {result.stderr_tail}"
             )
+            failure.phase = getattr(result, 'failure_phase', None)
+            raise failure
         try:
             payload = json.loads((output / "all_results.json").read_text())
         except (OSError, ValueError) as exc:
@@ -469,6 +475,7 @@ class Grader(TaskGrader):
                         output = evidence_root / "efficiency" / f"r{repetition + 1}-{name}"
                         cell = {**contract.efficiency.cells[name],
                                 "measured_iterations": timing_protocol["measured_iterations"],
+                                "startup_timeout_seconds": self.args.get('timing_startup_timeout_seconds', 600),
                                 "code_sha": self.tasks[0].metadata.get('commit_hash')}
                         (evidence_root / 'source_identity.json').write_text(json.dumps({
                             'commit_sha': cell['code_sha'], 'contract_hash': contract.contract_hash,

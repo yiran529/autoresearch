@@ -21,6 +21,39 @@ def test_process_records_logs_and_allowlisted_env(tmp_path):
     assert "TOKEN" not in result.env
 
 
+def test_reported_ipc_failure_stops_a_live_process_and_preserves_cause(tmp_path):
+    code = "import sys,time; print('OSError: AF_UNIX path too long',file=sys.stderr,flush=True); time.sleep(30)"
+    result = run_process_group(ProcessSpec((sys.executable, '-c', code), tmp_path,
+        {}, (), 5, terminate_grace=.1))
+    assert result.infra_failure == 'OSError: AF_UNIX path too long'
+    assert result.failure_phase == 'runtime_ipc'
+    assert not result.timed_out
+    assert 'AF_UNIX' in Path(result.stderr_log).read_text()
+
+
+def test_startup_timeout_is_bounded_and_does_not_classify_unknown_failure_as_infra(tmp_path):
+    result = run_process_group(ProcessSpec((sys.executable, '-c', 'import time; time.sleep(30)'),
+        tmp_path, {}, (), 5, terminate_grace=.1, startup_timeout=.15, startup_marker='WARMUP step=1 '))
+    assert result.timed_out and result.failure_phase == 'startup'
+    assert result.infra_failure is None
+
+
+def test_startup_marker_allows_measurement_and_generic_candidate_errors_stay_candidate(tmp_path):
+    code = "import time,sys; print('WARMUP step=1 loss=1',flush=True); time.sleep(.3); print('RuntimeError: invalid algorithm',file=sys.stderr); sys.exit(1)"
+    result = run_process_group(ProcessSpec((sys.executable, '-c', code), tmp_path,
+        {}, (), 5, terminate_grace=.1, startup_timeout=.2, startup_marker='WARMUP step=1 '))
+    assert result.returncode == 1 and not result.timed_out
+    assert result.infra_failure is None
+
+
+def test_dataloader_failure_stops_waiting_without_converting_candidate_error_to_infra(tmp_path):
+    code = "import sys,time; print('RuntimeError: DataLoader worker (pid 123) exited unexpectedly',file=sys.stderr,flush=True); time.sleep(30)"
+    result = run_process_group(ProcessSpec((sys.executable, '-c', code), tmp_path,
+        {}, (), 5, terminate_grace=.1))
+    assert result.failure_phase == 'data_loading' and not result.timed_out
+    assert result.infra_failure is None
+
+
 def test_timeout_cleans_entire_process_group(tmp_path):
     code = "import subprocess,time,sys; p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print(p.pid, flush=True); time.sleep(60)"
     result = run_process_group(
