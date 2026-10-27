@@ -40,7 +40,7 @@ def staged_research_scope(node_id: str) -> str:
         "evidence can change a decision; reuse matching development results. Development timing caps are 5 completed/15 total executions. "
         "Define compression mapping in committed `method_policy.py` and the shared hook; verify matrix and convolution gradient support. "
         "Read `notes/toolkit/references/evaluation_tasks.md` for fixed task settings. Do not wait for an Analyzer between iterations. "
-        "Diagnostic caps are 5 successful/15 total executions, 600 seconds each.\n"
+        "Diagnostic caps are 10 successful/20 total executions, 600 seconds each.\n"
         "- Finish when no justified refinement remains or the budget is exhausted. Use `autoresearch research finish` "
         "after all development work ends, nominating one completed iteration with passing development quality/resource evidence or none. "
         "First freeze the selected SHA, design, compression policy and workload mapping; the host then runs Final evaluation: fresh mandatory timing, "

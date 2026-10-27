@@ -20,13 +20,16 @@ from coral.grader.trusted_writes import (
 
 _TASK = re.compile(r'N[0-9]{3}-(?:(research|engineering)-v[1-9][0-9]*|engineer-E[0-9]{4,})')
 _REQUEST = re.compile(r'[a-zA-Z0-9_-]{1,64}')
+DIAGNOSTIC_SUCCESS_LIMIT = 10
+DIAGNOSTIC_TOTAL_LIMIT = 20
 
 
 def remaining_budget(state: dict) -> tuple[int, int]:
     """Return total and successful runs remaining, including persisted retries."""
     completed = sum(item['result'].get('status') == 'completed'
                     for item in state['requests'].values())
-    return max(0, 15 - state['executions']), max(0, 5 - completed)
+    return (max(0, DIAGNOSTIC_TOTAL_LIMIT - state['executions']),
+            max(0, DIAGNOSTIC_SUCCESS_LIMIT - completed))
 
 
 def _live_descendant(peer: int, root: dict | None) -> bool:

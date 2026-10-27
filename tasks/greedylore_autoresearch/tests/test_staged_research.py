@@ -53,6 +53,27 @@ def host(tmp_path):
     return result, r, backend
 
 
+@pytest.mark.parametrize('result_status,limit', [('completed', 10), ('failed', 20)])
+def test_research_diagnostic_budget_survives_reopening(tmp_path, result_status, limit):
+    from autoresearch.staged_research import StagedResearch
+
+    h, r, backend = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b'*40}, 'train', {})
+    h.drain()
+    backend.run = lambda *_: {'status': result_status}
+    payload = {'iteration': 1, 'argv': ['python', 'experiments/probe.py'],
+               'timeout': 600, 'scripts_dir': '/tmp/scripts'}
+    for number in range(limit):
+        h.enqueue('diagnostic', payload, f'probe-{number}', {})
+        h.drain()
+    reopened = StagedResearch(r.store, r.agent_id, r.node_id, backend=backend)
+    # Retrieving an existing request remains allowed at the limit.
+    assert reopened.enqueue('diagnostic', payload, 'probe-0', {})['status'] == result_status
+    with pytest.raises(ValueError, match='diagnostic budget exhausted'):
+        reopened.enqueue('diagnostic', payload, 'over-budget', {})
+    assert len(reopened.status()['jobs']) == limit + 1  # Includes training.
+
+
 def test_pause_resume_freeze_transfer_is_idempotent_and_no_retuning(tmp_path):
     h, r, b = host(tmp_path)
     h.enqueue('train', {'iteration': 1, 'sha': 'b'*40, 'pause_after_steps': 1000}, 'run1', {})

@@ -134,8 +134,11 @@ class StagedResearch:
                         or any(not isinstance(v, str) or '\x00' in v for v in data['argv'])):
                     raise ValueError('invalid diagnostic command or timeout')
                 diagnostics = [j for j in state['jobs'].values() if j['kind'] == 'diagnostic']
-                if len(diagnostics) >= 15 or sum(j['status'] == 'completed' for j in diagnostics) >= 5:
-                    raise ValueError('Researcher diagnostic budget exhausted (5 completed / 15 total)')
+                from .diagnostics import DIAGNOSTIC_SUCCESS_LIMIT, DIAGNOSTIC_TOTAL_LIMIT
+                if (len(diagnostics) >= DIAGNOSTIC_TOTAL_LIMIT
+                        or sum(j['status'] == 'completed' for j in diagnostics) >= DIAGNOSTIC_SUCCESS_LIMIT):
+                    raise ValueError('Researcher diagnostic budget exhausted '
+                                     f'({DIAGNOSTIC_SUCCESS_LIMIT} completed / {DIAGNOSTIC_TOTAL_LIMIT} total)')
             if kind == 'finish' and document['frozen']:
                 failures = sum(j['kind'] == 'finish' and j.get('result', {}).get('status') == 'infra_failed'
                                for j in state['jobs'].values())
