@@ -162,6 +162,7 @@ def test_missing_sandbox_returns_unavailable_before_allocation(task, monkeypatch
 @pytest.mark.parametrize('allow_unix', [False, True])
 def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch, allow_unix):
     task.close()
+    task.dynamic_root = task.workspace / 'dynamic'
     from pathlib import Path
 
     from autoresearch import diagnostic_session
@@ -187,6 +188,7 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             self.command = command
             # Codex's own tool sandbox needs the isolation binary inside the outer namespace.
             assert '/opt/coral-tools' in kwargs['env']['PATH'].split(':')
+            assert Path(kwargs['env']['HOME']).parent == task.private
             assert kwargs['env']['HTTPS_PROXY'] == 'http://127.0.0.1:9999'
             assert kwargs['env']['no_proxy'] == 'localhost,127.0.0.1'
             assert 'UNRELATED_SECRET' not in kwargs['env']
@@ -196,9 +198,9 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             # The diagnostic child needs the same selected code/evidence as Codex.
             assert str(code_root) in task.read()['runtime']['readonly_paths']
             command = self.command
-            assert command[command.index('--cd') + 1] == str(task.workspace / 'results')
-            assert command[command.index('--add-dir') + 1] == str(task.workspace / 'experiments')
-            assert f'Workspace root: {task.workspace}' in prompt
+            assert command[command.index('--cd') + 1] == '/workspace/results'
+            assert command[command.index('--add-dir') + 1] == '/workspace/experiments'
+            assert 'Workspace root: /workspace' in prompt
             assert 'resolved relative to the workspace root' in prompt
             assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
             assert 'model_reasoning_effort="medium"' in command

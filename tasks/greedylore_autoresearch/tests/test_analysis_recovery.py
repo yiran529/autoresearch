@@ -629,7 +629,7 @@ def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, m
     workspace = Path(sandbox['workspace'])
     expected_roots = [workspace / 'code', workspace / 'evidence',
                       Path(__file__).resolve().parents[1] / 'references']
-    assert prompt.split('Fixed read roots:\n', 1)[1].splitlines() == [str(p) for p in expected_roots]
+    assert prompt.split('Fixed read roots:\n', 1)[1].splitlines() == [str(p).replace(str(workspace), '/workspace') for p in expected_roots]
     assert set(map(str, expected_roots)) <= set(sandbox['mounts'])
     assert sandbox['gpu_indices'] == [] and sandbox['network'] is True
     assert (workspace / 'code' / ('a' * 40) / 'SOURCE_SNAPSHOT').read_text() == 'a' * 40

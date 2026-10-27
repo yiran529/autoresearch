@@ -158,6 +158,8 @@ def driver(output, scenario):
         stack.enter_context(patch('autoresearch.lease.ResearchLease', InventoryLease))
         stack.enter_context(patch('greedylore_autoresearch_grader.process.run_process_group', quality_process))
         stack.enter_context(patch('greedylore_autoresearch_grader.grader.Grader._load_references', lambda *_: reference()))
+        stack.enter_context(patch('autoresearch.staged_execution.Execution._prepare_environment',
+            lambda *_: sim.event('environment_preparation_simulated')))
         stack.enter_context(patch('greedylore_autoresearch_grader.grader.Grader._formal', timing_formal))
         server.start()
         try:

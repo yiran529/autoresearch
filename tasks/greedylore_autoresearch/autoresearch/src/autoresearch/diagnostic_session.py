@@ -83,8 +83,11 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
     schema = task.workspace / 'analysis.schema.json'
     shutil.copyfile(output_schema, schema)
     output = scratch / 'results/output.json'
-    # Keep runtime caches out of durable evidence, including on setup/launch failure.
-    cache_root = task.dynamic_root if getattr(task, 'dynamic_root', None) is not None else task.private
+    # Codex re-execs helper aliases from its home inside a second sandbox.
+    # A home on /dev/shm disappears under that sandbox's fresh tmpfs mount.
+    # Keep only this small, ephemeral session metadata on the host filesystem;
+    # model/experiment tensors and caches remain in the managed dynamic root.
+    cache_root = task.private
     cache_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='codex-home-', dir=cache_root) as home_dir:
         home = Path(home_dir)
@@ -105,6 +108,12 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         command = build_sandbox(task.workspace, mounts, [], ['true'], network=True,
                                 checkpoint_paths=checkpoint_paths, coral_dir=str(task.coral_dir))
         command = command[:-2]  # replace the placeholder command following '--'
+        # Inner Codex isolation replaces /dev/shm and /tmp. A stable view keeps
+        # dynamic evidence visible without widening any writable mount.
+        model_workspace = Path('/workspace')
+        command.extend(['--ro-bind', str(task.workspace), str(model_workspace)])
+        for directory in ('experiments', 'results'):
+            command.extend(['--bind', str(task.workspace / directory), str(model_workspace / directory)])
         command.extend(['--bind', str(home), str(home)])
         if auth.is_file():
             command.extend(['--ro-bind', str(auth), str(home / '.codex/auth.json')])
@@ -129,10 +138,10 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         # Codex creates protected metadata paths inside each writable root. Keep its
         # cwd in results rather than the outer namespace's read-only workspace root.
         command.extend(['--sandbox', 'workspace-write', '--skip-git-repo-check',
-                        '--cd', str(task.workspace / 'results'),
-                        '--add-dir', str(task.workspace / 'experiments'),
+                        '--cd', str(model_workspace / 'results'),
+                        '--add-dir', str(model_workspace / 'experiments'),
                         '--output-schema', str(schema), '--output-last-message', str(output), '-'])
-        environment = {'PATH': f'{tools}:{isolation_binary.parent}:{runtime_path}', 'HOME': str(home),
+        environment = {'PATH': f"{model_workspace / 'tools'}:{isolation_binary.parent}:{runtime_path}", 'HOME': str(home),
                        'CODEX_HOME': str(home / '.codex'), 'LANG': 'C.UTF-8',
                        'CORAL_DIAGNOSTIC_RUN': str(task.coral_dir), 'CUDA_VISIBLE_DEVICES': ''}
         # API-key based installations may not have auth.json.
@@ -159,8 +168,8 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
             register_workflow_model(process, token=environment['CORAL_WORKFLOW_PROCESS_TOKEN'])
             task.bind(process.pid, timeout=min(5, remaining()))
             location = (
-                f'\n## Workspace paths\n\nWorkspace root: {task.workspace}\n\n'
-                f'- Your initial working directory is {task.workspace / "results"}.\n'
+                f'\n## Workspace paths\n\nWorkspace root: {model_workspace}\n\n'
+                f'- Your initial working directory is {model_workspace / "results"}.\n'
                 '- Only experiments/ and results/ beneath the workspace root are writable.\n'
                 '- Use absolute workspace paths for reading fixed code/evidence and writing scripts.\n'
                 '- '
@@ -168,7 +177,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                 'not this initial working directory.\n- Do not change code/ or evidence/.\n\n'
                 'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
             )
-            _stdout, stderr = process.communicate(prompt + location,
+            _stdout, stderr = process.communicate((prompt + location).replace(str(task.workspace), str(model_workspace)),
                                                   timeout=remaining())
             atomic_write_text(task.private / 'session.stdout.log', _stdout)
             atomic_write_text(task.private / 'session.stderr.log', stderr)

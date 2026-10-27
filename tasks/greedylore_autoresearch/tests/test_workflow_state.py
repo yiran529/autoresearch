@@ -1068,3 +1068,13 @@ def test_memory_gate_failure_does_not_block_reconcile(root_run, monkeypatch):
     })
     assert result['assignments']
     assert 'bad summary state' in result['memory_error']
+
+
+def test_infrastructure_block_prevents_new_node_admission(root_run):
+    store = _store(root_run)
+    marker = root_run / 'private/research_infrastructure_block.json'
+    marker.write_text(json.dumps({'phase': 'environment_setup', 'reason': 'missing offline dependency'}))
+    assert not any(a.agent_id.startswith('research-') for a in store.reconcile(1, 0))
+    assert set(_state(root_run)['nodes']) == {'N000'}
+    marker.unlink()
+    assert any(a.agent_id == 'research-N001' for a in store.reconcile(1, 0))
