@@ -6,6 +6,7 @@ from pathlib import Path
 
 from coral.agent.dynamic import staged_research_scope
 from coral.config import CoralConfig
+from coral.template.shared_research_goal import with_shared_research_goal
 
 _TEMPLATE_PATH = Path(__file__).parent / "coral.md.template"
 _SINGLE_TEMPLATE_PATH = Path(__file__).parent / "coral_single.md.template"
@@ -20,6 +21,7 @@ def generate_coral_md(
     workflow_role: str | None = None,
     node_id: str | None = None,
     research_mode: str | None = None,
+    task_dir: Path | None = None,
 ) -> str:
     """Produce the CORAL.md file that agents read at startup.
 
@@ -29,6 +31,7 @@ def generate_coral_md(
         single_agent: If True, use simplified single-agent template (no sharing references)
         shared_dir: Name of the shared state directory (e.g. ".claude", ".codex", ".opencode")
         island_id: Agent's island in multi-island mode (formats a provenance hint)
+        task_dir: Resolved task directory when config.task_dir is unavailable
     """
     if config.agents.dynamic.enabled and config.grader.args.get("staged_research") is True:
         if workflow_role not in {"research", "engineering"} or not node_id:
@@ -51,7 +54,7 @@ def generate_coral_md(
                 "- Use `autoresearch engineering timing` for formal measurement; author Engineering Analysis "
                 "when the role's stopping condition or a host limit is reached."
             )
-        return (
+        instructions = (
             f"# {config.task.name}: {agent_id}\n\n{config.task.description}\n\n"
             "## Current assignment\n\n"
             f"You own `{workflow_role}` for Node `{node_id}`. Objective, preferences, capabilities and deliverables are in "
@@ -65,6 +68,7 @@ def generate_coral_md(
             "- Edit code in your own Worktree; scratch and resources follow host authorization.\n"
             "- Resume the same assignment/Codex Session after interruption, preserving changes, frozen submissions and consumed budgets.\n"
         )
+        return with_shared_research_goal(instructions, config.task_dir or task_dir)
     if config.agents.dynamic.enabled:
         if workflow_role == "research" and node_id:
             scope = (

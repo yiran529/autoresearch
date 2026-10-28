@@ -97,6 +97,23 @@ def _analysis_payload(_evidence):
     }
 
 
+def test_independent_analyzer_receives_shared_research_goal(tmp_path):
+    context = _context(tmp_path)
+    body = (Path(__file__).resolve().parents[1] / 'prompts/shared_research_goal.md').read_text().split('\n\n', 1)[1].strip()
+
+    def runner(prompt, roots, schema, scratch):
+        assert prompt.startswith('# Independent Research Analyzer\n')
+        assert prompt.count(body) == 1
+        assert '## Shared Research Goal\n' in prompt
+        output = scratch / 'output.json'
+        output.write_text(json.dumps(_analysis_payload(None)))
+        return output
+
+    result = _analyze('N001', 'research', context=context, runner=runner,
+                      publisher=_publisher(context.notes_root))
+    assert result.analysis_path.is_file()
+
+
 def test_published_analysis_preserves_readable_unicode(tmp_path):
     context = _context(tmp_path)
     runner = FakeCodex(context, [{
@@ -619,7 +636,9 @@ def test_controlled_analyzer_final_input_and_workspace_are_delivered(tmp_path, m
                       diagnostic_runner=diagnostic_session.run_diagnostic_codex)
     prompt = captured['stdin']
     role = (Path(__file__).resolve().parents[1] / 'prompts/research_analysis.md').read_text()
-    assert prompt.startswith(role)
+    title, body = role.split('\n\n', 1)
+    assert prompt.startswith(title + '\n\n## Shared Research Goal\n')
+    assert body in prompt
     assert '10 successful' in prompt and '20 total' in prompt
     assert '600 seconds' in prompt
     assert 'at most 3600 seconds per queue wait' in prompt

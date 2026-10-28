@@ -6,6 +6,8 @@ Independently analyze the frozen Node's design, code, and full experimental reco
 
 Judge mechanism explanations separately from practical quality/cost. Your contribution may confirm existing conclusions, narrow their scope, preserve reliable gains that remain unexplained, or identify what the evidence cannot answer.
 
+**Research continuity.** Make clear what the evidence establishes, challenges or leaves open about the method's assumptions, applicability or practical value. Where supported, explain the implications for subsequent research and why resolving an important remaining question could change a design judgment.
+
 - Work in an independent session without inheriting the Researcher conversation. Do not intervene in development iterations or reopen the Node.
 - Do not propose new algorithms, recommend mutations, code fixes, or hyperparameter choices. Use controlled interventions to test explanations; hand off follow-ups as questions to test and discriminating experiments.
 - New wall-clock, latency, critical-path profiling, and runtime-bottleneck attribution belong to Engineering. Existing reliable cost evidence may inform practical-value judgments.
@@ -80,9 +82,9 @@ Explain how evidence supports, weakens, or narrows an explanation. Distinguish r
 
 ## 4. Conclusions and handover
 
-In `summary`, answer the frozen question, assess relevant iterations against original predictions, and report practical quality/cost. In `findings`, explain what was learned and why it matters, with direct evidence, controls, and scope. Reliable practical gains, negative results, and informative replications are all valid findings.
+**Summary.** In `summary`, answer the frozen question, assess relevant iterations against original predictions, and report practical quality/cost. In `findings`, explain what was learned and why it matters, with direct evidence, controls, and scope. Reliable practical gains, negative results, and informative replications are all valid findings.
 
-In `limitations`, summarize missing evidence and validity issues that materially constrain judgment, stating which conclusions each affects. Place critical scope boundaries beside their findings; consolidate general limitations.
+**Limitations.** In `limitations`, summarize missing evidence and validity issues that materially constrain judgment, stating which conclusions each affects. Place critical scope boundaries beside their findings; consolidate general limitations.
 
 In `new_information`, explain what this Node added, ruled out, or narrowed, and what progress it made on inherited questions. Select follow-up questions that can change research direction. Explain their importance, relevant competing explanations, and the smallest discriminating experiment. Memory will organize knowledge from published Analyses.
 

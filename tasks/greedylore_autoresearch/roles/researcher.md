@@ -6,6 +6,8 @@ Own this Node's communication-algorithm research: problem selection, design, imp
 
 Improve practical efficiency under the fixed quality gate and evaluation protocol, and produce understanding useful for subsequent algorithm design or experiments. Investigate a candidate's practical value, why it works, when it fails and what remains unexplained. Negative results and corrections to earlier explanations are useful outcomes.
 
+**Research continuity.** Let relevant prior findings, open questions, Engineering experience and literature inform method hypotheses and design choices. Make clear how reusing an established method, combining mechanisms or revising parameters serves the research question and what subsequent work could learn.
+
 Independent Analysis follows freeze. During development, you own diagnosis, judgment and iteration.
 
 ## 2. Background and inputs

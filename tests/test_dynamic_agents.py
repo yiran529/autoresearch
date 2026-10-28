@@ -434,3 +434,95 @@ def test_engineer_startup_and_generated_instructions_use_managed_timing(resuming
     assert 'autoresearch engineering claim N001' in instructions
     assert 'autoresearch engineering timing' in instructions
     assert '.codex/notes/toolkit/workflow_rules.md' in instructions
+
+
+@pytest.mark.parametrize(('role', 'agent_id'), [
+    ('research', 'research-N001'), ('engineering', 'engineer-E0001'),
+])
+def test_staged_instructions_include_current_task_shared_goal(tmp_path, role, agent_id):
+    config = _config()
+    config.grader.args['staged_research'] = True
+    config.task_dir = tmp_path
+    prompt = tmp_path / 'prompts/shared_research_goal.md'
+    prompt.parent.mkdir()
+    prompt.write_text('# Shared Research Goal\n\nTask-specific cumulative research objective.\n')
+
+    first = generate_coral_md(config, agent_id, workflow_role=role, node_id='N001')
+    assert first.startswith('# dynamic: ' + agent_id + '\n')
+    assert first.count('Task-specific cumulative research objective.') == 1
+    assert '## Shared Research Goal\n' in first
+    assert '## Current assignment\n' in first
+
+    prompt.write_text('# Shared Research Goal\n\nRevised objective for the next session.\n')
+    second = generate_coral_md(config, agent_id, workflow_role=role, node_id='N001')
+    assert 'Revised objective for the next session.' in second
+    assert 'Task-specific cumulative research objective.' not in second
+
+
+def test_legacy_instructions_do_not_load_staged_shared_goal(tmp_path):
+    config = _config()
+    config.task_dir = tmp_path
+    prompt = tmp_path / 'prompts/shared_research_goal.md'
+    prompt.parent.mkdir()
+    prompt.write_text('# Shared Research Goal\n\nStaged-only objective.\n')
+    content = generate_coral_md(config, 'research-N001', workflow_role='research', node_id='N001')
+    assert 'Staged-only objective.' not in content
+
+
+@pytest.mark.parametrize('shared_content', [None, '', ' \n'])
+def test_staged_instructions_preserve_body_without_shared_goal(tmp_path, shared_content):
+    config = _config()
+    config.grader.args['staged_research'] = True
+    original = generate_coral_md(config, 'research-N001', workflow_role='research', node_id='N001')
+    config.task_dir = tmp_path
+    if shared_content is not None:
+        prompt = tmp_path / 'prompts/shared_research_goal.md'
+        prompt.parent.mkdir()
+        prompt.write_text(shared_content)
+    assert generate_coral_md(
+        config, 'research-N001', workflow_role='research', node_id='N001',
+    ) == original
+
+
+@pytest.mark.parametrize(('role', 'agent_id'), [
+    ('research', 'research-N001'), ('engineering', 'engineer-E0001'),
+])
+def test_manager_delivers_shared_goal_from_task_directory(tmp_path, monkeypatch, role, agent_id):
+    from coral.agent.dynamic import DynamicAssignment
+
+    config = _config()
+    config.grader.args['staged_research'] = True
+    config.agents.heartbeat_enabled = False
+    assert config.task_dir is None
+    task_dir = tmp_path / 'task'
+    prompt = task_dir / 'prompts/shared_research_goal.md'
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text('# Shared Research Goal\n\nManager-resolved objective.\n')
+    (task_dir / 'researcher.md').write_text('Research role.\n')
+    (task_dir / 'engineer.md').write_text('Engineering role.\n')
+    manager = AgentManager(config, config_dir=task_dir)
+    spec = spec_for_assignment(config, DynamicAssignment(agent_id, role, 'N001', 'active'))
+    manager.specs_by_id[agent_id] = spec
+    manager.runtimes[agent_id] = manager.runtime
+    worktree = tmp_path / 'agents' / agent_id
+    worktree.mkdir(parents=True)
+    (worktree / '.coral_agent_id').write_text(agent_id)
+    (worktree / 'candidate.txt').write_text('Keep saved progress.\n')
+    manager.paths = SimpleNamespace(coral_dir=tmp_path / '.coral', agents_dir=worktree.parent,
+                                    repo_dir=tmp_path / 'repo')
+    delivered = []
+
+    def start(**kwargs):
+        delivered.append(kwargs['coral_md_path'].read_text())
+        return SimpleNamespace(agent_id=agent_id)
+
+    monkeypatch.setattr(manager.runtime, 'start', start)
+    manager._setup_and_start_agent(agent_id)
+    assert delivered[0].startswith('# dynamic: ' + agent_id + '\n')
+    assert delivered[0].count('Manager-resolved objective.') == 1
+
+    prompt.write_text('# Shared Research Goal\n\nUpdated objective.\n')
+    manager._setup_and_start_agent(agent_id, resume_session_id='saved-session')
+    assert delivered[1].count('Updated objective.') == 1
+    assert 'Manager-resolved objective.' not in delivered[1]
+    assert (worktree / 'candidate.txt').read_text() == 'Keep saved progress.\n'

@@ -1,5 +1,15 @@
 # Gap-driven GreedyLoRE AutoResearch
 
+## Shared research goal
+
+`prompts/shared_research_goal.md` supplies the common purpose for all four roles.
+For staged research, the host inserts it into the generated agent instructions
+(`AGENTS.md` for Codex) for Researcher and Engineer, and into the independent
+Analyzer and Memory prompts. Role-specific objectives and operating rules remain
+in their existing files. The goal is read when instructions are built; changing
+it affects subsequent instruction generation. Tasks without this optional file
+retain their existing instructions.
+
 ## Exclusive method selection
 
 New Research Nodes acquire a run-wide selection lock before reading registered

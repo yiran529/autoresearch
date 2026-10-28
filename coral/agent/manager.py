@@ -781,6 +781,7 @@ class AgentManager:
             workflow_role=spec.workflow_role if spec else None,
             node_id=spec.node_id if spec else None,
             research_mode=spec.research_mode if spec else None,
+            task_dir=self._mounts_base_dir(),
         )
         (worktree_path / instruction_file).write_text(coral_md, encoding="utf-8")
 

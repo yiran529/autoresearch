@@ -17,6 +17,7 @@ import yaml
 
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 from coral.hub._island import island_root
+from coral.template.shared_research_goal import with_shared_research_goal
 
 from .analysis import run_fresh_codex
 from .atomic import atomic_write_text
@@ -384,7 +385,10 @@ def _consolidate_node(context, gate, runner, publisher):
     # Bootstrap legacy summaries once. Afterwards only the trigger Node is
     # mandatory reading; retained provenance is cumulative, not a reread claim.
     required_read = gate.trigger_refs | (prior - wisdom_covered)
-    prompt = prompt_path.read_text(encoding='utf-8') + '\n\n' + json.dumps({
+    role_prompt = with_shared_research_goal(
+        prompt_path.read_text(encoding='utf-8'), prompt_path.parents[1],
+    )
+    prompt = role_prompt + '\n\n' + json.dumps({
         'trigger_node': gate.pending_nodes[0] if gate.pending_nodes else None,
         'trigger_refs': sorted(gate.trigger_refs), 'required_refs': sorted(required_read),
         'covered_refs': sorted(covered), **_TARGETS,

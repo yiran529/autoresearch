@@ -20,6 +20,7 @@ import yaml
 
 from coral.hub._island import island_root
 from coral.hub.attempts import read_attempts
+from coral.template.shared_research_goal import with_shared_research_goal
 from coral.workspace.breadcrumbs import find_coral_breadcrumb, read_island_breadcrumb
 
 from .client import request_trusted
@@ -635,6 +636,7 @@ def _prompt(evidence: EvidenceBundle) -> str:
         if prompt_path.is_file()
         else "You are the independent Analyzer."
     )
+    role_prompt = with_shared_research_goal(role_prompt, _task_root())
     inventory = ""
     if evidence.research_attempts:
         inventory = ("\n\nResearch candidate inventory (selected anchor: "

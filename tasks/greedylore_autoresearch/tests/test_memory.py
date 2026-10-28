@@ -133,8 +133,14 @@ def test_memory_worker_publishes_three_documents_per_node(tmp_path):
         "wisdom": "# Wisdom\nNo reusable finding yet.",
     }))
     calls = []
+    shared_goal = (
+        Path(__file__).resolve().parents[1] / 'prompts/shared_research_goal.md'
+    ).read_text().split('\n\n', 1)[1].strip()
 
     def runner(prompt, read_roots, schema, scratch):
+        assert prompt.startswith('# Global Memory Manager\n')
+        assert prompt.count(shared_goal) == 1
+        assert '## Shared Research Goal\n' in prompt
         calls.append((prompt, read_roots))
         return output
 
