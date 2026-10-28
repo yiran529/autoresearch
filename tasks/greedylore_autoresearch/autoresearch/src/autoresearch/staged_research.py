@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
@@ -169,9 +170,22 @@ class StagedResearch:
     def drain(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.with_suffix('.lock').open('a+b') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            for request_id in list(self._read()['jobs']):
-                state = self._read()
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            processed = set()
+            while True:
+                with trusted_writes_lock(self.store.coral_dir):
+                    state = self._read()
+                    request_id = next((key for key in state['jobs'] if key not in processed), None)
+                    if request_id is None:
+                        # Enqueue holds this same lock. Release the Node lock
+                        # before allowing another enqueue, so its worker either
+                        # owns the Node or leaves the new job for this loop.
+                        fcntl.flock(lock, fcntl.LOCK_UN)
+                        return True
+                processed.add(request_id)
                 job = state['jobs'][request_id]
                 publication = (job['kind'] == 'finish' and state['transfer_terminal']
                                and not state.get('publication_complete')) or bool(job.get('retry_publication'))
@@ -406,16 +420,43 @@ def handle_action(store, owner, payload, context):
     else:
         result = host.enqueue(action, data, request_id, context)
     from coral.grader.trusted_worker import start_task_worker
-    start_task_worker(store.coral_dir, 'autoresearch.staged_research:run_worker', log_name='staged_worker.err')
+    start_task_worker(store.coral_dir, 'autoresearch.staged_research:run_worker',
+                      log_name='staged_worker.err', kwargs={'only_node': node})
     return result
 
 
-def run_worker(coral_dir):
+def run_worker(coral_dir, *, only_node=None):
+    """Dispatch one Node, or recover journals independently up to Node capacity."""
     from .state import WorkflowStore
+
+    if only_node is not None and (not isinstance(only_node, str) or not re.fullmatch(r'N[0-9]{3}', only_node)):
+        raise ValueError('invalid staged research Node ID')
     store = WorkflowStore(coral_dir)
-    for path in sorted((store.coral_dir / 'private/research_staged').glob('N*.json')):
+    root = store.coral_dir / 'private/research_staged'
+    paths = ([root / f'{only_node}.json'] if only_node is not None
+             else sorted(root.glob('N*.json')))
+    if store.max_active_nodes:
+        with trusted_writes_lock(store.coral_dir):
+            state = store._load_unlocked()
+            admitted = store._admitted_node_ids_unlocked(state)
+            # Terminal journals may still need publication or cancellation;
+            # active Nodes outside admission must keep waiting for their slot.
+            paths = [path for path in paths if path.stem in admitted
+                     or state['nodes'].get(path.stem, {}).get('research', {}).get('status')
+                     not in {'active', 'reserved'}]
+
+    def drain_node(path):
+        if not path.exists():
+            return
         state = json.loads(path.read_text())
         StagedResearch(store, state['agent_id'], state['node_id']).drain()
+
+    if only_node is not None:
+        for path in paths:
+            drain_node(path)
+    else:
+        with ThreadPoolExecutor(max_workers=store.max_active_nodes or max(1, len(paths))) as pool:
+            list(pool.map(drain_node, paths))
     return {'status': 'drained'}
 
 

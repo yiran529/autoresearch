@@ -349,6 +349,7 @@ def invoke_task_validator(
 
 def start_task_worker(
     coral_dir: str | Path, entrypoint: str, *, log_name: str = "memory_worker.err",
+    kwargs: dict[str, Any] | None = None,
 ) -> subprocess.Popen:
     """Launch one grader-owned task function without waiting for completion."""
     if not entrypoint or ":" not in entrypoint:
@@ -390,7 +391,7 @@ def start_task_worker(
     process.stdin.write(json.dumps({
         "entrypoint": entrypoint,
         "args": [str(coral_dir)],
-        "kwargs": {},
+        "kwargs": kwargs or {},
     }).encode())
     process.stdin.close()
     return process

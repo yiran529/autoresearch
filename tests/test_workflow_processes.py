@@ -16,6 +16,24 @@ import pytest
 from coral.grader.trusted_writes import process_start_time
 
 
+def test_task_worker_forwards_node_scope_to_detached_child(tmp_path, monkeypatch):
+    from coral.grader.trusted_worker import start_task_worker
+
+    coral = tmp_path / '.coral'
+    python = coral / 'private/grader_venv/bin/python'
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    (tmp_path / 'scoped_task.py').write_text(
+        'from pathlib import Path\n'
+        'def run(coral_dir, *, only_node):\n'
+        '    Path(coral_dir, "completed_node").write_text(only_node)\n'
+        '    return {"status": "completed"}\n')
+    monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(tmp_path), str(Path.cwd())]))
+    process = start_task_worker(coral, 'scoped_task:run', kwargs={'only_node': 'N002'})
+    assert process.wait(timeout=5) == 0
+    assert (coral / 'completed_node').read_text() == 'N002'
+
+
 @pytest.mark.parametrize('marker', ['workflow_stopping', 'workflow_recovering'])
 def test_model_admission_waits_during_shutdown_and_rotation(tmp_path, monkeypatch, marker):
     from coral.grader.trusted_worker import prepare_workflow_model, run_workflow_model
