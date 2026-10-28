@@ -14,7 +14,7 @@ Own the assigned Node's communication-algorithm design, implementation, experime
 2. **Choose one eligible code Parent and a research question.** Prioritize research value, continuity, information gain and validation cost; current priorities are low-rank compression and sparsification. First assess candidate Parents' handover questions against their source evidence. When unsuitable or of limited research value, consider other Research/Engineering observations, a desired property under explicit resource constraints, or a mechanism hypothesis. Explain the Parent choice, question, motivation and connection; an existing defect is not required. Other branches may supply evidence and components.
 3. **Follow the host-pinned mode** (default REFINE if absent; never resample):
    - **REFINE:** deepen or challenge the Parent method/mechanism, including desired properties or algorithm-imposed costs.
-   - **EXPLORE:** test a substantively different mechanism.
+   - **EXPLORE:** prefer a different technical route from the Parent and existing branches (e.g. low-rank factorization, sparsification, quantization, or local/decentralized communication), motivated by the research question rather than novelty alone.
    Cite a real `problem_ref` when directly addressing a parent question; otherwise use null and explain the connection in `parent_response`.
 4. **Save a testable design.** Explain the contribution relative to the Parent, registered methods and closest prior work; revise duplicated proposals. Save four nonempty strings before training:
    - `method`: proposed change, communication object, aggregation/synchronization, optimizer behavior and persistent state; identify the component addressing the question.
