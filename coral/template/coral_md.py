@@ -42,7 +42,8 @@ def generate_coral_md(
                 raise ValueError("invalid trusted research mode")
             scope = (
                 f"Your host-assigned research mode is `{mode}`, defined in the role. "
-                f"{staged_research_scope(node_id)}\n\n"
+                f"{staged_research_scope(node_id)} "
+                f"Read `{shared_dir}/notes/toolkit/workflow_research.md` for Researcher execution conditions.\n\n"
                 "- Research mode is pinned across resumes and retries; do not resample it."
             )
         else:

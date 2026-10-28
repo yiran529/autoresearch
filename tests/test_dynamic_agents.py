@@ -373,6 +373,7 @@ def test_staged_startup_delegates_protocol_to_reachable_role_and_workflow(resumi
         assert '10 total formal Research runs' not in content
         assert 'autoresearch node complete --mode research' not in content
     assert '.codex/notes/toolkit/workflow_rules.md' in instructions
+    assert '.codex/notes/toolkit/workflow_research.md' in instructions
     assert '.codex/notes/nodes/N001/README.md' in instructions
     assert 'REFINE' in instructions
     assert 'AGENTS.md' in startup
@@ -434,6 +435,7 @@ def test_engineer_startup_and_generated_instructions_use_managed_timing(resuming
     assert 'autoresearch engineering claim N001' in instructions
     assert 'autoresearch engineering timing' in instructions
     assert '.codex/notes/toolkit/workflow_rules.md' in instructions
+    assert 'workflow_research.md' not in instructions
 
 
 @pytest.mark.parametrize(('role', 'agent_id'), [
@@ -452,6 +454,7 @@ def test_staged_instructions_include_current_task_shared_goal(tmp_path, role, ag
     assert first.count('Task-specific cumulative research objective.') == 1
     assert '## Shared Research Goal\n' in first
     assert '## Current assignment\n' in first
+    assert ('workflow_research.md' in first) == (role == 'research')
 
     prompt.write_text('# Shared Research Goal\n\nRevised objective for the next session.\n')
     second = generate_coral_md(config, agent_id, workflow_role=role, node_id='N001')

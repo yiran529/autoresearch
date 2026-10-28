@@ -296,6 +296,7 @@ def driver(output, scenario):
             for capture in delivered:
                 assert capture['role_text'] == (sim.TASK / 'roles/researcher.md').read_text()
                 assert capture['resources']['workflow_rules.md'] == (sim.TASK / 'roles/workflow_rules.md').read_text()
+                assert capture['resources']['workflow_research.md'] == (sim.TASK / 'roles/workflow_research.md').read_text()
                 assert capture['resources']['references/research_commands.md'] == (sim.TASK / 'references/research_commands.md').read_text()
                 assert 'templates/research_origin.json' in capture['resources']
                 assert 'templates/research_intent.json' not in capture['resources']
@@ -306,6 +307,7 @@ def driver(output, scenario):
                     assert 'autoresearch node complete --mode research' not in content
                     assert '3 successful scored formal Research runs' not in content
                 assert '.codex/notes/toolkit/workflow_rules.md' in capture['instructions']
+                assert '.codex/notes/toolkit/workflow_research.md' in capture['instructions']
                 assert 'autoresearch research register' in capture['role_text']
             sim.git(repo, 'reset', '--hard', store._terminal_research_unlocked('N000').commit_hash)
             mode = store._load_unlocked()['nodes'][node]['research']['research_mode']

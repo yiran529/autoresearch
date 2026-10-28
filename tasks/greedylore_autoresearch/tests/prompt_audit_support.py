@@ -58,6 +58,9 @@ def main() -> None:
         prompt = argv[3] if resumed else argv[1]
         toolkit = Path('.codex/notes/toolkit')
         resources = {'workflow_rules.md': (toolkit / 'workflow_rules.md').read_text()}
+        research_supplement = toolkit / 'workflow_research.md'
+        if research_supplement.is_file():
+            resources['workflow_research.md'] = research_supplement.read_text()
         resources.update({f'references/{p.name}': p.read_text() for p in (toolkit / 'references').glob('*.md')})
         resources['README.md'] = (toolkit / 'README.md').read_text()
         resources.update({f'templates/{p.name}': p.read_text() for p in (toolkit / 'templates').iterdir() if p.is_file()})

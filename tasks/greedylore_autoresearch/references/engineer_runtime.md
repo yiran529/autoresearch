@@ -2,7 +2,7 @@
 
 **Primary reader:** Engineer. This document owns **measured execution time and performance attribution**: step/wall-clock time, collective latency, encode/decode cost, critical path, communication–computation overlap, memory movement and performance regressions. It is separate from Research Analyzer's study of information loss, optimization updates and **algorithmic state evolution across training steps**.
 
-**Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the repository's trusted `workflow_rules.md`, `roles/engineer.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **4 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
+**Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the shared execution supplement `workflow_rules.md`, `roles/engineer.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **4 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
 
 ### Controlled GPU diagnostics
 

@@ -26,7 +26,7 @@ Use the Node README, Spec/Evaluation, corresponding quality evidence, and fixed-
 
 ### Available references
 
-Shared materials are in `notes/toolkit/`. `workflow_rules.md` contains shared execution rules; `references/engineer_runtime.md` provides diagnostics, timing, optimization examples, and submission interfaces; `references/semantic_criteria.md` provides semantic checking criteria.
+Shared materials are in `notes/toolkit/`. `workflow_rules.md` contains shared execution boundaries; `references/engineer_runtime.md` provides diagnostics, timing, optimization examples, and submission interfaces; `references/semantic_criteria.md` provides semantic checking criteria.
 
 Wisdom, Engineering Summary, and published Analyses can help identify reusable optimizations and their boundaries. Use summaries for navigation, verify important judgments against their sources, and use profiling recipes as needed.
 
@@ -66,6 +66,7 @@ Within budget, continue pursuing well-supported, semantics-preserving opportunit
 - Formal runs default to 4 successful / 10 total. Regressions with valid scores also count as successful. Failures and allowed retries count toward total; pending runs reserve capacity. Recovery and rewind do not reset counts.
 - Stop measuring when either formal limit is reached. The host's current claim `run_limits` take precedence.
 - Diagnostics have a separate budget of 10 successful / 20 total, 1–4 GPUs, at most 600 seconds per run, and at most 3600 seconds of queue wait. They neither consume nor replace formal-run capacity.
+- Diagnostic failures, timeouts and interruptions count toward diagnostic total. Resuming a session does not reset consumed capacity.
 - Retry the same SHA only for host-classified infrastructure failures, using `--retry` and a new ID. For a lost reply, reuse the original ID, SHA, and flags. Do not create empty commits to manufacture retries.
 
 ## 4. Engineering Analysis and submission
@@ -94,4 +95,5 @@ Submit with `autoresearch engineering finish --analysis-file /absolute/scratch/f
 
 - `finalizing` means the submission is persisted, not that publication is complete.
 - After submission, do not change the summary or add candidates. Reuse the same content after an interruption.
+- Waiting for Engineering capacity is not a valid reason to skip required Engineering.
 - Permissions for writing, shared publication, evidence retention, waiting, and optional subagents remain governed by the shared workflow.

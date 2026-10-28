@@ -474,6 +474,7 @@ class WorkflowStore:
             shutil.copytree(task_root / "references", toolkit / "references", dirs_exist_ok=True)
             shutil.copytree(task_root / "templates", toolkit / "templates", dirs_exist_ok=True)
             if staged:
+                shutil.copyfile(task_root / "roles/workflow_research.md", toolkit / "workflow_research.md")
                 (toolkit / "templates/research_intent.json").unlink(missing_ok=True)
             shutil.copyfile(task_root / "README.md", toolkit / "README.md")
             state = self._load_unlocked()

@@ -18,24 +18,24 @@ Start from the pinned GreedyLoRE code and accumulated research. Current prioriti
 
 ### Available resources
 
-| Resource | Purpose |
+| Resource | Purpose and use |
 |---|---|
 | `notes/tree.md`, Node README | Research lineage, progress and evidence entry points |
 | `research.json`, Spec, Evaluation, Attempts, fixed-SHA code | Designs, actual implementations and experiment records |
-| `notes/wisdom.md`, Research/Engineering Summary, historical Analysis | Existing understanding, counterexamples, implementation experience and open questions |
-| `references/algorithm_construction.md` and family references | Problem entry points, building blocks, literature and worked constructions |
-| `references/semantic_criteria.md` | Implementation correctness criteria |
-| `references/evaluation_tasks.md` | Fixed workloads and candidate-owned choices |
-| `references/research_commands.md` | Operation interfaces, request fields and examples |
-
-References are under `notes/toolkit/`. Consult research material according to the problem; summaries provide navigation, and consequential judgments should be checked against their sources. Shared execution rules are in `notes/toolkit/workflow_rules.md`.
+| `notes/wisdom.md`, Research/Engineering Summary, historical Analysis | Existing understanding, counterexamples, implementation experience and open questions. Use summaries for navigation and verify consequential judgments against their sources |
+| `notes/toolkit/references/algorithm_construction.md` and family references | Problem entry points, building blocks, literature and worked constructions; consult research material according to the current question |
+| `notes/toolkit/references/semantic_criteria.md` | Implementation correctness criteria |
+| `notes/toolkit/references/evaluation_tasks.md` | Fixed workloads and candidate-owned choices |
+| `notes/toolkit/references/research_commands.md` | Operation interfaces, request fields and examples |
+| `notes/toolkit/workflow_rules.md` | Shared execution boundaries; read before operating |
+| `notes/toolkit/workflow_research.md` | Researcher execution conditions; read before registration or experiments |
 
 ### Start or resume
 
 Use `autoresearch research status --node Nxxx` and the existing records and Worktree to recover progress.
 
 - Registered research resumes its saved iteration/stage.
-- Host records determine current budgets and capabilities; counting and recovery rules are in the shared workflow.
+- Host records determine current budgets and capabilities; counting and recovery conditions are in `workflow_research.md`.
 
 ## 3. Parent and research question
 
@@ -85,7 +85,7 @@ Before selection, run `autoresearch node planning acquire --wait` to inspect the
 Before implementing a candidate, check the command guide's required `origin`/`design` fields and the current evaluation contract, then save the origin and initial design through `autoresearch research register`.
 
 - Register from a clean Worktree and the Parent's Research SHA.
-- Successful registration releases the planning lock; renewal, release and interruption handling follow the shared protocol.
+- Successful registration releases the planning lock; renewal, release and interruption conditions are in `workflow_research.md`.
 
 ## 4. Development experiments
 
@@ -159,7 +159,7 @@ Record `continue`, `revise` or `stop` through `autoresearch research decision`. 
 **Stop.** End when no justified refinement remains or the budget is exhausted, and explain why.
 
 - `decision` records judgment; it does not execute training or a revision.
-- Budgets need not be exhausted. Normally use at most two development trajectories; hard caps and design/timing/diagnostic counts follow the shared workflow and host state.
+- Budgets need not be exhausted. Normally use at most two development trajectories; hard caps and design/timing/diagnostic counts follow `workflow_research.md` and host state.
 - Keep Parent/base_commit, main question and initial core hypothesis fixed within the Node. A core mechanism/hypothesis change requires a new Node.
 - Normal actions of a declared adaptive policy are not design revisions. Changing methods at a Parent checkpoint does not replace from-scratch quality evidence.
 
@@ -200,6 +200,6 @@ Use `autoresearch research finish` to nominate a completed iteration passing dev
 The host freezes the candidate SHA, design and per-workload compression policy, then runs fresh Final timing, fixed language transfer and ResNet18/CIFAR100. Once all Final components are terminal or explicitly skipped, the host releases the Research reservation, retires Researcher and hands the full record to independent Analysis and quality-gated Engineering.
 
 - Final timing has its own budget, never reuses development measurements and adds no speedup-magnitude gate.
-- Do not switch candidates, tune from Final feedback or reopen development after freeze. Only host-classified infrastructure recovery is allowed under the shared protocol.
+- Do not switch candidates, tune from Final feedback or reopen development after freeze. Only host-classified infrastructure recovery is allowed under `workflow_research.md`.
 - Reused Final feedback is transfer/robustness evidence, not independent campaign-level held-out evidence.
 - Do not claim another Node. No separate duplicate final report is required.

@@ -40,6 +40,7 @@ def test_task_has_two_distinct_codex_roles():
 def test_required_handoff_assets_exist_and_are_nonempty():
     relative_paths = [
         "roles/workflow_rules.md",
+        "roles/workflow_research.md",
         "roles/researcher.md",
         "roles/engineer.md",
         "prompts/research_analysis.md",

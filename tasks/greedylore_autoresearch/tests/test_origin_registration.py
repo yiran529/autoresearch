@@ -193,6 +193,8 @@ def test_staged_toolkit_delivers_origin_template_and_command_guide(staged):
             assert command in guide
     rules = (toolkit / 'workflow_rules.md').read_text()
     assert rules == (Path(__file__).resolve().parents[1] / 'roles/workflow_rules.md').read_text()
+    research_rules = (toolkit / 'workflow_research.md').read_text()
+    assert research_rules == (Path(__file__).resolve().parents[1] / 'roles/workflow_research.md').read_text()
     assert (toolkit / 'references/evaluation_tasks.md').is_file()
     assert 'node initialize --intent-file' not in rules
 

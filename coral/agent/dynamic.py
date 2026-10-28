@@ -30,7 +30,7 @@ def staged_research_scope(node_id: str) -> str:
     """Locate the staged assignment; role and workflow files own the protocol."""
     return (
         f"Use `autoresearch research status --node {node_id}` to recover registration, iteration and stage "
-        "from `research.json`. New research follows the shared planning/register protocol; "
+        "from `research.json`. New research follows the Researcher planning/register protocol; "
         "the role defines training, diagnostics, timing and finish operations."
     )
 
