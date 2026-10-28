@@ -93,7 +93,7 @@ def read_source(reference, evidence, context, *, version=None):
         raise ArtifactValidationError(f'diagnostic evidence unavailable: {reference}: {exc}') from exc
 
 
-def seal_sources(authored, evidence, context, version):
+def seal_sources(authored, evidence, context, version, *, diagnostic_evidence=None):
     """Canonicalize new citations and freeze hashes without changing the input job."""
     from .analysis import EvidenceRecord, _hash_bytes, _manifest_hash
 
@@ -110,7 +110,10 @@ def seal_sources(authored, evidence, context, version):
         nonlocal total
         if reference in records and records[reference].status == 'present':
             return
-        data = read_source(reference, evidence, context, version=version)
+        # Public context is pinned separately by immutable task version. Keep
+        # diagnostic authentication on the original formal input manifest so
+        # recovery and older artifact readers use the same ledger identity.
+        data = read_source(reference, diagnostic_evidence or evidence, context, version=version)
         if total + len(data) > _TOTAL_LIMIT or len(records) >= 1024:
             if required:
                 raise ArtifactValidationError(f'Analysis citation evidence budget exceeded: {reference}')

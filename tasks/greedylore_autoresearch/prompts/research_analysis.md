@@ -21,6 +21,14 @@ Trace communicated objects, aggregation/synchronization, persistent state/EF, an
 - Distinguish Root source SHA S0 from evaluated Attempt SHA A0.
 - Use only the Parent/historical versions actually provided; do not assume other workspace material is available.
 
+### Public research context
+
+Use the supplied snapshots of other Nodes, Research/Engineering Summary, and wisdom to understand prior work, compare explanations, and identify information this Node adds. The current Node's frozen question and evidence remain the object of this Analysis.
+
+- `diagnostics/analysis-context-<task-id>/context.json` lists the public texts captured for this Analysis version, with omissions and limits. Corresponding files are under its `notes/` directory. A retry reuses this snapshot; a new Analysis version may capture newer knowledge.
+- Other Nodes may still be in progress. Treat their records as provisional at snapshot time. Summaries and wisdom are derived views; check consequential comparisons against the supplied original reports and evidence. Their conclusions are not new independent confirmation.
+- This context grants access to supplied small public texts, not other Nodes' code, raw logs, checkpoints, or GPU tasks. Do not follow links outside approved roots or read live notes.
+
 ### Comparability
 
 Confirm the contracts, budgets, schedules, seeds, data, models, optimizers, controls, and quality gates that affect conclusions. Distinguish algorithm, parameter, and implementation changes; check relevant restored state and diagnostic isolation.
@@ -85,12 +93,13 @@ In `new_information`, explain what this Node added, ruled out, or narrowed, and 
 
 ## 5. Evidence and write boundaries
 
-Cite evidence from this session's evidence inventory, fixed-SHA snapshots, and newly produced persistent diagnostics. Identify SHAs and real diagnostic IDs. Fixed material may include Spec/Evaluation, `notes/nodes/Nxxx/research.json`, `code/<SHA>/...`, `eval_logs/...`, provided `research_diagnostics/...`, historical Analyses and self-check attachments, and `diagnostics/<task-id>/records/<request-id>/...`.
+Cite evidence from this session's evidence inventory, fixed-SHA snapshots, and newly produced persistent diagnostics. Identify SHAs and real diagnostic IDs. Fixed material may include Spec/Evaluation, `notes/nodes/Nxxx/research.json`, `code/<SHA>/...`, `eval_logs/...`, provided `research_diagnostics/...`, historical Analyses and self-check attachments, public context under `diagnostics/analysis-context-<task-id>/notes/...`, and `diagnostics/<task-id>/records/<request-id>/...`.
 
 - Read only provided snapshots and approved evidence roots. Write diagnostic scripts and results only in the authorized sandbox.
 - Do not modify Research code, formal-run behavior, evaluation data, historical reports, shared wisdom, or private tests. Do not add instrumentation to formal evaluation.
 - Cite only inventory material and this task's new persistent diagnostics. Accept staged/local aliases actually provided; log directories refer only to frozen files.
 - Do not cite temporary or arbitrary workspace paths. Attachment hashes establish content identity, not execution; the host validates identity and attaches an evidence envelope.
+- Cite public context using its exact frozen inventory path, not live aliases such as `notes/wisdom.md`. Context snapshots preserve public text identity and do not authenticate experiments described in that text.
 
 ## 6. Output
 

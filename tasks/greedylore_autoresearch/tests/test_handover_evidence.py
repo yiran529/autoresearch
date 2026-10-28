@@ -129,11 +129,15 @@ def test_fixed_code_is_sealed_from_git_and_ignores_worktree_changes(context):
                                      'interrupted_placeholder', 'interrupted_missing_record'])
 def test_own_diagnostic_is_sealed_without_changing_frozen_research(context, scenario):
     frozen = resolve_evidence('N001', 'research', context=context)
+    (context.notes_root / 'wisdom.md').write_text('Existing bounded knowledge.')
+    context_ref = 'diagnostics/analysis-context-N001-research-v1/notes/wisdom.md'
     captured = {}
 
     def diagnostic_runner(_prompt, _roots, _schema, scratch, task):
         task.bind(os.getpid())
         captured['task'] = task
+        assert task.read()['evidence_hash'] == frozen.manifest_hash
+        assert (scratch / 'evidence' / context_ref).read_text() == 'Existing bounded knowledge.'
 
         def execute(item, request, cancelled):
             cancelled()
@@ -166,14 +170,14 @@ def test_own_diagnostic_is_sealed_without_changing_frozen_research(context, scen
             if scenario == 'interrupted_placeholder':
                 _atomic_json(task.records / 'interrupted/record.json', record)
         out = scratch / 'results/output.json'
-        out.write_text(json.dumps(payload(['records/probe/results/probe.json'])))
+        out.write_text(json.dumps(payload(['records/probe/results/probe.json', context_ref])))
         return out
 
     result = analyze('N001', 'research', context=context, diagnostic_runner=diagnostic_runner,
                      publisher=_publisher(context.notes_root))
     doc = load_document(result.analysis_path)
     ref = 'diagnostics/N001-research-v1/records/probe/results/probe.json'
-    assert doc['handover']['evidence_refs'] == [ref]
+    assert doc['handover']['evidence_refs'] == [ref, context_ref]
     assert any(r['path'] == ref for r in doc['evidence_manifest']['evidence_records'])
     if scenario == 'large_uncited_log':
         assert not any(r['path'].endswith('/stdout.log') for r in doc['evidence_manifest']['evidence_records'])

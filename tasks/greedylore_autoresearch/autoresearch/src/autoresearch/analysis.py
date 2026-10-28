@@ -701,17 +701,20 @@ def analyze(
             analysis_path = _publish(publish, ctx, 'analysis', mode, version,
                                      json.dumps(analysis_document, sort_keys=True, ensure_ascii=False) + '\n')
     else:
+        from .analysis_context import with_public_context
         from .diagnostic_sandbox import isolation_available
         from .diagnostic_session import analyzer_timeout, run_diagnostic_codex, settings
         from .diagnostics import create_task, remaining_budget
 
+        diagnostic_evidence = evidence
+        evidence = with_public_context(evidence, ctx, version)
         enabled = settings(ctx.coral_dir).get("analyzer_diagnostics", False)
         timeout = analyzer_timeout(ctx.coral_dir)
         if (enabled and diagnostic_runner is None and runner is run_fresh_codex
                 and isolation_available()):
             diagnostic_runner = run_diagnostic_codex
         task = (create_task(ctx.coral_dir, node_id, mode, version, evidence.research_sha,
-                            evidence_hash=evidence.manifest_hash)
+                            evidence_hash=diagnostic_evidence.manifest_hash)
                 if diagnostic_runner is not None else None)
         with task.session() if task else nullcontext():
             analyzer_scratch = (task.workspace if task else
@@ -777,7 +780,8 @@ def analyze(
             validate_authored_references(authored)
             from .analysis_sources import seal_sources
 
-            authored, evidence = seal_sources(authored, evidence, ctx, version)
+            authored, evidence = seal_sources(authored, evidence, ctx, version,
+                                              diagnostic_evidence=diagnostic_evidence)
             analysis_document = validate_analysis(seal_document(authored, evidence), evidence)
             content = json.dumps(analysis_document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             analysis_path = _publish(publish, ctx, "analysis", mode, version, content)

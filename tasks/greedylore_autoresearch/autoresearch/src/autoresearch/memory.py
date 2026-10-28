@@ -249,6 +249,7 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None
     for root in (research_diagnostics, staged_diagnostics):
         root.mkdir(parents=True, exist_ok=True)
     selected = list_analysis_refs(staged_notes) if evidence_refs is None else evidence_refs
+    frozen_records = []
     for ref in sorted(selected):
         if _REF.fullmatch(ref) is None:
             raise ValueError('invalid Memory evidence Analysis reference')
@@ -260,44 +261,49 @@ def _stage_public_inputs(context: MemoryContext, scratch: Path, *, node_ids=None
         records = manifest.get('evidence_records', []) if isinstance(manifest, dict) else []
         if not isinstance(records, list):
             continue
-        for record in records:
-            if not isinstance(record, dict) or record.get('status') != 'present':
-                continue
-            reference = record.get('path')
-            if not isinstance(reference, str):
-                continue
-            relative = Path(reference)
-            if (relative.is_absolute() or '..' in relative.parts or not relative.parts
-                    or relative.parts[0] not in {'eval_logs', 'research_diagnostics', 'diagnostics', 'notes'}
-                    or relative.parts[0] == 'notes' and not re.fullmatch(
-                        r'notes/nodes/N[0-9]{3}/research\.json', reference)):
-                continue
-            source = context.island_root / relative
-            try:
-                safe_path(source)
-            except ValueError:
-                continue
-            if (not source.is_file() or source.suffix not in
-                    {'.json', '.jsonl', '.log', '.md', '.txt', '.csv', '.tsv'}):
-                continue
-            size = source.stat().st_size
-            if size > 1_000_000 or size > budget['bytes'] or budget['files'] <= 0:
-                continue
-            destination = scratch / 'public' / relative
-            if destination.exists():
-                continue
-            # Read bounded bytes once: the copy must be exactly what was hashed,
-            # not a later filesystem version. Missing legacy hashes stay omitted.
-            with source.open('rb') as stream:
-                data = stream.read(1_000_001)
-            if len(data) > 1_000_000 or hashlib.sha256(data).hexdigest() != record.get('sha256'):
-                continue
-            if len(data) > budget['bytes']:
-                continue
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
-            budget['bytes'] -= len(data)
-            budget['files'] -= 1
+        frozen_records.extend(records)
+    # Preserve current raw evidence before spending the shared budget on history.
+    for record in sorted(frozen_records, key=lambda r: (
+        isinstance(r, dict) and isinstance(r.get('path'), str)
+        and r['path'].startswith('diagnostics/analysis-context-')
+    )):
+        if not isinstance(record, dict) or record.get('status') != 'present':
+            continue
+        reference = record.get('path')
+        if not isinstance(reference, str):
+            continue
+        relative = Path(reference)
+        if (relative.is_absolute() or '..' in relative.parts or not relative.parts
+                or relative.parts[0] not in {'eval_logs', 'research_diagnostics', 'diagnostics', 'notes'}
+                or relative.parts[0] == 'notes' and not re.fullmatch(
+                    r'notes/nodes/N[0-9]{3}/research\.json', reference)):
+            continue
+        source = context.island_root / relative
+        try:
+            safe_path(source)
+        except ValueError:
+            continue
+        if (not source.is_file() or source.suffix not in
+                {'.json', '.jsonl', '.log', '.md', '.txt', '.csv', '.tsv'}):
+            continue
+        size = source.stat().st_size
+        if size > 1_000_000 or size > budget['bytes'] or budget['files'] <= 0:
+            continue
+        destination = scratch / 'public' / relative
+        if destination.exists():
+            continue
+        # Read bounded bytes once: the copy must be exactly what was hashed,
+        # not a later filesystem version. Missing legacy hashes stay omitted.
+        with source.open('rb') as stream:
+            data = stream.read(1_000_001)
+        if len(data) > 1_000_000 or hashlib.sha256(data).hexdigest() != record.get('sha256'):
+            continue
+        if len(data) > budget['bytes']:
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        budget['bytes'] -= len(data)
+        budget['files'] -= 1
     return staged_notes, staged_logs, staged_diagnostics, research_diagnostics
 
 
