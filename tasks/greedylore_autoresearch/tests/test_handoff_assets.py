@@ -1,6 +1,7 @@
 # ruff: noqa: S101
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -67,10 +68,18 @@ def test_reviewer_assets_are_removed():
         assert not (TASK_ROOT / relative).exists()
 
 
+def test_formal_roles_and_prompts_are_english():
+    paths = [*TASK_ROOT.glob('roles/*.md'), *TASK_ROOT.glob('prompts/*.md')]
+    for path in paths:
+        assert re.search(r'[\u4e00-\u9fff]', path.read_text()) is None, path
+
+
 def test_prompts_expose_workflow_not_transport():
     paths = [*TASK_ROOT.glob("roles/*.md"), *TASK_ROOT.glob("prompts/*.md")]
     combined = "\n".join(path.read_text() for path in paths)
-    for required in ("coral eval", "autoresearch retry", "autoresearch analyze"):
+    for required in ("autoresearch research register", "autoresearch research train",
+                     "autoresearch research finish", "autoresearch engineering timing",
+                     "autoresearch engineering finish", "autoresearch diagnostic run"):
         assert required in combined
     for internal in ("trusted.sock", "flock", "grader_runs", "ControlProvider"):
         assert internal not in combined

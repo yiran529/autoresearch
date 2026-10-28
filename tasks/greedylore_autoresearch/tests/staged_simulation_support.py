@@ -300,10 +300,13 @@ def driver(output, scenario):
                 assert 'templates/research_origin.json' in capture['resources']
                 assert 'templates/research_intent.json' not in capture['resources']
                 for content in (capture['instructions'], capture['startup_prompt']):
-                    assert 'autoresearch research register' in content
-                    assert 'at most 3 candidate training trajectories' in content
+                    assert f'.codex/roles/{aid}.md' in content
+                    assert 'at most 3 candidate training trajectories' not in content
+                    assert "role's numbered steps" not in content
                     assert 'autoresearch node complete --mode research' not in content
                     assert '3 successful scored formal Research runs' not in content
+                assert '.codex/notes/toolkit/workflow_rules.md' in capture['instructions']
+                assert 'autoresearch research register' in capture['role_text']
             sim.git(repo, 'reset', '--hard', store._terminal_research_unlocked('N000').commit_hash)
             mode = store._load_unlocked()['nodes'][node]['research']['research_mode']
             origin = dict(parent_node='N000', hypothesis='SIMULATED history helps',

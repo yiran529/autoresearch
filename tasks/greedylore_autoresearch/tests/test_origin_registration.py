@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -191,7 +192,7 @@ def test_staged_toolkit_delivers_origin_template_and_command_guide(staged):
         if command != 'research register':
             assert command in guide
     rules = (toolkit / 'workflow_rules.md').read_text()
-    assert 'normally use two, at most three candidate trajectories' in rules
+    assert rules == (Path(__file__).resolve().parents[1] / 'roles/workflow_rules.md').read_text()
     assert (toolkit / 'references/evaluation_tasks.md').is_file()
     assert 'node initialize --intent-file' not in rules
 

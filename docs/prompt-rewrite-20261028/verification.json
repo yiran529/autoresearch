@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-28",
+  "timezone": "Asia/Shanghai",
+  "source_snapshots_verified": 7,
+  "runtime_sources_unchanged": true,
+  "drafts_checked": 6,
+  "markdown_files_checked": 17,
+  "local_links_and_format_checked": true,
+  "analysis_memory_schema_fields_and_verdict_terms_checked": true,
+  "research_cli_action_names_checked": 10,
+  "draft_sha256": {
+    "drafts/prompts/global_memory_manager.md": "aac8ec958f2887188ca9090b146290c48df4d7437fdd716687b21aabdfcc33ea",
+    "drafts/prompts/research_analysis.md": "699acc3679e07d14386a63e9f4c986157053836ef752b85ba44b263152e2f7ef",
+    "drafts/roles/engineer.md": "981a484db1442e292178731ad41c2c6cc1d43b4d036c2ec545c87ec98b38b003",
+    "drafts/roles/researcher.md": "6e61a915b08f2fae37bf5b8b1ab70b4d50070a1bb4eccd3eefa0a4e69758b80f",
+    "drafts/roles/workflow_rules.md": "2f1e8a1152c473f78de985e6e357858c4406f948ff82f216576c787270150bf3",
+    "drafts/startup.md": "106a61d0a556018fa9e069ffe2b77281b5fe48498685a25da5a3e57fbf8205b6"
+  },
+  "independent_review": "astra-review-final.md",
+  "issues": [],
+  "limits": [
+    "Text and interface review only",
+    "Runtime prompts and generator not replaced",
+    "No generated-message delivery tests",
+    "No Agent A/B, GPU, training or performance experiments"
+  ]
+}

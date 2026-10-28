@@ -27,29 +27,11 @@ class DynamicAssignment:
 
 
 def staged_research_scope(node_id: str) -> str:
-    """One staged protocol for startup messages and generated instruction files."""
+    """Locate the staged assignment; role and workflow files own the protocol."""
     return (
-        f"- You own Research Node `{node_id}`. Read its `research.json` and resume the saved iteration/stage.\n"
-        "- Select under the planning lock; use `autoresearch research register` with one origin and first design. "
-        "Keep Parent/base_commit, main question and core hypothesis fixed; append designs rather than rewriting history.\n"
-        "- Development experiments normally use two and at most 3 candidate training trajectories, including "
-        "failed/stopped/restarted ones; at most 3 append-only designs include timing-screened designs. "
-        "Exact same-SHA continuation stays in its trajectory; resumes and retries do not reset budgets.\n"
-        "- Use managed training, timing and diagnostics; verify mechanism predictions and practical effects yourself. "
-        "Use optional `autoresearch research timing` before training, while paused or after completion when efficiency "
-        "evidence can change a decision; reuse matching development results. Development timing caps are 5 completed/15 total executions. "
-        "Define compression mapping in committed `method_policy.py` and the shared hook; verify matrix and convolution gradient support. "
-        "Read `notes/toolkit/references/evaluation_tasks.md` for fixed task settings. Do not wait for an Analyzer between iterations. "
-        "Diagnostic caps are 10 successful/20 total executions, 600 seconds each.\n"
-        "- Finish when no justified refinement remains or the budget is exhausted. Use `autoresearch research finish` "
-        "after all development work ends, nominating one completed iteration with passing development quality/resource evidence or none. "
-        "First freeze the selected SHA, design, compression policy and workload mapping; the host then runs Final evaluation: fresh mandatory timing, "
-        "fixed language transfer and ResNet18/CIFAR100. Final timing has its own budget and cannot reuse development measurements. "
-        "Do not change candidates, tune from final feedback or reopen development.\n"
-        "- After all Final evaluation components are terminal or explicitly skipped, the host retires you and starts independent Research Analysis "
-        "over the full frozen record and all Attempts and quality-gated Engineering. Final infrastructure retries are capped at 2 per component; "
-        "retain completed results and restart vision from scratch on retry. Hold the host reservation through all final components. "
-        "Their completion makes this Node an eligible Parent."
+        f"Use `autoresearch research status --node {node_id}` to recover registration, iteration and stage "
+        "from `research.json`. New research follows the shared planning/register protocol; "
+        "the role defines training, diagnostics, timing and finish operations."
     )
 
 
@@ -58,6 +40,26 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
     """Give finite workflow instructions in the actual initial/resumed user message."""
     if spec.workflow_role not in {"research", "engineering"} or not spec.node_id:
         raise ValueError("workflow prompt requires a role and a bound Node")
+    if staged_research:
+        action = "Resume" if resuming else "Start"
+        recovery = (
+            f"Use `autoresearch research status --node {spec.node_id}` for saved jobs/results. "
+            f"Reconnect after a disconnected wait with `autoresearch research wait --node {spec.node_id} "
+            "--request-id <saved-id>` to retrieve the existing execution."
+            if spec.workflow_role == "research" else
+            "Recover the claim, Attempts and submission stage; an unpublished finish still belongs to this assignment."
+        )
+        prompt = (
+            f"{action} the host-bound `{spec.workflow_role}` assignment for Node `{spec.node_id}`.\n\n"
+            f"Read `{instruction_file}` and `{shared_dir}/roles/{spec.agent_id}.md` for the objective, "
+            "inputs, available operations and deliverables. Continue from the existing Node record and Worktree; "
+            "choose the experiment or optimization approach yourself.\n\n"
+            f"{recovery}\n\n"
+            "- Do not repeat completed steps, switch Node or reset budgets."
+        )
+        if feedback:
+            prompt += f"\n\nHost feedback for this assignment:\n{feedback}"
+        return prompt
     action = "Resume" if resuming else "Start"
     scope = (
         "- Keep one method hypothesis, Parent/base_commit and Spec fixed; refine that method or meaningful "
@@ -80,19 +82,7 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         "yourself.\n- Use the trusted Engineering finish command, then wait for publication and "
         "retirement; do not wait for Research Analysis before starting Engineering."
     )
-    if spec.workflow_role == "research" and staged_research:
-        scope = staged_research_scope(spec.node_id)
-    if spec.workflow_role == 'engineering' and staged_research:
-        scope += ('\n- Read the claim\'s frozen design source and preserve adaptive policy semantics. '
-                  'Commit candidates and use `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` '
-                  'for formal measurement; infrastructure retries add `--retry` with a new ID.')
-    progress = "research.json, Spec, Evaluation/Attempts" if staged_research and spec.workflow_role == "research" else "Spec, Evaluation/Attempts"
-    recovery = (
-        f"- Run `autoresearch research status --node {spec.node_id}` to read saved jobs/results. "
-        f"Reconnect with `autoresearch research wait --node {spec.node_id} --request-id <saved-id>`; "
-        "do not submit a duplicate execution or write a watcher.\n"
-        if staged_research and spec.workflow_role == 'research' else ''
-    )
+    progress = "Spec, Evaluation/Attempts"
     prompt = (
         f"{action} your host-assigned {spec.workflow_role} assignment for Node `{spec.node_id}`.\n\n"
         "## Read first\n\n"
@@ -102,7 +92,6 @@ def prompt_for_assignment(spec: AgentSpec, *, instruction_file: str, shared_dir:
         f"- On start or resume, inspect the existing {progress} and Worktree first; "
         "continue from the recorded stage and preserve existing changes and frozen submissions.\n"
         "- Do not restart completed steps, choose another Node or reset the candidate count.\n"
-        f"{recovery}\n"
         f"## Workflow limits and completion\n\n{scope}\n\n"
         "Work autonomously within these steps and limits."
     )

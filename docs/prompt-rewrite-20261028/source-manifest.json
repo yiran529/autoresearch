@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-28",
+  "timezone": "Asia/Shanghai",
+  "source_commit": "4c1f58a47a9cebdd579d09b381f4fc96cd260b6d",
+  "scope": "Chinese review drafts; runtime source files unchanged",
+  "sources": [
+    {
+      "source": "tasks/greedylore_autoresearch/roles/researcher.md",
+      "snapshot": "originals/tasks/greedylore_autoresearch/roles/researcher.md",
+      "sha256": "eb8fd3009008b1aaf1e9f5fd6f347389b25e80f1bf819497605d34673014351d"
+    },
+    {
+      "source": "tasks/greedylore_autoresearch/roles/engineer.md",
+      "snapshot": "originals/tasks/greedylore_autoresearch/roles/engineer.md",
+      "sha256": "366914f91c692640882afb1ce433fb3debda5b5b873ddde646599c2ed4e39c52"
+    },
+    {
+      "source": "tasks/greedylore_autoresearch/roles/workflow_rules.md",
+      "snapshot": "originals/tasks/greedylore_autoresearch/roles/workflow_rules.md",
+      "sha256": "57e87221e8f127eded07242baacb7bbfa953b88b46f07393127e240e2b70d2b9"
+    },
+    {
+      "source": "tasks/greedylore_autoresearch/prompts/research_analysis.md",
+      "snapshot": "originals/tasks/greedylore_autoresearch/prompts/research_analysis.md",
+      "sha256": "4e2a1ad69a8e203b99ae9e2c39bcedf3dcc20f9344d520e9c8e6ade49f310a36"
+    },
+    {
+      "source": "tasks/greedylore_autoresearch/prompts/global_memory_manager.md",
+      "snapshot": "originals/tasks/greedylore_autoresearch/prompts/global_memory_manager.md",
+      "sha256": "3b7ccaaa6c634b5f37c3c552880bca231bd7f2342884fc5fcfdc4708b8d3ab1a"
+    },
+    {
+      "source": "coral/agent/dynamic.py",
+      "snapshot": "originals/coral/agent/dynamic.py",
+      "sha256": "6d2c7e894959d4425b39b6b2196361907f2513e16ed9bb1a67f869d425473c72"
+    },
+    {
+      "source": "coral/template/coral_md.py",
+      "snapshot": "originals/coral/template/coral_md.py",
+      "sha256": "623fa4e632a1b8556d6575a44583a8753d95b4c5d1f5024466e98301c4e166dd"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -348,7 +349,7 @@ def test_dynamic_roster_rejects_invalid_research_mode(tmp_path, mode):
 
 
 @pytest.mark.parametrize('resuming', [False, True])
-def test_staged_startup_and_generated_instructions_share_development_protocol(resuming):
+def test_staged_startup_delegates_protocol_to_reachable_role_and_workflow(resuming):
     config = _config()
     config.grader.args['staged_research'] = True
     assignment = DynamicAssignmentClient(
@@ -359,21 +360,22 @@ def test_staged_startup_and_generated_instructions_share_development_protocol(re
     spec = spec_for_assignment(config, assignment)
     startup = prompt_for_assignment(spec, instruction_file='AGENTS.md', shared_dir='.codex',
                                     resuming=resuming, staged_research=True)
-    instructions = generate_coral_md(config, spec.agent_id, workflow_role='research', node_id=spec.node_id)
+    instructions = generate_coral_md(config, spec.agent_id, shared_dir='.codex',
+                                     workflow_role='research', node_id=spec.node_id)
     assert 'autoresearch research status --node N001' in startup
     assert 'autoresearch research wait --node N001 --request-id <saved-id>' in startup
     for content in (startup, instructions):
-        assert 'autoresearch research register' in content
-        assert 'origin' in content and 'design' in content
-        assert 'at most 3 candidate training trajectories' in content
-        assert 'Development experiments' in content and 'Final evaluation' in content
-        assert 'ResNet18/CIFAR100' in content and 'research.json' in content
-        assert 'fresh mandatory timing' in content
-        assert '130M' not in content and '60M' not in content
-        assert 'autoresearch research finish' in content
+        assert '.codex/roles/research-N001.md' in content
+        assert re.search(r'[\u4e00-\u9fff]', content) is None
+        assert 'at most 3 candidate training trajectories' not in content
+        assert "role's numbered steps" not in content
         assert '3 successful scored formal Research runs' not in content
         assert '10 total formal Research runs' not in content
         assert 'autoresearch node complete --mode research' not in content
+    assert '.codex/notes/toolkit/workflow_rules.md' in instructions
+    assert '.codex/notes/nodes/N001/README.md' in instructions
+    assert 'REFINE' in instructions
+    assert 'AGENTS.md' in startup
 
 
 def test_staged_role_selection_uses_only_trusted_config_and_consumes_override():
@@ -389,6 +391,31 @@ def test_staged_role_selection_uses_only_trusted_config_and_consumes_override():
     assert 'staged_role_file' not in options
 
 
+@pytest.mark.parametrize('mode,expected', [(None, 'REFINE'), ('REFINE', 'REFINE'), ('EXPLORE', 'EXPLORE')])
+def test_staged_mode_and_feedback_survive_resume(mode, expected):
+    from coral.agent.dynamic import DynamicAssignment
+
+    config = _config()
+    config.grader.args['staged_research'] = True
+    instructions = generate_coral_md(config, 'research-N001', shared_dir='.codex',
+                                     workflow_role='research', node_id='N001', research_mode=mode)
+    assert f'`{expected}`' in instructions
+    spec = spec_for_assignment(config, DynamicAssignment('research-N001', 'research', 'N001', 'active', expected))
+    startup = prompt_for_assignment(spec, instruction_file='AGENTS.md', shared_dir='.codex',
+                                    resuming=True, staged_research=True, feedback='Preserve saved request probe-1.')
+    assert 'Preserve saved request probe-1.' in startup
+    assert 'N001' in startup and 'AGENTS.md' in startup
+    assert 'autoresearch research wait --node N001 --request-id <saved-id>' in startup
+
+
+@pytest.mark.parametrize('mode', ['explore', 'UNBOUNDED'])
+def test_staged_generated_instructions_reject_invalid_modes(mode):
+    config = _config()
+    config.grader.args['staged_research'] = True
+    with pytest.raises(ValueError, match='invalid trusted research mode'):
+        generate_coral_md(config, 'research-N001', workflow_role='research', node_id='N001', research_mode=mode)
+
+
 @pytest.mark.parametrize('resuming', [False, True])
 def test_engineer_startup_and_generated_instructions_use_managed_timing(resuming):
     from coral.agent.dynamic import DynamicAssignment
@@ -398,8 +425,12 @@ def test_engineer_startup_and_generated_instructions_use_managed_timing(resuming
     spec = spec_for_assignment(config, DynamicAssignment('engineer-E0001', 'engineering', 'N001', 'active'))
     startup = prompt_for_assignment(spec, instruction_file='AGENTS.md', shared_dir='.codex',
                                     resuming=resuming, staged_research=True)
-    instructions = generate_coral_md(config, spec.agent_id, workflow_role='engineering', node_id=spec.node_id)
+    instructions = generate_coral_md(config, spec.agent_id, shared_dir='.codex',
+                                     workflow_role='engineering', node_id=spec.node_id)
     for content in (startup, instructions):
-        assert 'autoresearch engineering timing' in content
-        assert '--retry' in content and 'design source' in content
-        assert 'adaptive policy semantics' in content
+        assert '.codex/roles/engineer-E0001.md' in content
+        assert re.search(r'[\u4e00-\u9fff]', content) is None
+        assert "role's numbered steps" not in content
+    assert 'autoresearch engineering claim N001' in instructions
+    assert 'autoresearch engineering timing' in instructions
+    assert '.codex/notes/toolkit/workflow_rules.md' in instructions

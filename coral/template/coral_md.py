@@ -30,6 +30,41 @@ def generate_coral_md(
         shared_dir: Name of the shared state directory (e.g. ".claude", ".codex", ".opencode")
         island_id: Agent's island in multi-island mode (formats a provenance hint)
     """
+    if config.agents.dynamic.enabled and config.grader.args.get("staged_research") is True:
+        if workflow_role not in {"research", "engineering"} or not node_id:
+            raise ValueError("dynamic instructions require a valid workflow role and Node")
+        if workflow_role == "research":
+            mode = research_mode if research_mode is not None else "REFINE"
+            if mode not in {"REFINE", "EXPLORE"}:
+                raise ValueError("invalid trusted research mode")
+            scope = (
+                f"Your host-assigned research mode is `{mode}`, defined in the role. "
+                f"{staged_research_scope(node_id)}\n\n"
+                "- Research mode is pinned across resumes and retries; do not resample it."
+            )
+        else:
+            scope = (
+                "The host binds your target. On first setup in a clean Worktree, run "
+                f"`autoresearch engineering claim {node_id}` to confirm the Research anchor and current run_limits. "
+                "Resume existing assignments with changes intact. Research Analysis runs independently; do not wait for it.\n\n"
+                "- Do not switch targets, reset counts or cancel required Engineering.\n"
+                "- Use `autoresearch engineering timing` for formal measurement; author Engineering Analysis "
+                "when the role's stopping condition or a host limit is reached."
+            )
+        return (
+            f"# {config.task.name}: {agent_id}\n\n{config.task.description}\n\n"
+            "## Current assignment\n\n"
+            f"You own `{workflow_role}` for Node `{node_id}`. Objective, preferences, capabilities and deliverables are in "
+            f"`{shared_dir}/roles/{agent_id}.md`.\n\n{scope}\n\n"
+            "## Inputs and execution protocol\n\n"
+            f"The Node evidence index is `{shared_dir}/notes/nodes/{node_id}/README.md`; "
+            f"the Tree and summaries are under `{shared_dir}/notes/`. Read "
+            f"`{shared_dir}/notes/toolkit/workflow_rules.md` before operating, and check interfaces and contracts "
+            "in the role's `references/` as needed for each operation.\n\n"
+            "Work autonomously toward the role's objective from saved progress; publish shared records through task commands.\n\n"
+            "- Edit code in your own Worktree; scratch and resources follow host authorization.\n"
+            "- Resume the same assignment/Codex Session after interruption, preserving changes, frozen submissions and consumed budgets.\n"
+        )
     if config.agents.dynamic.enabled:
         if workflow_role == "research" and node_id:
             scope = (
@@ -50,8 +85,6 @@ def generate_coral_md(
                 "Only then does it independently run Research Analysis over all Attempts and quality-gated "
                 "Engineering; their completion makes this Node an eligible Parent."
             )
-            if config.grader.args.get("staged_research") is True:
-                scope = staged_research_scope(node_id)
             mode = research_mode if research_mode is not None else "REFINE"
             if mode not in {"REFINE", "EXPLORE"}:
                 raise ValueError("invalid trusted research mode")
@@ -72,10 +105,6 @@ def generate_coral_md(
                 "- Wait for host publication, completion and Agent retirement.\n- The Node becomes "
                 "a completed Parent only after Research Analysis and Engineering both finish."
             )
-            if config.grader.args.get('staged_research') is True:
-                scope += ("\n- Read the claim's design source and selected frozen iteration; preserve adaptive policy semantics. "
-                          "Commit candidates, then use `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` "
-                          "for formal measurement; infrastructure retries add `--retry` with a new ID.")
         else:
             raise ValueError("dynamic instructions require a valid workflow role and Node")
         return (
