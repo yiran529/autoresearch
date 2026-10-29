@@ -81,6 +81,10 @@ def resolve_resources(declarations, *, runtime_roots=(), max_entries=4096, max_d
                     if component == '..':
                         if linked_prefix:
                             raise ValueError('resource parent traversal follows a directory link')
+                        # POSIX must enter this directory before processing '..'.
+                        # Lexical normalization cannot erase a missing/file component.
+                        if not prefix.is_dir():
+                            raise ValueError('resource parent traversal requires an existing directory')
                         prefix = prefix.parent
                     else:
                         prefix /= component

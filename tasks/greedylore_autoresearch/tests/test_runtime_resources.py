@@ -153,3 +153,30 @@ def test_parent_after_directory_link_cannot_hide_out_of_scope_target(tmp_path):
     with pytest.raises(ValueError, match='parent traversal'):
         resolve_resources([{'id': 'data', 'path': str(data),
                             'target_roots': [str(target), str(outside / 'deep')]}])
+
+
+@pytest.mark.parametrize('removed_component', ['missing', 'regular-file'])
+def test_parent_traversal_cannot_erase_invalid_components(tmp_path, removed_component):
+    from autoresearch.runtime_resources import resolve_resources
+    data, target = setup_resources(tmp_path)
+    if removed_component == 'regular-file':
+        (target / removed_component).write_text('not a directory')
+    (data / 'shard').unlink()
+    (data / 'shard').symlink_to(target / removed_component / '..' / 'shard')
+    with pytest.raises((FileNotFoundError, NotADirectoryError)):
+        (data / 'shard').read_text()
+    with pytest.raises(ValueError, match='parent traversal'):
+        resolve_resources([{'id': 'data', 'path': str(data), 'target_roots': [str(target)]}])
+
+
+def test_tokenizer_relative_parent_links_keep_original_meaning(tmp_path):
+    from autoresearch.runtime_resources import resolve_resources
+    root = tmp_path / 'model-cache'
+    snapshot = root / 'snapshots/version'
+    snapshot.mkdir(parents=True)
+    (root / 'blobs').mkdir()
+    (root / 'blobs/tokenizer').write_text('tokenizer bytes')
+    (snapshot / 'tokenizer').symlink_to('../../blobs/tokenizer')
+    result = resolve_resources([{'id': 'tokenizer', 'path': str(root), 'view': '/resources/tokenizer'}])
+    assert [str(root), '/resources/tokenizer'] in result['mounts']
+    assert (snapshot / 'tokenizer').read_text() == 'tokenizer bytes'

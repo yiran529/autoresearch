@@ -566,9 +566,18 @@ def test_status_wait_and_replayed_action_project_checkpoint_without_mutating_evi
         assert job['result']['checkpoint_path'] == str(public.parent)
         assert job['result']['checkpoint']['retention'] == 'available'
         assert h.status()['jobs']['original']['result'] == job['result']
-    # Exercise the public mutation/replay boundary without launching a worker.
-    monkeypatch.setattr('autoresearch.staged_research._handle_action', lambda *_: h._read()['jobs']['original'])
-    replay = handle_action(r.store, h.agent_id, {}, {})
+    # Keep real dispatch, journal lookup, request digest and response projection.
+    # Replace only candidate Git validation and worker process launch boundaries.
+    from autoresearch.staged_research import StagedResearch
+    monkeypatch.setattr(StagedResearch, 'validate_candidate', lambda self, sha: h.validate_candidate(sha))
+    launches = []
+    monkeypatch.setattr('coral.grader.trusted_worker.start_task_worker',
+                        lambda *args, **kwargs: launches.append((args, kwargs)))
+    payload = {'node_id': h.node_id, 'action': 'train',
+               'data': {'iteration': 1, 'sha': 'b'*40}, 'request_id': 'original'}
+    replay = handle_action(r.store, h.agent_id, payload, {})
+    assert handle_action(r.store, h.agent_id, payload, {}) == replay
+    assert len(launches) == 2
     assert replay['request_id'] == 'original'
     assert replay['result'] == job['result']
     assert all(path.read_bytes() == content for path, content in saved.items())
