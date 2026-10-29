@@ -232,3 +232,47 @@ def test_validation_retries_receive_feedback_and_stop_after_three_failures(root_
     assert 'invented/results.json' in prompts[1]
     assert job['status'] == 'blocked'
     assert job['validation_failures'] == 3
+
+
+def test_analyze_rejects_dead_citation_then_accepts_corrected_submission(context):
+    ref = f'eval_logs/{context.attempts[0].commit_hash}/raw.json'
+
+    def runner(text):
+        def run(_prompt, _roots, _schema, scratch):
+            body = payload([ref])
+            body['limitations'] = [text]
+            out = scratch / 'output.json'
+            out.write_text(json.dumps(body))
+            return out
+        return run
+
+    with pytest.raises(ValueError, match='prompt.txt'):
+        analyze('N001', 'research', context=context,
+                runner=runner('Evidence: evidence/eval_logs/missing.json (missing); prompt.txt.'),
+                publisher=_publisher(context.notes_root))
+    assert not list((context.notes_root / 'nodes/N001').glob('research_analysis_v*.md'))
+    result = analyze('N001', 'research', context=context,
+                     runner=runner('output.json was not archived.'),
+                     publisher=_publisher(context.notes_root))
+    assert load_document(result.analysis_path)['limitations'] == ['output.json was not archived.']
+
+
+def test_local_citation_retry_feedback_reaches_next_analyzer(root_run):
+    from autoresearch.lifecycle import run_worker
+
+    (root_run / 'public/notes/nodes/N000/research_analysis_v1.md').unlink()
+    prompts = []
+
+    def runner(prompt, _roots, _schema, scratch):
+        prompts.append(prompt)
+        body = payload(['spec.md'])
+        body['limitations'] = ['Evidence: prompt.txt.']
+        out = scratch / 'output.json'
+        out.write_text(json.dumps(body))
+        return out
+
+    for index in range(2):
+        run_worker(str(root_run), runner=runner, code_snapshotter=_fake_code_snapshot,
+                   now=lambda: 100000 + index * 10000)
+    assert len(prompts) == 2
+    assert 'prompt.txt' in prompts[1] and 'record_ref' in prompts[1]

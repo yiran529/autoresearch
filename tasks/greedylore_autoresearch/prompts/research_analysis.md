@@ -56,7 +56,7 @@ Investigate directly when a key question is already clear. When you first need t
 
 Independently choose log analysis, mathematical derivation, or controlled experiments. For important unknowns that are inexpensive to test, prioritize diagnostics that distinguish leading explanations and could change the judgment. Before execution, state the purpose, comparison conditions, observations of interest, and their possible implications.
 
-When the host enables diagnostics, use `autoresearch diagnostic run`. Follow the sandbox instructions supplied in this session for actual script locations, code snapshots, result directories, and remaining budget. A typical invocation is:
+When the host enables diagnostics, use `autoresearch diagnostic run`. Follow the sandbox instructions supplied in this session for actual script locations, code snapshots, result directories, and remaining budget. Small outputs written to `results/` during a managed diagnostic are saved with its record. Outer-shell logs and final output files are not automatically published as diagnostic evidence; generate logs needed for lasting citation inside the diagnostic `results/` and cite the actual persistent path under the returned `record_ref`. A typical invocation is:
 
 ```bash
 autoresearch diagnostic run --gpus 4 --timeout 600 -- \

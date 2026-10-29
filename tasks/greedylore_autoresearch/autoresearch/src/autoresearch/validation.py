@@ -5,22 +5,40 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 
 class ArtifactValidationError(ValueError):
     pass
 
 
-def validate_authored_references(document: dict[str, Any]) -> None:
-    """Apply to new author submissions, never retroactively to frozen records."""
+def validate_authored_references(document: dict[str, Any], *, engineering: bool = False) -> None:
+    """Reject explicit local work-file citations in new author submissions."""
+    def local_reference(ref: str) -> bool:
+        ref = unquote(ref.strip().strip('`<>').rstrip('.,'))
+        while ref.startswith('./'):
+            ref = ref[2:]
+        return (ref in {'prompt.txt', 'output.json', 'execution.log'}
+                or bool(re.match(r'^(?:/workspace/)?(?:results|experiments)/', ref)))
+
     for field in ('summary', 'findings', 'limitations'):
         values = document.get(field, [])
         for value in ([values] if isinstance(values, str) else values if isinstance(values, list) else []):
-            if isinstance(value, str) and re.search(r'(?<![\w/])/(?:tmp|var/tmp)/\S+', value):
+            if not isinstance(value, str):
+                continue
+            temporary = re.search(r'(?<![\w/])/(?:tmp|var/tmp)/[^\s)]+', value)
+            references = re.findall(r'\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)', value)
+            for clause in re.findall(r'(?i)\b(?:evidence|sources):([^\n]*)', value):
+                references.extend(part.strip().split()[0] for part in clause.split(';') if part.strip())
+            bad = temporary.group() if temporary else next(
+                (ref for ref in references if local_reference(ref)), None)
+            if bad:
+                remedy = (' or use `autoresearch evidence archive`' if engineering else '')
                 raise ArtifactValidationError(
-                    'Analysis cites a temporary file: archive supporting files with '
-                    '`autoresearch evidence archive`, or cite managed diagnostic records. '
-                    'Describe unavailable checks as limitations without temporary file references.'
+                    f'Analysis cites a temporary or unarchived work file: {unquote(bad)}. '
+                    'Generate supporting files inside managed diagnostic results/ and cite '
+                    f'the returned persistent record_ref{remedy}; describe unavailable evidence '
+                    'without citing a local file.'
                 )
 
 

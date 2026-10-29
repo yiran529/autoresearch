@@ -47,7 +47,7 @@ def _submit(store, agent_id: str, body: dict) -> dict:
                     'analysis_ref': f"nodes/{node_id}/engineering_analysis_v{previous['version']}.md"}
         if worker['status'] != 'active':
             raise WorkflowError('Engineering summary owner is not active')
-        validate_authored_references(body)
+        validate_authored_references(body, engineering=True)
         store._terminal_engineering_unlocked(agent_id, node_id)
         attempts = tuple(
             a for a in read_attempts(store.coral_dir, island_id=store.island_id, include_archived=True)

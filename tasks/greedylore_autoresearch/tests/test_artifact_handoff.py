@@ -197,3 +197,44 @@ def test_lineage_uses_actual_parent_and_does_not_guess_legacy_mode(engineering_r
     store._save_unlocked(state)
     legacy = next(line for line in store.tree_path.read_text().splitlines() if line.startswith('| [N001]'))
     assert '| Unknown |' in legacy
+
+
+@pytest.mark.parametrize('reference', [
+    'Evidence: evidence/eval_logs/missing.json (missing); prompt.txt.',
+    'See [prompt](prompt.txt).', 'See [output](output.json).',
+    'Sources: results/output.json', 'Evidence: experiments/probe.py',
+    'See [result](/workspace/results/output.json).',
+    'Sources: /workspace/experiments/probe.py',
+    'See [prompt](./prompt.txt).', 'See [result](./results/output.json).',
+    'See [prompt](prompt%2Etxt).',
+])
+def test_new_engineering_rejects_local_citations_then_accepts_correction(engineering_ready, reference):
+    store, node, body = _engineer_with_attempts(engineering_ready)
+    body['limitations'] = [reference]
+    with pytest.raises(ValueError, match='prompt.txt|output.json|probe.py'):
+        store.submit_engineering_analysis('engineer-E0001', body)
+    assert not list(node.glob('engineering_analysis_v*.md'))
+    body['limitations'] = ['output.json was not archived.']
+    result = store.submit_engineering_analysis('engineer-E0001', body)
+    assert store.submit_engineering_analysis('engineer-E0001', body) == result
+
+
+def test_explicit_citation_boundaries():
+    from autoresearch.validation import validate_authored_references
+
+    validate_authored_references({'summary': 'output.json was not archived', 'findings': [
+        'Evidence: diagnostics/N001-research-v1/records/probe/results/output.json',
+        'Sources: code/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/model.py',
+        'Evidence: evidence/eval_logs/missing.json (missing)',
+        'See [result](records/probe/results/output.json).',
+    ], 'limitations': ['No experiment log was retained.']})
+
+
+def test_historical_accepted_engineering_body_replays_without_new_validation(engineering_ready):
+    store, _, body = _engineer_with_attempts(engineering_ready)
+    result = store.submit_engineering_analysis('engineer-E0001', body)
+    body['limitations'] = ['Evidence: prompt.txt.']
+    state = store._load_unlocked()
+    state['engineering_workers']['engineer-E0001']['analysis_submission']['body'] = body
+    store._save_unlocked(state)
+    assert store.submit_engineering_analysis('engineer-E0001', body) == result

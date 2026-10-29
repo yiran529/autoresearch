@@ -21,12 +21,12 @@ Checkpoint responses expose `checkpoint.manifest_path` and public-relative `chec
 ## Persistent evidence
 
 - Self-check archives contain small regular files with unique basenames: at most 32 KiB per bundle and 64 bundles per assignment. Preserve larger execution evidence through managed diagnostics.
-- Save the public-relative paths returned by archiving. Logs should state actual commands, inputs and scope. Temporary or retired Worktrees are not evidence anchors.
+- Cite returned public-relative paths for managed diagnostic records or evidence archives. Files in outer workspaces are not automatically published; generate needed logs inside managed diagnostic `results/` or use an available evidence archive. Save the public-relative paths returned by archiving. Logs should state actual commands, inputs and scope. Temporary or retired Worktrees are not evidence anchors.
 - Attachments are uploader-provided evidence. The host records the uploader, declared code SHA and content hashes; this verifies content identity and SHA existence, not that those files were executed.
 
 ## Historical records and evaluation
 
-Use fixed SHAs and host records to recover evidence identity. Current HEAD and historical `source_worktree` cannot replace them. Analysis Markdown is for reading; matching JSON preserves the complete frozen record. Legacy `.md` files may contain JSON directly. When Evaluation needs rebuilding, use `autoresearch refresh-evaluation --node Nxxx`.
+Use fixed SHAs and host records to recover evidence identity. Current HEAD and historical `source_worktree` cannot replace them. Analysis Markdown is for reading; matching JSON preserves the complete frozen record. Legacy `.md` files may contain JSON directly. A file `sha256` hashes its raw bytes; `document_sha256` hashes the canonical JSON document, so these values need not match. When Evaluation needs rebuilding, use `autoresearch refresh-evaluation --node Nxxx`.
 
 - Fixed workloads, quality gates and timing validity follow `references/evaluation_tasks.md` and saved contracts.
 - New contracts require matching dense/Root evidence. Historical seed results cannot directly serve as references for a new contract.
