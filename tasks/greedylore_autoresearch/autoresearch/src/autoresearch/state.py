@@ -1077,6 +1077,10 @@ def handle_workflow(
         from .planning import planning_operation
 
         return planning_operation(store, operation, owner, payload, context)
+    if operation == 'preflight_assignment':
+        from .preflight import preflight_assignment
+
+        return preflight_assignment(store, payload, context)
     if operation == 'research_action':
         from .staged_research import handle_action
         return handle_action(store, owner, payload, context)

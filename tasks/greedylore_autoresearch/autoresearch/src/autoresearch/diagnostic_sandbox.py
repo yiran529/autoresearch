@@ -129,6 +129,15 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
             if not re.fullmatch(r'/resources/[A-Za-z0-9_-]{1,64}', target):
                 raise ValueError('invalid resource view')
             command.extend(['--ro-bind', source, target])
+    # Explicit trusted name-service mounts (including /etc itself) take priority.
+    destinations = [Path(value).absolute() for value in readonly_paths]
+    destinations.extend(Path(target) for _, target in resource_mounts)
+    for target, asset in (('/etc/hosts', 'localhost_hosts'),
+                          ('/etc/nsswitch.conf', 'localhost_nsswitch')):
+        if not any(Path(target).is_relative_to(path) for path in destinations):
+            command.extend(['--ro-bind', str(Path(__file__).with_name(asset)), target])
+    command.extend(['--ro-bind', str(Path(__file__).with_name('ipv4_launch.py')),
+                    '/run/coral-ipv4-launch.py'])
     # Both the model's nested sandbox and diagnostic commands use this view.
     # Keep original paths available for existing scripts; both views share the
     # same frozen writable inputs, never the live Analyzer inputs during execution.

@@ -16,5 +16,8 @@ autoresearch = "autoresearch.cli:main"
 packages = ["src/autoresearch"]
 
 [tool.hatch.build]
+# The explicit package must survive ancestor autoresearch/ Git ignore rules.
+ignore-vcs = true
+exclude = ["**/__pycache__/**", "**/*.pyc"]
 # Explicit editable path: ancestor autoresearch/ ignore rules can hide auto-discovery.
 dev-mode-dirs = ["src"]

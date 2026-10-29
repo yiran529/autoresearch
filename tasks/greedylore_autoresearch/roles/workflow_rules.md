@@ -30,3 +30,7 @@ Use fixed SHAs and host records to recover evidence identity. Current HEAD and h
 
 - Fixed workloads, quality gates and timing validity follow `references/evaluation_tasks.md` and saved contracts.
 - New contracts require matching dense/Root evidence. Historical seed results cannot directly serve as references for a new contract.
+
+## Explicit environment preflight
+
+Researcher and Engineer owners may run `autoresearch preflight --sha "$(git rev-parse HEAD)"` from their Worktree. The host reports immutable metadata, selected-protocol assets, declared resources, static entry sources and CPU-only namespace checks without an Attempt, lease, GPU reservation or budget mutation. Success is limited to the reported checks and does not certify method semantics or scientific quality. See the Researcher/Engineer command references for phase errors and the managed IPv4 DDP launcher.

@@ -70,6 +70,11 @@ manifest、稳定引用和访问/保留状态；需要 tensor 的受管诊断只
 
 隔离诊断提供最小 localhost 解析环境；宿主有意挂载的解析配置不被覆盖。
 增加可复用 IPv4 DDP 启动入口，支持自动端口；普通脚本仍可在该环境启动 torchrun。
+入口为 `python /run/coral-ipv4-launch.py --nproc-per-node 2 --port 0 experiments/probe.py`。
+已安装 Torch 2.4.0+cu121 的 c10d 动态 rendezvous 会另用 getfqdn 生成 worker MASTER_ADDR，
+因此本实现采用单节点 static rendezvous、显式 127.0.0.1。自动端口通过 AF_INET bind(0)
+选取后释放，torchrun 绑定前存在短竞态；可用 `--port` 指定宿主管理端口，失败时按既有诊断
+请求规则重试。exec 保留 torchrun 退出状态和直接信号传递；正式训练/评分命令不变。
 预检在相同挂载与网络命名空间验证文件读取、localhost 和本地连接，并且不占 GPU。
 
 预检复用已有 submission 验证器，提供显式检查入口，并在需要启动工作的边界执行必要
@@ -111,4 +116,9 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 阶段 2：宿主 `diagnostic_resources` 声明由同一有界解析器生成挂载与 `public/notes/toolkit/runtime_resources.json`（会话准备时发布，状态读取不写入）。Researcher、Engineer、Analyzer 和实际诊断执行共用其结构，保留原始路径，允许额外 `/resources/<id>` 视图。每次环境准备解析一次；所有实际挂载在 `/dev/shm` tmpfs 之后。每份声明最多 64 个目标根，总目录扫描最多 4096 个条目、深度 64、每条链接最多 40 跳，拒绝缺失、循环、越界、非普通文件和过宽根。显式目标根授权整个只读目录；仅选中被链接引用的目标根，且扫描其内容。稳定视图拒绝逃出源根的相对链接，应改用共同父根或省略 view。
 - 阶段 2 实际模板：C4 源 `/home/wyr/greedy_lore/c4/c4_en/en`，目标仅 `/dev/shm/wyr_tmp/c4-half`，视图 `/resources/c4`；tokenizer 声明 model 专用 `models--t5-base` 目录（包含 snapshots/blobs，使相对链接保真），视图 `/resources/tokenizer`；CIFAR100 源 `/home/wyr/ARC-TopK-release/data`，视图 `/resources/cifar100`。当前宿主 C4 链接目标缺失：不修复、不下载、不更改运行中实验，部署前需宿主恢复已授权数据。
 - 阶段 2 checkpoint：公开响应按私有账本映射公开 manifest，给出稳定 ref、manifest hash、access 和 retention；兼容 checkpoint_path 仅表示元数据目录；diagnostic_path 复用原有稳定 tensor view 地址供获准的诊断脚本使用，清理后为 null。普通角色通过现有 SRT 本 run public 只读白名单读取；不扩展核心 home 权限。Researcher 仅挂载当前 iteration 的宿主选中 checkpoint，Analyzer 仅挂载固定 Attempt 的选中 checkpoint；Engineer 保留无 tensor 选择的现有边界。available 不等于任意诊断均可访问。原 journal/cache/evidence 的宿主路径与哈希不改写；读取不新增证据文件。pruned/cleaned/unavailable 明确区分，选择已裁剪目标不再抛文件不存在错误。
-- 阶段 2 验证：主工作区定向回归 153 passed；隔离 `/tmp` 源码副本（仅该副本补齐 HEAD 的两个 legacy 测试资产）最终资源、路径、Engineer、staged、handover 联合回归 227 passed，包含真实 SRT、嵌套 bwrap 与 UDS；无 GPU、训练或模型调用。工作区原有两个删除保持未暂存。阶段 3–4 与最终验证待实施。
+- 阶段 2 验证：主工作区定向回归 153 passed；隔离 `/tmp` 源码副本（仅该副本补齐 HEAD 的两个 legacy 测试资产）最终资源、路径、Engineer、staged、handover 联合回归 227 passed，包含真实 SRT、嵌套 bwrap 与 UDS；无 GPU、训练或模型调用。工作区原有两个删除保持未暂存。阶段 4 与最终验证待实施。
+
+- 阶段 3：增加 `autoresearch preflight --sha <full-sha>`，经已有 UDS 进程身份认证，仅接受 SHA；复用 immutable submission validator 的宿主 worktree/contract/parent/island 上下文。顺序报告 metadata、ownership、protocol_assets、resources、entry、namespace；输出候选 SHA、契约 hash、实际固定入口 Git blob/source/hash。静态 AST 不导入候选代码、不加载依赖、不认证方法等价。Researcher 与 Engineer 按各自 active assignment 检查，不调用 formal budget authorizer，不创建 Attempt、lease、GPU reservation 或 journal 记录。Engineer 仍验证冻结 Research anchor。
+- 阶段 3 环境：同一 `build_sandbox(resources=...)` 供 CPU 预检与诊断使用；host-owned 最小 hosts/nsswitch 不覆盖显式挂载。命名空间实际读取声明资源中的普通文件首字节（4096 个 inode 有界），验证 localhost 与 IPv4 loopback，环境不继承凭据或 PYTHONPATH，且无 GPU 节点。暂存探针目录在 `/tmp` 清理；原有 staged CPU tensor IPC 检查独立保留。元数据/缺失协议资产不会自动改写或切换协议。
+- 阶段 3 打包：离线 wheel 检查发现 ancestor `autoresearch/` ignore 会使 wheel 仅含 metadata；对已限定 `src/autoresearch` 包的 hatch 构建关闭 VCS ignore、排除 pycache，确保 host-owned localhost 文件和 launcher 随包交付。离线 wheel 内容逐字节验证及其实际 bwrap 探针通过。
+- 阶段 3 验证：最终主工作区 namespace/environment/submission/CLI/trusted-write 定向回归 178 passed；隔离 `/tmp` 历史资产兼容副本上的资源、Engineer、handoff、contract 与真实 SRT 检查 66 passed。含真实 authenticated UDS、只读/凭据隔离、CPU 两 rank Gloo all-reduce、worker 失败与 SIGTERM；无 GPU、训练、模型或包网络下载。两份 legacy 删除仍保持未暂存。

@@ -38,7 +38,7 @@ from coral.types import BUDGET_CLASS_REAL, BUDGET_CLASS_TUNE, Attempt
 
 logger = logging.getLogger(__name__)
 WORKFLOW_OPERATIONS = frozenset({
-    "reconcile_workflow", "initialize_research", "claim_engineering",
+    "preflight_assignment", "reconcile_workflow", "initialize_research", "claim_engineering",
     "complete_assignment", "cancel_assignment", "finish_assignment", "archive_evidence",
     "acquire_research_planning", "renew_research_planning", "release_research_planning", "research_action",
 })
@@ -47,6 +47,7 @@ OPERATIONS = frozenset({
     "engineering_timing",
 }) | WORKFLOW_OPERATIONS
 _WORKFLOW_FIELDS = {
+    "preflight_assignment": frozenset({"sha"}),
     "research_action": frozenset({"node_id", "action", "data", "request_id"}),
     "reconcile_workflow": frozenset(),
     "initialize_research": frozenset({"node_id", "parent_node", "hypothesis", "selection_rationale", "delta", "risk", "falsification_criteria"}),

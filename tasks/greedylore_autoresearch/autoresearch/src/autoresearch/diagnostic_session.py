@@ -179,6 +179,8 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                 'The authoritative diagnostic command argv is resolved relative to the workspace root, '
                 'not this initial working directory.\n- Do not change code/ or evidence/.\n\n'
                 '- Diagnostic commands use the same /workspace paths.\n'
+                '- For single-node IPv4 DDP, use python /run/coral-ipv4-launch.py '
+                '--nproc-per-node 2 --port 0 experiments/probe.py; port 0 selects a free local port.\n'
                 '- Read returned logs/results under /workspace/records/<request-id>/; records are read-only.\n'
                 '- Cite record_ref or records/<request-id>/... in the final document.\n\n'
                 + describe_resources(resources) + '\n\nFixed read roots:\n' + '\n'.join(str(path) for path in read_roots)

@@ -160,6 +160,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autoresearch")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    preflight = commands.add_parser('preflight', help='CPU-only committed metadata, resources and diagnostic namespace checks')
+    preflight.add_argument('--sha', required=True, help='full committed candidate SHA; static entry inspection only')
+
     research = commands.add_parser('research', help='host-controlled staged research (opt-in)')
     research.add_argument('action', choices=('register', 'design', 'decision', 'train', 'timing', 'diagnostic', 'finish', 'status', 'recover', 'wait'))
     research.add_argument('--node', required=True)
@@ -251,6 +254,12 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == 'preflight':
+        result = request_trusted(_coral_dir(), 'preflight_assignment', {'sha': args.sha})
+        print(json.dumps(result, indent=2))
+        if result.get('status') != 'passed':
+            raise SystemExit(1)
+        return
     if args.command == 'research':
         if args.summary and (args.action != 'status' or args.file):
             parser.error('--summary is only valid for status without --file')
