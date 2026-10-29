@@ -206,7 +206,10 @@ def test_lineage_uses_actual_parent_and_does_not_guess_legacy_mode(engineering_r
     'See [result](/workspace/results/output.json).',
     'Sources: /workspace/experiments/probe.py',
     'See [prompt](./prompt.txt).', 'See [result](./results/output.json).',
-    'See [prompt](prompt%2Etxt).',
+    'See [prompt](prompt%2Etxt).', 'Evidence: summary, prompt.txt',
+    'Sources: overview; summary, results/output.json',
+    'See [prompt](prompt.txt#L1).', 'See [prompt](prompt.txt?raw=1).',
+    'See [prompt](/workspace/prompt.txt).',
 ])
 def test_new_engineering_rejects_local_citations_then_accepts_correction(engineering_ready, reference):
     store, node, body = _engineer_with_attempts(engineering_ready)
@@ -238,3 +241,13 @@ def test_historical_accepted_engineering_body_replays_without_new_validation(eng
     state['engineering_workers']['engineer-E0001']['analysis_submission']['body'] = body
     store._save_unlocked(state)
     assert store.submit_engineering_analysis('engineer-E0001', body) == result
+
+
+@pytest.mark.parametrize('text', [
+    'Evidence: prompt.txt was not archived.',
+    'Sources: results/output.json is missing.',
+])
+def test_engineering_accepts_explicit_missing_evidence_descriptions(engineering_ready, text):
+    store, _, body = _engineer_with_attempts(engineering_ready)
+    body['limitations'] = [text]
+    assert store.submit_engineering_analysis('engineer-E0001', body)['status'] == 'finalizing'

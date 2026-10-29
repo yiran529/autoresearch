@@ -15,11 +15,12 @@ class ArtifactValidationError(ValueError):
 def validate_authored_references(document: dict[str, Any], *, engineering: bool = False) -> None:
     """Reject explicit local work-file citations in new author submissions."""
     def local_reference(ref: str) -> bool:
-        ref = unquote(ref.strip().strip('`<>').rstrip('.,'))
+        ref = unquote(ref.strip().strip('`<>').rstrip('.,')).split('#', 1)[0].split('?', 1)[0]
         while ref.startswith('./'):
             ref = ref[2:]
+        ref = ref.removeprefix('/workspace/')
         return (ref in {'prompt.txt', 'output.json', 'execution.log'}
-                or bool(re.match(r'^(?:/workspace/)?(?:results|experiments)/', ref)))
+                or bool(re.match(r'^(?:results|experiments)/', ref)))
 
     for field in ('summary', 'findings', 'limitations'):
         values = document.get(field, [])
@@ -29,7 +30,15 @@ def validate_authored_references(document: dict[str, Any], *, engineering: bool 
             temporary = re.search(r'(?<![\w/])/(?:tmp|var/tmp)/[^\s)]+', value)
             references = re.findall(r'\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)', value)
             for clause in re.findall(r'(?i)\b(?:evidence|sources):([^\n]*)', value):
-                references.extend(part.strip().split()[0] for part in clause.split(';') if part.strip())
+                for part in re.split(r'[,;]|\band\b', clause, flags=re.IGNORECASE):
+                    words = part.strip().split()
+                    if not words:
+                        continue
+                    # A direct availability statement describes an absence, not a citation.
+                    if re.match(r'(?i)^(?:is|was|were) (?:not archived|missing|unavailable)\b',
+                                ' '.join(words[1:])):
+                        continue
+                    references.append(words[0])
             bad = temporary.group() if temporary else next(
                 (ref for ref in references if local_reference(ref)), None)
             if bad:

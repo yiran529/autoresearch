@@ -26,7 +26,7 @@ Checkpoint responses expose `checkpoint.manifest_path` and public-relative `chec
 
 ## Historical records and evaluation
 
-Use fixed SHAs and host records to recover evidence identity. Current HEAD and historical `source_worktree` cannot replace them. Analysis Markdown is for reading; matching JSON preserves the complete frozen record. Legacy `.md` files may contain JSON directly. A file `sha256` hashes its raw bytes; `document_sha256` hashes the canonical JSON document, so these values need not match. When Evaluation needs rebuilding, use `autoresearch refresh-evaluation --node Nxxx`.
+Use fixed SHAs and host records to recover evidence identity. Current HEAD and historical `source_worktree` cannot replace them. Analysis Markdown is for reading; matching JSON preserves the complete frozen record. Legacy `.md` files may contain JSON directly. A file `sha256` hashes its raw bytes; `document_sha256` hashes the UTF-8 canonical JSON document serialized with `sort_keys=True`, `separators=(',', ':')`, and `ensure_ascii=False`, so these values need not match. When Evaluation needs rebuilding, use `autoresearch refresh-evaluation --node Nxxx`.
 
 - Fixed workloads, quality gates and timing validity follow `references/evaluation_tasks.md` and saved contracts.
 - New contracts require matching dense/Root evidence. Historical seed results cannot directly serve as references for a new contract.

@@ -143,7 +143,7 @@ def test_own_diagnostic_is_sealed_without_changing_frozen_research(context, scen
             cancelled()
             folder = item.records / request['request_id'] / 'results'
             folder.mkdir()
-            (folder / 'probe.json').write_text('{"gap":0.2}')
+            (folder / 'output.json').write_text('{"gap":0.2}')
             if scenario == 'large_uncited_log':
                 (folder.parent / 'stdout.log').write_bytes(b'x' * (1024 * 1024 + 1))
             if scenario == 'timed_out':
@@ -170,13 +170,15 @@ def test_own_diagnostic_is_sealed_without_changing_frozen_research(context, scen
             if scenario == 'interrupted_placeholder':
                 _atomic_json(task.records / 'interrupted/record.json', record)
         out = scratch / 'results/output.json'
-        out.write_text(json.dumps(payload(['records/probe/results/probe.json', context_ref])))
+        body = payload(['records/probe/results/output.json', context_ref])
+        body['findings'] = ['Evidence: diagnostics/N001-research-v1/records/probe/results/output.json']
+        out.write_text(json.dumps(body))
         return out
 
     result = analyze('N001', 'research', context=context, diagnostic_runner=diagnostic_runner,
                      publisher=_publisher(context.notes_root))
     doc = load_document(result.analysis_path)
-    ref = 'diagnostics/N001-research-v1/records/probe/results/probe.json'
+    ref = 'diagnostics/N001-research-v1/records/probe/results/output.json'
     assert doc['handover']['evidence_refs'] == [ref, context_ref]
     assert any(r['path'] == ref for r in doc['evidence_manifest']['evidence_records'])
     if scenario == 'large_uncited_log':
@@ -186,7 +188,7 @@ def test_own_diagnostic_is_sealed_without_changing_frozen_research(context, scen
     current = resolve_evidence('N001', 'research', context=context)
     assert current.manifest_hash == frozen.manifest_hash
     validate_analysis(doc, _artifact_evidence(doc, current, context))
-    (captured['task'].records / 'probe/results/probe.json').write_text('{"gap":99}')
+    (captured['task'].records / 'probe/results/output.json').write_text('{"gap":99}')
     with pytest.raises(ValueError, match='evidence changed'):
         _artifact_evidence(doc, current, context)
 
@@ -276,3 +278,26 @@ def test_local_citation_retry_feedback_reaches_next_analyzer(root_run):
                    now=lambda: 100000 + index * 10000)
     assert len(prompts) == 2
     assert 'prompt.txt' in prompts[1] and 'record_ref' in prompts[1]
+
+
+def test_analyze_accepts_missing_evidence_description_and_rejects_list_citation(context):
+    ref = f'eval_logs/{context.attempts[0].commit_hash}/raw.json'
+
+    def runner(text):
+        def run(_prompt, _roots, _schema, scratch):
+            body = payload([ref])
+            body['limitations'] = [text]
+            out = scratch / 'output.json'
+            out.write_text(json.dumps(body))
+            return out
+        return run
+
+    with pytest.raises(ValueError, match='prompt.txt'):
+        analyze('N001', 'research', context=context,
+                runner=runner('Evidence: summary, prompt.txt'),
+                publisher=_publisher(context.notes_root))
+    assert not list((context.notes_root / 'nodes/N001').glob('research_analysis_v*.md'))
+    result = analyze('N001', 'research', context=context,
+                     runner=runner('Evidence: prompt.txt was not archived.'),
+                     publisher=_publisher(context.notes_root))
+    assert load_document(result.analysis_path)['limitations'] == ['Evidence: prompt.txt was not archived.']
