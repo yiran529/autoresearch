@@ -1,6 +1,6 @@
 # GreedyLoRE 运行时可靠性：接口与资源访问设计
 
-状态：2026-10-29 用户批准实施，分阶段验证与提交；尚未部署到正在运行的实验。
+状态：2026-10-29 各阶段已实施并提交，独立全范围代码审查已完成，唯一文档问题已修正；尚未部署到正在运行的实验。
 
 ## 1. 问题、范围与已有设计
 
@@ -112,11 +112,11 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 已知工作区状态：两份 legacy 角色文件已删除；涉及旧协议初始化的部分测试会因此
   失败，须单独归因，不作为本轮新问题隐瞒。
 - 文档拆分：Engineer 命令、诊断、计时和 Analysis 提交接口已迁入独立参考；性能方法保留在 runtime 参考。定向文档与 handoff 检查 11 passed；toolkit 状态测试因工作区预先删除的 legacy 规则文件失败。隔离完整工作流成功模拟 1 passed、5 deselected（48.88s）；捕获的实际 toolkit 内容确认独立 Engineer 命令参考已交付。
-- 阶段 1：请求限额 64 KiB、响应限额 4 MiB；状态增加只读阶段进度与显式有界摘要，正式资格来自发布的 Attempt。定向回归见任务报告。
+- 阶段 1：请求限额 64 KiB、响应限额 4 MiB；状态增加只读阶段进度与显式有界摘要，正式资格来自发布的 Attempt。定向回归见 [验证记录](greedylore-runtime-reliability-validation-20261029.md)。
 - 阶段 2：宿主 `diagnostic_resources` 声明由同一有界解析器生成挂载与 `public/notes/toolkit/runtime_resources.json`（会话准备时发布，状态读取不写入）。Researcher、Engineer、Analyzer 和实际诊断执行共用其结构，保留原始路径，允许额外 `/resources/<id>` 视图。每次环境准备解析一次；所有实际挂载在 `/dev/shm` tmpfs 之后。每份声明最多 64 个目标根，总目录扫描最多 4096 个条目、深度 64、每条链接最多 40 跳，拒绝缺失、循环、越界、非普通文件和过宽根。显式目标根授权整个只读目录；仅选中被链接引用的目标根，且扫描其内容。稳定视图拒绝逃出源根的相对链接，应改用共同父根或省略 view。
 - 阶段 2 实际模板：C4 源 `/home/wyr/greedy_lore/c4/c4_en/en`，目标仅 `/dev/shm/wyr_tmp/c4-half`，视图 `/resources/c4`；tokenizer 声明 model 专用 `models--t5-base` 目录（包含 snapshots/blobs，使相对链接保真），视图 `/resources/tokenizer`；CIFAR100 源 `/home/wyr/ARC-TopK-release/data`，视图 `/resources/cifar100`。当前宿主 C4 链接目标缺失：不修复、不下载、不更改运行中实验，部署前需宿主恢复已授权数据。
 - 阶段 2 checkpoint：公开响应按私有账本映射公开 manifest，给出稳定 ref、manifest hash、access 和 retention；兼容 checkpoint_path 仅表示元数据目录；diagnostic_path 复用原有稳定 tensor view 地址供获准的诊断脚本使用，清理后为 null。普通角色通过现有 SRT 本 run public 只读白名单读取；不扩展核心 home 权限。Researcher 仅挂载当前 iteration 的宿主选中 checkpoint，Analyzer 仅挂载固定 Attempt 的选中 checkpoint；Engineer 保留无 tensor 选择的现有边界。available 不等于任意诊断均可访问。原 journal/cache/evidence 的宿主路径与哈希不改写；读取不新增证据文件。pruned/cleaned/unavailable 明确区分，选择已裁剪目标不再抛文件不存在错误。
-- 阶段 2 验证：主工作区定向回归 153 passed；隔离 `/tmp` 源码副本（仅该副本补齐 HEAD 的两个 legacy 测试资产）最终资源、路径、Engineer、staged、handover 联合回归 227 passed，包含真实 SRT、嵌套 bwrap 与 UDS；无 GPU、训练或模型调用。工作区原有两个删除保持未暂存。阶段 4 与最终验证待实施。
+- 阶段 2 验证：主工作区定向回归 153 passed；隔离 `/tmp` 源码副本（仅该副本补齐 HEAD 的两个 legacy 测试资产）最终资源、路径、Engineer、staged、handover 联合回归 227 passed，包含真实 SRT、嵌套 bwrap 与 UDS；无 GPU、训练或模型调用。工作区原有两个删除保持未暂存。最终整体验证见 [验证记录](greedylore-runtime-reliability-validation-20261029.md)。
 
 - 阶段 3：增加 `autoresearch preflight --sha <full-sha>`，经已有 UDS 进程身份认证，仅接受 SHA；复用 immutable submission validator 的宿主 worktree/contract/parent/island 上下文。顺序报告 metadata、ownership、protocol_assets、resources、entry、namespace；输出候选 SHA、契约 hash、实际固定入口 Git blob/source/hash。静态 AST 不导入候选代码、不加载依赖、不认证方法等价。Researcher 与 Engineer 按各自 active assignment 检查，不调用 formal budget authorizer，不创建 Attempt、lease、GPU reservation 或 journal 记录。Engineer 仍验证冻结 Research anchor。
 - 阶段 3 环境：同一 `build_sandbox(resources=...)` 供 CPU 预检与诊断使用；host-owned 最小 hosts/nsswitch 不覆盖显式挂载。命名空间实际读取声明资源中的普通文件首字节（4096 个 inode 有界），验证 localhost 与 IPv4 loopback，环境不继承凭据或 PYTHONPATH，且无 GPU 节点。暂存探针目录在 `/tmp` 清理；原有 staged CPU tensor IPC 检查独立保留。元数据/缺失协议资产不会自动改写或切换协议。
@@ -125,5 +125,5 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 
 - 阶段 4：`coral eval` 在持久受理后、等待评分前向 stderr 输出完整 SHA；Engineering timing 同时输出 request ID。`--no-wait` 仍完成受理；拒绝不输出受理事件。Engineering `finish --analysis-file <file> --wait` 以同一内容重放已受理提交直到发布完成；默认仍返回 finalizing，断线时使用同一文件重试。
 - 资源目录发布遇到缺失或无效声明时写入 `status: unavailable` 和错误，允许已有冻结 Analysis 发布、清理和 roster 恢复；预检及实际诊断独立解析资源，仍在 GPU 前 fail closed。
-- 独立操作演练记录在本地 `.superpowers/sdd/2026-10-29-greedylore-runtime-reliability/simulation-task1.md`、`simulation-task2.md`、`simulation-task3.md`：分别覆盖状态/通信、资源与 checkpoint 视图、真实 namespace 与 CPU Gloo 预检；采用临时合成数据，不代表在线实验或 GPU 验证。
+- 四阶段独立操作演练及其边界见 [验证记录](greedylore-runtime-reliability-validation-20261029.md)；采用临时合成数据，不代表在线实验或 GPU 验证。
 - 最终离线回归：六种 staged 情景全部通过（真实 CLI、认证、控制器与发布，训练、GPU 和模型边界合成）；真实 SRT 双场景通过，当前源码加历史角色资产的独立兼容副本 115 项通过。主工作区两份原有 legacy 删除仍未恢复，在线服务和数据未部署或修改。
