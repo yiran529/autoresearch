@@ -416,3 +416,51 @@ def test_staged_registration_checks_clean_tree_and_checks_out_fixed_parent(tmp_p
     with pytest.raises(SystemExit, match='uncommitted'):
         cli.main(['research', 'register', '--node', 'N001', '--file', str(data)])
     assert calls == []
+
+
+def test_status_summary_is_readonly(tmp_path):
+    h, r, _ = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b' * 40}, 'train', {})
+    before = h.path.read_bytes()
+    record_before = r.private.read_bytes()
+    value = h.status(summary=True)
+    assert value['jobs']['train']['status'] == 'queued'
+    assert value['jobs']['train']['sha'] == 'b' * 40
+    assert value['progress']['formal_eligibility'] == 'pending'
+    assert h.path.read_bytes() == before
+    assert r.private.read_bytes() == record_before
+
+
+def test_progress_tracks_stages_and_published_attempt(tmp_path):
+    from coral.hub.attempts import write_attempt
+    from coral.types import Attempt
+
+    h, r, _ = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b' * 40}, 'train', {})
+    h.drain()
+    doc = r.read()
+    doc['selected_iteration'] = 1
+    doc['evaluation_stages'] = {'final_quality': ['small', 'large']}
+    private = __import__('json').loads(r.private.read_text())
+    private['document'] = doc
+    r.private.write_text(__import__('json').dumps(private))
+    state = h._read()
+    state['final_evaluation'] = {'status': 'running', 'components': {
+        'timing': [{'status': 'completed', 'result': {'status': 'completed', 'samples': ['x' * 100000]}}],
+        'small': [{'status': 'failed', 'result': {'status': 'failed'}}]}}
+    h._save(state)
+    value = h.status(summary=True)
+    assert value['progress']['development'][0]['quality_pass'] is True
+    assert value['progress']['final']['components']['large']['status'] == 'pending'
+    assert value['progress']['final']['components']['small']['status'] == 'failed'
+    assert value['progress']['formal_eligibility'] == 'pending'
+    assert len(__import__('json').dumps(value)) < 10000
+    state['transfer_terminal'] = True
+    h._save(state)
+    assert h.status()['progress']['publication'] == 'pending'
+    state['publication_complete'] = True
+    h._save(state)
+    assert h.status()['progress']['formal_eligibility'] == 'unknown'
+    write_attempt(h.store.coral_dir, Attempt('b' * 40, h.agent_id, 'Research', 1.0,
+        'regressed', None, '2026-01-01', metadata={'staged_research': True, 'performance_eligible': False}))
+    assert h.status()['progress']['formal_eligibility'] == 'ineligible'

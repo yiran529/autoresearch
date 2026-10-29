@@ -37,13 +37,17 @@ class StagedResearch:
             'version': 1, 'node_id': self.node_id, 'agent_id': self.agent_id,
             'jobs': {}, 'transfer': None, 'transfer_terminal': False}
 
-    def status(self):
+    def status(self, summary=False):
         self.record._owner()
         from .diagnostics import DIAGNOSTIC_SUCCESS_LIMIT, DIAGNOSTIC_TOTAL_LIMIT
 
         state = copy.deepcopy(self._read())
         state['diagnostic_limits'] = {'successful': DIAGNOSTIC_SUCCESS_LIMIT, 'total': DIAGNOSTIC_TOTAL_LIMIT}
-        return state
+        from .staged_status import progress
+        from .staged_status import summary as summarize
+        document = self.record.read() if self.record.private.exists() else {}
+        state['progress'] = progress(self, state, document)
+        return summarize(state) if summary else state
 
     def wait(self, request_id):
         """One authenticated read; waiting and retry delays stay in the CLI."""
@@ -429,7 +433,9 @@ def handle_action(store, owner, payload, context):
             store._save_unlocked(state)
         return result
     if action == 'status':
-        return host.status()
+        if data not in ({}, {'summary': True}):
+            raise ValueError('status accepts only summary=true')
+        return host.status(summary=data.get('summary', False))
     if action == 'wait':
         if data:
             raise ValueError('wait accepts no action data')

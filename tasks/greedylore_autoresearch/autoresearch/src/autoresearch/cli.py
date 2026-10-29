@@ -165,6 +165,7 @@ def _parser() -> argparse.ArgumentParser:
     research.add_argument('--node', required=True)
     research.add_argument('--file', type=Path, help='JSON action data; status/recover/wait need no file')
     research.add_argument('--request-id', default=None, help='reuse after timeout for idempotency')
+    research.add_argument('--summary', action='store_true', help='show a bounded status summary')
     research.add_argument('--no-wait', action='store_true', help='submit only; defaults to waiting for execution results')
 
     evidence = commands.add_parser('evidence', help='archive small supporting scripts and logs')
@@ -251,13 +252,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command == 'research':
+        if args.summary and (args.action != 'status' or args.file):
+            parser.error('--summary is only valid for status without --file')
         if args.action == 'wait' and (not args.request_id or args.file or args.no_wait):
             parser.error('research wait requires --request-id and accepts no --file or --no-wait')
         if args.no_wait and args.action not in _RESEARCH_EXECUTIONS:
             parser.error('--no-wait is only valid for train, timing, diagnostic and finish')
         if args.action == 'register':
             _require_clean_worktree()
-        data = json.loads(args.file.read_text()) if args.file else {}
+        data = json.loads(args.file.read_text()) if args.file else ({'summary': True} if args.summary else {})
         coral_dir = _coral_dir()
         request_id = args.request_id or uuid.uuid4().hex
         waiting = args.action == 'wait' or args.action in _RESEARCH_EXECUTIONS and not args.no_wait

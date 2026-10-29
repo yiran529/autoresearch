@@ -23,14 +23,19 @@ from pathlib import Path
 from typing import Any
 
 from coral.grader.timeouts import DIAGNOSTIC_WORKER_TIMEOUT, TRUSTED_CLIENT_TIMEOUT
+from coral.grader.trusted_protocol import (
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    PROTOCOL_VERSION,
+    FrameError,
+    read_frame,
+)
 from coral.hub._island import island_root
 from coral.hub.attempts import read_attempt, read_attempts, write_attempt
 from coral.hub.checkpoint import checkpoint
 from coral.types import BUDGET_CLASS_REAL, BUDGET_CLASS_TUNE, Attempt
 
-PROTOCOL_VERSION = 1
 logger = logging.getLogger(__name__)
-MAX_REQUEST_BYTES = 64 * 1024
 WORKFLOW_OPERATIONS = frozenset({
     "reconcile_workflow", "initialize_research", "claim_engineering",
     "complete_assignment", "cancel_assignment", "finish_assignment", "archive_evidence",
@@ -1177,9 +1182,10 @@ class TrustedWriteServer:
                 except Exception as exc:
                     response = {"ok": False, "error": str(exc)}
                 try:
-                    connection.sendall(
-                        json.dumps(response, separators=(",", ":")).encode() + b"\n"
-                    )
+                    encoded = json.dumps(response, separators=(",", ":")).encode() + b"\n"
+                    if len(encoded) > MAX_RESPONSE_BYTES:
+                        encoded = b'{"ok":false,"error":"trusted response exceeds 4 MiB"}\n'
+                    connection.sendall(encoded)
                 except OSError:
                     pass
         finally:
@@ -1187,16 +1193,12 @@ class TrustedWriteServer:
 
     @staticmethod
     def _read_request(connection: socket.socket) -> dict[str, Any]:
-        raw = bytearray()
-        while b"\n" not in raw:
-            chunk = connection.recv(4096)
-            if not chunk:
-                break
-            raw.extend(chunk)
-            if len(raw) > MAX_REQUEST_BYTES:
-                raise TrustedWriteError("trusted request exceeds 64 KiB")
         try:
-            request = json.loads(bytes(raw).split(b"\n", 1)[0])
+            raw = read_frame(connection, MAX_REQUEST_BYTES, "request")
+        except FrameError as exc:
+            raise TrustedWriteError(str(exc)) from exc
+        try:
+            request = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise TrustedWriteError("invalid trusted request JSON") from exc
         if not isinstance(request, dict) or set(request) != {"version", "operation", "payload"}:
@@ -1221,22 +1223,20 @@ def _request_trusted_once(
     try:
         client.connect(str(Path(coral_dir) / "public" / "trusted.sock"))
         client.sendall(request)
-        raw = bytearray()
-        while b"\n" not in raw:
-            chunk = client.recv(4096)
-            if not chunk:
-                break
-            raw.extend(chunk)
-            if len(raw) > MAX_REQUEST_BYTES:
-                raise TrustedWriteError("trusted response exceeds 64 KiB")
+        try:
+            raw = read_frame(client, MAX_RESPONSE_BYTES, "response")
+        except FrameError as exc:
+            raise TrustedWriteError(str(exc)) from exc
     except OSError as exc:
         raise TrustedWriteError(f"trusted write channel failed: {exc}") from exc
     finally:
         client.close()
     try:
-        response = json.loads(bytes(raw).split(b"\n", 1)[0])
+        response = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise TrustedWriteError("invalid trusted response") from exc
+    if not isinstance(response, dict):
+        raise TrustedWriteError("invalid trusted response")
     if not response.get("ok"):
         raise TrustedWriteError(str(response.get("error", "trusted write rejected")))
     result = response.get("result")

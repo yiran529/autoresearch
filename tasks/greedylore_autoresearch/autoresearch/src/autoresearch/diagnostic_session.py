@@ -81,6 +81,8 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
     (task.workspace / 'records').mkdir(exist_ok=True)
     client = tools / 'autoresearch'
     shutil.copyfile(Path(__file__).with_name('diagnostic_client.py'), client)
+    from coral.grader import trusted_protocol
+    shutil.copyfile(Path(trusted_protocol.__file__), tools / 'trusted_protocol.py')
     client.chmod(0o755)
     schema = task.workspace / 'analysis.schema.json'
     shutil.copyfile(output_schema, schema)

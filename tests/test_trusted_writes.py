@@ -913,3 +913,65 @@ def test_engineering_timing_rejects_research_and_non_head_sha(tmp_path):
     with pytest.raises(TrustedWriteError, match='HEAD'):
         service.handle_authenticated('engineering_timing', {**request, 'sha': 'f' * 40, 'request_id': 'wrong-sha'}, binding)
     assert not read_attempts(service.coral_dir)
+
+
+def test_large_trusted_response_and_bounded_error(tmp_path):
+    coral_dir = tmp_path / '.coral'
+    service = TrustedWriteService(coral_dir, SimpleNamespace(grader=SimpleNamespace(args={})))
+    service.handle = lambda *_: {'text': 'x' * 70000}
+    server = TrustedWriteServer(coral_dir, service)
+    server.start()
+    try:
+        assert len(request_trusted(coral_dir, 'research_action', {})['text']) == 70000
+        service.handle = lambda *_: {'text': 'x' * (4 * 1024 * 1024)}
+        with pytest.raises(TrustedWriteError, match='response exceeds 4 MiB'):
+            request_trusted(coral_dir, 'research_action', {})
+    finally:
+        server.stop()
+
+
+def test_response_frame_requires_newline():
+    import socket
+
+    from coral.grader.trusted_protocol import FrameError, read_frame
+
+    for data, expected in [(b'', 'empty'), (b'{}', 'truncated')]:
+        left, right = socket.socketpair()
+        try:
+            right.sendall(data)
+            right.close()
+            with pytest.raises(FrameError, match=expected):
+                read_frame(left, 100, 'response')
+        finally:
+            left.close()
+
+
+def test_copied_analyzer_client_receives_large_response(tmp_path):
+    import shutil
+
+    from autoresearch import diagnostic_client
+
+    from coral.grader import trusted_protocol
+
+    coral_dir = tmp_path / '.coral'
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    shutil.copyfile(diagnostic_client.__file__, tools / 'autoresearch')
+    shutil.copyfile(trusted_protocol.__file__, tools / 'trusted_protocol.py')
+    service = TrustedWriteService(coral_dir, SimpleNamespace(grader=SimpleNamespace(args={})))
+    service.handle = lambda *_: {'text': 'x' * 70000}
+    server = TrustedWriteServer(coral_dir, service)
+    server.start()
+    try:
+        result = subprocess.run([sys.executable, str(tools / 'autoresearch'), 'diagnostic', 'run',
+                                 '--request-id', 'test', '--', 'true'], capture_output=True, text=True,
+                                env={'CORAL_DIAGNOSTIC_RUN': str(coral_dir)}, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert len(__import__('json').loads(result.stdout)['text']) == 70000
+    finally:
+        server.stop()
+
+
+def test_trusted_request_cap_still_64_kib(tmp_path):
+    with pytest.raises(TrustedWriteError, match='request exceeds 64 KiB'):
+        request_trusted(tmp_path, 'research_action', {'value': 'x' * 65536})

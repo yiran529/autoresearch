@@ -28,6 +28,8 @@ def test_analyzer_can_read_failure_correct_script_and_run_again(task, tmp_path, 
     tools.mkdir()
     task.records.mkdir()
     shutil.copyfile(diagnostic_client.__file__, tools / 'autoresearch')
+    from coral.grader import trusted_protocol
+    shutil.copyfile(trusted_protocol.__file__, tools / 'trusted_protocol.py')
     secret = tmp_path / 'host-secret'
     secret.write_text('not an experiment input')
     checkpoint = task.coral_dir / 'public/eval_logs/attempt/run/checkpoints/model'

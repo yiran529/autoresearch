@@ -67,7 +67,7 @@ autoresearch research train --node N001 --file /tmp/train1.json --request-id n00
 ```
 The endpoint is absolute optimizer update 1000, not 1000 additional steps. Keep waiting on the training command; it returns the published pause/completion/failure result. To inspect all saved jobs independently:
 ```bash
-autoresearch research status --node N001
+autoresearch research status --node N001 --summary
 ```
 2. When paused, inspect existing evidence. If useful, write a diagnostic request, then submit through `research diagnostic`:
 ```json
@@ -134,3 +134,5 @@ Use `autoresearch evidence archive --node Nxxx --request-id self-check-1 --files
 `research status` and `research wait` report current cumulative `diagnostic_limits`; completed work still counts toward them.
 Training, timing and diagnostics serially borrow the four-GPU reservation held through Development experiments and all Final evaluation components. Do not submit off-path GPU jobs or reacquire a group yourself. Diagnostic and retry limits remain those in the role/host contract.
 The host controls `research_checkpoint_interval_steps` (default 1000 optimizer updates), with saves at requested pauses and training end. Periodic saving alone does not pause training. Use host-provided checkpoint/artifact locations under `dynamic_artifact_root` (default `/dev/shm/wyr_tmp`), organized by run/Node. Do not copy large tensors to the root filesystem, choose arbitrary host paths or alter retention; report space/recovery failures rather than falling back. Small records/logs persist; large artifacts are cleaned by the host after the whole Node finishes. Temporary memory storage is not a promise of tensor recovery after a machine restart.
+
+`research status` retains the full journal and adds `progress`; `research status --summary` returns a bounded projection with at most the latest 256 jobs and `job_count`; long text fields are truncated. Each job retains request ID, kind, status, candidate SHA and iteration where available, plus concise result status/evidence reference. Use `research wait --request-id` for full job details. `progress.development` reports each iteration's latest quality result; `progress.final` reports Final component status and quality result separately. `progress.publication` is `not_started`, `pending`, or `completed`. `progress.formal_eligibility` is `pending`, `unknown`, `eligible`, or `ineligible`, based on the selected candidate's published Attempt metadata. A completed component or passing development quality does not establish formal eligibility. Status reads do not change journal or research evidence.

@@ -9,6 +9,23 @@ import sys
 import time
 import uuid
 
+try:
+    from trusted_protocol import (
+        MAX_REQUEST_BYTES,
+        MAX_RESPONSE_BYTES,
+        PROTOCOL_VERSION,
+        FrameError,
+        read_frame,
+    )
+except ModuleNotFoundError:
+    from coral.grader.trusted_protocol import (
+        MAX_REQUEST_BYTES,
+        MAX_RESPONSE_BYTES,
+        PROTOCOL_VERSION,
+        FrameError,
+        read_frame,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(prog='autoresearch')
@@ -27,8 +44,8 @@ def main():
                'argv': arguments[separator + 1:]}
     # Print before waiting, so a disconnected caller can repeat the same request ID.
     print(f"diagnostic request: {payload['request_id']}", file=sys.stderr, flush=True)
-    message = json.dumps({'version': 1, 'operation': 'run_diagnostic', 'payload': payload}).encode() + b'\n'
-    if len(message) > 64 * 1024:
+    message = json.dumps({'version': PROTOCOL_VERSION, 'operation': 'run_diagnostic', 'payload': payload}).encode() + b'\n'
+    if len(message) > MAX_REQUEST_BYTES:
         raise SystemExit('diagnostic request exceeds 64 KiB')
     deadline = time.monotonic() + 2
     while True:
@@ -36,15 +53,16 @@ def main():
             client.settimeout(4800)
             client.connect(os.path.join(os.environ['CORAL_DIAGNOSTIC_RUN'], 'public/trusted.sock'))
             client.sendall(message)
-            response = bytearray()
-            while b'\n' not in response:
-                block = client.recv(4096)
-                if not block:
-                    break
-                response.extend(block)
-                if len(response) > 64 * 1024:
-                    raise SystemExit('diagnostic response exceeds 64 KiB')
-        result = json.loads(response)
+            try:
+                response = read_frame(client, MAX_RESPONSE_BYTES, 'response')
+            except FrameError as exc:
+                raise SystemExit(str(exc)) from exc
+        try:
+            result = json.loads(response)
+            if not isinstance(result, dict):
+                raise ValueError('response is not an object')
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise SystemExit('invalid trusted response') from exc
         if result.get('ok'):
             print(json.dumps(result['result']))
             return

@@ -173,3 +173,15 @@ def test_unknown_job_and_other_owner_cannot_wait(tmp_path):
     other = StagedResearch(h.store, 'research-N002', 'N001', backend=h.backend)
     with pytest.raises(PermissionError):
         other.wait('missing')
+
+
+def test_status_summary_flag_sends_projection_request(monkeypatch, capsys):
+    from autoresearch import cli
+    calls = []
+    monkeypatch.setattr(cli, '_coral_dir', lambda: '/tmp/test-run')
+    monkeypatch.setattr(cli, 'request_trusted', lambda *args: calls.append(args) or {'jobs': {}})
+    cli.main(['research', 'status', '--node', 'N001', '--summary'])
+    assert calls[0][2]['data'] == {'summary': True}
+    assert 'jobs' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        cli.main(['research', 'recover', '--node', 'N001', '--summary'])

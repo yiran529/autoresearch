@@ -106,5 +106,6 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 基线：通信、staged 恢复、路径与 handover 定向测试 93 passed、2 skipped。
 - 已知工作区状态：两份 legacy 角色文件已删除；涉及旧协议初始化的部分测试会因此
   失败，须单独归因，不作为本轮新问题隐瞒。
-- 文档拆分：Engineer 命令、诊断、计时和 Analysis 提交接口已迁入独立参考；性能方法保留在 runtime 参考。定向文档与 handoff 检查 11 passed；toolkit 状态测试因工作区预先删除的 legacy 规则文件失败。完整工作流模拟等待后中断，未完成验证。
-- 阶段 1–4：待实施；最终验证：待实施。
+- 文档拆分：Engineer 命令、诊断、计时和 Analysis 提交接口已迁入独立参考；性能方法保留在 runtime 参考。定向文档与 handoff 检查 11 passed；toolkit 状态测试因工作区预先删除的 legacy 规则文件失败。隔离完整工作流成功模拟 1 passed、5 deselected（48.88s）；捕获的实际 toolkit 内容确认独立 Engineer 命令参考已交付。
+- 阶段 1：请求限额 64 KiB、响应限额 4 MiB；状态增加只读阶段进度与显式有界摘要，正式资格来自发布的 Attempt。定向回归见任务报告。
+- 阶段 2–4：待实施；最终验证：待实施。
