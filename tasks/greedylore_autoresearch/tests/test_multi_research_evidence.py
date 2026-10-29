@@ -78,6 +78,32 @@ def test_legacy_singleton_manifest_stays_unchanged(tmp_path):
     assert 'research_attempts' not in evidence.manifest()
 
 
+def test_legacy_diagnostic_backfill_does_not_invalidate_sealed_analysis(tmp_path, monkeypatch):
+    from autoresearch.artifact_paths import research_diagnostics_root
+    from autoresearch.research_record import ResearchRecord
+
+    context = _multi_context(tmp_path)
+    state_path = context.coral_dir / 'private/autoresearch_state.json'
+    state = json.loads(state_path.read_text())
+    state['nodes']['N001']['research']['agent_id'] = 'research-N001'
+    state_path.write_text(json.dumps(state))
+    frozen_record = {'frozen': True}
+    (context.notes_root / 'nodes/N001/research.json').write_text(json.dumps(frozen_record))
+    monkeypatch.setattr(ResearchRecord, 'read', lambda self: frozen_record)
+    placeholder = context.coral_dir / 'public/research_diagnostics'
+    placeholder.parent.mkdir(parents=True)
+    placeholder.touch()
+    before = resolve_evidence('N001', 'research', context=context)
+    document = seal_document(_analysis_payload(None), before)
+    mirror = research_diagnostics_root(context.coral_dir) / 'N001/old-probe'
+    mirror.mkdir(parents=True)
+    (mirror / 'diagnostic-result.json').write_text('{"status":"completed"}')
+    placeholder.unlink()
+    after = resolve_evidence('N001', 'research', context=context)
+    assert after.manifest() == before.manifest()
+    assert validate_analysis(document, _artifact_evidence(document, after, context)) == document
+
+
 def test_code_snapshot_contains_all_research_candidates(tmp_path):
     context = _multi_context(tmp_path)
     context.checkout_root.mkdir()

@@ -199,6 +199,162 @@ def test_timing_failure_archives_logs_before_cleanup(tmp_path):
     assert durable.is_file()
 
 
+@pytest.mark.parametrize('body_status,exit_code', [('completed', 0), ('failed', 1)])
+@pytest.mark.parametrize('recovery_mode', ['publication', 'legacy', 'interrupted'])
+@pytest.mark.parametrize('blocker_kind', ['file', 'symlink'])
+def test_diagnostic_publication_failure_keeps_execution_result_and_retries_without_gpu(
+        tmp_path, monkeypatch, body_status, exit_code, recovery_mode, blocker_kind):
+    import json
+
+    from autoresearch import staged_diagnostics
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    from autoresearch.staged_execution import Execution
+
+    h, r, _ = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b'*40}, 'train', {})
+    h.drain()
+    (h.store.coral_dir / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {
+        'staged_research': True, 'dynamic_artifact_root': str(tmp_path / 'dynamic'),
+        'dynamic_artifact_min_free_bytes': 0}}}))
+    backend = Execution.__new__(Execution)
+    backend.host, backend.coral = h, h.store.coral_dir
+    backend.artifacts = RuntimeArtifacts(backend.coral)
+    backend.options = {}
+    backend._check = lambda: None
+    backend.lease = SimpleNamespace(borrow=lambda: object(), register_job=lambda *a: None,
+                                    clear_job=lambda *a: None)
+    worktree = tmp_path / 'worktree'
+    scripts = worktree / 'probe'
+    scripts.mkdir(parents=True)
+    (scripts / 'probe.py').write_text('print("measured")\n')
+    executions = []
+
+    def compute(task, payload, check, *, borrowed):
+        executions.append(payload['request_id'])
+        (task.workspace / 'results/measurement.json').write_text('{"measured": 42}\n')
+        return {'status': body_status, 'exit_code': exit_code, 'runtime_seconds': 1.0,
+                'results_path': str(task.workspace / 'results')}
+
+    monkeypatch.setattr(staged_diagnostics, 'execute_diagnostic', compute)
+    public = backend.coral / 'public/eval_logs' / ('b'*40) / 'probe'
+    work = backend.artifacts.path('N001', 'runs/probe')
+    work.mkdir(parents=True)
+    backend._execute = lambda host, job: backend._diagnostic(
+        job, worktree, work, public, r.read()['iterations'][0])
+    h.backend = backend
+    blocker = backend.coral / 'public/research_diagnostics'
+    if blocker_kind == 'file':
+        blocker.write_text('unexpected nonempty file')
+    else:
+        outside = tmp_path / 'outside'
+        outside.mkdir()
+        blocker.symlink_to(outside, target_is_directory=True)
+    h.enqueue('diagnostic', {'iteration': 1, 'argv': ['python', 'experiments/probe.py'],
+                            'timeout': 600, 'scripts_dir': str(scripts)},
+              'probe', {'worktree': str(worktree)})
+    h.drain()
+    job = h.wait('probe')
+    assert job['status'] == body_status
+    assert job['result']['status'] == body_status
+    assert job['result']['exit_code'] == exit_code
+    assert job['result']['publication']['status'] == 'failed'
+    assert json.loads((public / 'diagnostic-result.json').read_text())['exit_code'] == exit_code
+
+    if recovery_mode != 'publication':
+        state = h._read()
+        if recovery_mode == 'legacy':
+            state['jobs']['probe'].update(status='failed', result={
+                'status': 'infra_failed', 'evidence_path': job['result']['evidence_path'],
+                'reason': 'NotADirectoryError: public/research_diagnostics/N001/probe'})
+        else:
+            state['jobs']['probe']['status'] = 'running'
+            state['jobs']['probe'].pop('result')
+        h._save(state)
+
+    # A new controller can publish from the durable archive after tensor cleanup.
+    backend.artifacts.cleanup_node('N001', terminal=True)
+    blocker.unlink()
+    blocker.mkdir()
+    saved = public / 'diagnostic-result.json'
+    contents = saved.read_bytes()
+    saved.write_text('{}\n')
+    h.drain()
+    assert executions == ['probe']
+    assert h.wait('probe')['status'] != 'running'
+    assert h.wait('probe')['result']['publication']['status'] == 'failed'
+    saved.write_bytes(contents)
+    h.drain()
+    assert executions == ['probe']
+    job = h.wait('probe')
+    assert job['status'] == body_status
+    assert job['result']['publication']['status'] == 'completed'
+    assert (blocker / 'N001/probe/workspace/results/measurement.json').read_text() == '{"measured": 42}\n'
+    h.drain()
+    assert executions == ['probe']
+
+
+def test_diagnostic_publishes_under_existing_protected_root_without_replacing_live_mount(tmp_path):
+    import hashlib
+    import json
+
+    from autoresearch.staged_execution import Execution
+
+    coral = tmp_path / '.coral'
+    public = coral / 'public/eval_logs' / ('b'*40) / 'probe'
+    public.mkdir(parents=True)
+    original = coral / 'public/research_diagnostics'
+    original.touch(mode=0o444)
+    inode = original.stat().st_ino
+    data = b'{"status":"completed","exit_code":0}\n'
+    (public / 'diagnostic-result.json').write_bytes(data)
+    (public / 'artifact_inventory.json').write_text(json.dumps({'files': [{
+        'path': 'diagnostic-result.json', 'preserved': True,
+        'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}]}))
+    backend = Execution.__new__(Execution)
+    backend.coral, backend.host = coral, SimpleNamespace(node_id='N001')
+    result = backend.publish_diagnostic({'request_id': 'probe'}, {
+        'status': 'completed', 'exit_code': 0,
+        'evidence_path': 'eval_logs/' + 'b'*40 + '/probe'})
+    assert result['publication']['status'] == 'completed'
+    mirror = coral / 'public/diagnostics/research_probes/N001/probe/diagnostic-result.json'
+    assert mirror.read_bytes() == data
+    assert original.is_file() and original.stat().st_ino == inode
+    from autoresearch.analysis import _evidence_records
+
+    records = _evidence_records([result['publication']['evidence_path']], SimpleNamespace(coral_dir=coral))
+    assert any(r.path == 'diagnostics/research_probes/N001/probe/diagnostic-result.json'
+               and r.status == 'present' and r.sha256 == hashlib.sha256(data).hexdigest()
+               for r in records)
+
+
+@pytest.mark.parametrize('blocker', ['file', 'symlink', 'broken_symlink'])
+def test_invalid_legacy_fallback_does_not_switch_to_normal_publication_root(tmp_path, blocker):
+    from autoresearch.staged_execution import Execution
+
+    coral = tmp_path / '.coral'
+    archive = coral / 'public/eval_logs' / ('b'*40) / 'probe'
+    archive.mkdir(parents=True)
+    (archive / 'artifact_inventory.json').write_text('{"files":[]}')
+    fallback = coral / 'public/diagnostics/research_probes'
+    fallback.parent.mkdir(parents=True)
+    foreign = tmp_path / 'foreign'
+    if blocker == 'file':
+        fallback.write_text('existing data')
+    else:
+        if blocker == 'symlink':
+            foreign.mkdir()
+        fallback.symlink_to(foreign)
+    backend = Execution.__new__(Execution)
+    backend.coral, backend.host = coral, SimpleNamespace(node_id='N001')
+    result = backend.publish_diagnostic({'request_id': 'probe'}, {
+        'status': 'completed', 'exit_code': 0,
+        'evidence_path': 'eval_logs/' + 'b'*40 + '/probe'})
+    assert result['status'] == 'completed'
+    assert result['publication']['status'] == 'failed'
+    assert not (coral / 'public/research_diagnostics').exists()
+    assert not foreign.exists() or not list(foreign.iterdir())
+
+
 def test_research_diagnostic_borrows_lease_without_reentering_queue(tmp_path, monkeypatch):
     import sys
 

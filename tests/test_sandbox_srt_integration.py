@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_formal_srt_writes_git_ipc_and_private_boundaries():
+@pytest.mark.parametrize('legacy_mount', [False, True])
+def test_formal_srt_writes_git_ipc_and_private_boundaries(legacy_mount):
     task = Path(__file__).resolve().parents[1] / "tasks/greedylore_autoresearch/task.yaml"
     config = CoralConfig.from_yaml(task)
     config.agents.sandbox.srt_command = [shutil.which("srt") or "srt"]
@@ -38,6 +40,10 @@ def test_formal_srt_writes_git_ipc_and_private_boundaries():
         (coral / "private/secret").write_text("hidden")
         (sibling / "shared.txt").write_text("readable")
         (coral / "public/attempts/record.json").write_text("{}")
+        if legacy_mount:
+            (coral / "public/research_diagnostics").touch(mode=0o444)
+        publication_root = coral / ("public/diagnostics/research_probes" if legacy_mount
+                                    else "public/research_diagnostics")
         subprocess.run(["git", "init", "--quiet", str(repo)], check=True)
         (repo / "seed.py").write_text("seed\n")
         subprocess.run(["git", "-C", str(repo), "add", "seed.py"], check=True)
@@ -65,6 +71,7 @@ subprocess.run(["git", "-c", "user.name=Sandbox Smoke", "-c", "user.email=smoke@
                 "commit", "-qm", "sandbox write"], check=True)
 assert (run / "agents/researcher/shared.txt").read_text() == "readable"
 for path in [run / ".coral/public/attempts/record.json",
+             run / ".coral/public/research_diagnostics/agent-write.json",
              run / "agents/researcher/shared.txt"]:
     try:
         path.write_text("forbidden")
@@ -92,17 +99,50 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
     response = json.loads(client.makefile("rb").readline())
     assert response["ok"] is False
     assert "registry" in response["error"], response
-print("PASS worktree write, Git commit, sibling read, private hide, shared write denial, trusted IPC/auth")
+import time
+(w / ".publication-ready").touch()
+deadline = time.monotonic() + 30
+while not (w / ".publication-published").exists():
+    if time.monotonic() > deadline:
+        raise TimeoutError("host did not publish diagnostic")
+    time.sleep(0.02)
+diagnostic = Path(sys.argv[2]) / "N001/probe/result.json"
+assert json.loads(diagnostic.read_text()) == {"status": "completed"}
+try:
+    diagnostic.write_text("forbidden")
+except OSError:
+    pass
+else:
+    raise AssertionError("published diagnostic became agent-writable")
+print("PASS worktree write, Git commit, sibling read, private hide, shared write denial, trusted IPC/auth, live publication")
 '''
-            result = subprocess.run(
-                [*spec.command_prefix, sys.executable, "-c", probe, str(run)],
+            process = subprocess.Popen(
+                [*spec.command_prefix, sys.executable, "-c", probe, str(run), str(publication_root)],
                 cwd=worktree, env={**os.environ, **spec.env},
-                capture_output=True, text=True, timeout=45,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
-            assert result.returncode == 0, result.stdout + result.stderr
-            assert "PASS worktree write" in result.stdout
-            assert (coral / "private/secret").read_text() == "hidden"
-            print(result.stdout.strip())
+            try:
+                deadline = time.monotonic() + 30
+                while not (worktree / ".publication-ready").exists():
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        stdout, stderr = process.communicate(timeout=5)
+                        pytest.fail(stdout + stderr)
+                    time.sleep(0.02)
+                # Publish while the sandbox still has its protected mounts.
+                diagnostic = publication_root / "N001/probe/result.json"
+                diagnostic.parent.mkdir(parents=True, exist_ok=True)
+                diagnostic.write_text('{"status":"completed"}\n')
+                (worktree / ".publication-published").touch()
+                stdout, stderr = process.communicate(timeout=45)
+                assert process.returncode == 0, stdout + stderr
+                assert "PASS worktree write" in stdout
+                assert (coral / "private/secret").read_text() == "hidden"
+                assert diagnostic.read_text() == '{"status":"completed"}\n'
+                print(stdout.strip())
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
         finally:
             provider.stop()
             server.stop()

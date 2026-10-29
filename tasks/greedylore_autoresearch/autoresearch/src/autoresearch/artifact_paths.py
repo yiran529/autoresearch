@@ -8,10 +8,34 @@ from __future__ import annotations
 
 import hashlib
 import re
+import stat
 from pathlib import Path
 
 WORKSPACE_VIEW = Path('/workspace')
 _RESULT_PATHS = ('record_path', 'stdout_path', 'stderr_path', 'results_path')
+
+
+def research_diagnostics_root(coral_dir: Path) -> Path:
+    """Keep legacy file mounts intact; use an already protected directory."""
+    root = Path(coral_dir) / 'public/research_diagnostics'
+    fallback = Path(coral_dir) / 'public/diagnostics/research_probes'
+    # bwrap removes its empty file placeholder when the last sandbox exits.
+    # Keep this run on its original fallback even after that cleanup.
+    if fallback.exists() or fallback.is_symlink():
+        return fallback
+    if not root.is_symlink():
+        try:
+            info = root.stat()
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISREG(info.st_mode) and info.st_size == 0:
+                # Persist the choice before bwrap can remove the placeholder.
+                if any(path.is_symlink() for path in (fallback, *fallback.parents)):
+                    raise ValueError('diagnostic publication path contains a symlink')
+                fallback.mkdir(parents=True, exist_ok=True)
+                return fallback
+    return root
 
 
 def _absolute(value) -> Path:

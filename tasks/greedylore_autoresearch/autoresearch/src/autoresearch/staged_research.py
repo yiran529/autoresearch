@@ -187,6 +187,33 @@ class StagedResearch:
                         return True
                 processed.add(request_id)
                 job = state['jobs'][request_id]
+                if job['kind'] == 'diagnostic':
+                    result = job.get('result', {})
+                    legacy_mirror_failure = ('NotADirectoryError' in result.get('reason', '')
+                                             and 'research_diagnostics' in result.get('reason', ''))
+                    if (result.get('publication', {}).get('status') == 'failed'
+                            or legacy_mirror_failure
+                            or job['status'] == 'running' and 'result' not in job):
+                        recover = getattr(self.backend, 'recover_diagnostic', None)
+                        try:
+                            recovered = recover(job) if recover else None
+                        except (OSError, ValueError, KeyError, TypeError) as exc:
+                            if job['status'] == 'running' and 'result' not in job:
+                                job.update(status='failed', result={
+                                    'status': 'infra_failed',
+                                    'reason': 'saved diagnostic result could not be verified',
+                                    **self._failure_evidence(job)})
+                            job.setdefault('result', {}).update(publication={
+                                'status': 'failed', 'reason': f'{type(exc).__name__}: {exc}'})
+                            self._save(state)
+                            continue
+                        if recovered is not None:
+                            job.setdefault('publication_recovery', {
+                                'previous_status': job['status'], 'previous_result': copy.deepcopy(result)})
+                            job.update(result=recovered, status=(
+                                'completed' if recovered['status'] == 'completed' else 'failed'))
+                            self._save(state)
+                            continue
                 publication = (job['kind'] == 'finish' and state['transfer_terminal']
                                and not state.get('publication_complete')) or bool(job.get('retry_publication'))
                 if job['kind'] == 'timing' and 'result' in job and not job.get('reused_from'):

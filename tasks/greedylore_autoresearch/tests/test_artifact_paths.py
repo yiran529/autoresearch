@@ -11,6 +11,47 @@ from pathlib import Path
 import pytest
 
 
+def test_legacy_diagnostic_root_stays_stable_after_sandbox_placeholder_cleanup(tmp_path):
+    from autoresearch.artifact_paths import research_diagnostics_root
+
+    coral = tmp_path / '.coral'
+    original = coral / 'public/research_diagnostics'
+    original.parent.mkdir(parents=True)
+    original.touch()
+    fallback = research_diagnostics_root(coral)
+    # bwrap removes the file it created when the last legacy sandbox exits.
+    original.unlink()
+    assert research_diagnostics_root(coral) == fallback
+    # A later sandbox may prepare the normal directory; this run keeps its root.
+    original.mkdir()
+    assert research_diagnostics_root(coral) == fallback
+
+
+def test_broken_legacy_fallback_cannot_silently_switch_publication_root(tmp_path):
+    from autoresearch.artifact_paths import research_diagnostics_root
+
+    coral = tmp_path / '.coral'
+    fallback = coral / 'public/diagnostics/research_probes'
+    fallback.parent.mkdir(parents=True)
+    fallback.symlink_to(tmp_path / 'missing')
+    assert research_diagnostics_root(coral) == fallback
+
+
+def test_legacy_root_selection_rejects_symlink_ancestor_before_creating_fallback(tmp_path):
+    from autoresearch.artifact_paths import research_diagnostics_root
+
+    coral = tmp_path / '.coral'
+    original = coral / 'public/research_diagnostics'
+    original.parent.mkdir(parents=True)
+    original.touch()
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    (coral / 'public/diagnostics').symlink_to(foreign)
+    with pytest.raises(ValueError, match='symlink'):
+        research_diagnostics_root(coral)
+    assert not list(foreign.iterdir())
+
+
 def test_projection_preserves_host_record_and_rejects_foreign_paths(tmp_path):
     from autoresearch.artifact_paths import PathView
 

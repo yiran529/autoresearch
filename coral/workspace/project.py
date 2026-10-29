@@ -55,6 +55,8 @@ _PER_ISLAND_SUBDIRS = (
     "notes",
     "heartbeat",
     "eval_logs",
+    "diagnostics",
+    "research_diagnostics",
     "roles",
 )
 

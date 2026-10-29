@@ -203,6 +203,40 @@ def test_build_settings_writes(tmp_path):
     assert str(Path.home() / ".claude") in fs["allowWrite"]
 
 
+def test_prepare_agent_creates_protected_evidence_directories_before_srt(tmp_path):
+    paths = _paths(tmp_path)
+    provider = SrtSandbox(SandboxConfig(enabled=True, network="allowlist"))
+    spec = provider.prepare_agent(AgentSandboxContext("agent-1", **paths))
+    settings = json.loads(Path(spec.command_prefix[-2]).read_text())
+    for name in ("attempts", "eval_logs", "diagnostics", "research_diagnostics", "notes/nodes"):
+        path = paths["coral_dir"] / "public" / name
+        assert path.is_dir(), f"SRT must not create a file placeholder at {path}"
+        assert str(path) in settings["filesystem"]["denyWrite"]
+
+
+def test_prepare_agent_rejects_file_in_place_of_protected_directory(tmp_path):
+    paths = _paths(tmp_path)
+    target = paths["coral_dir"] / "public/research_diagnostics"
+    target.write_text("preserve unexpected existing content")
+    provider = SrtSandbox(SandboxConfig(enabled=True, network="allowlist"))
+    with pytest.raises(FileExistsError):
+        provider.prepare_agent(AgentSandboxContext("agent-1", **paths))
+    assert target.read_text() == "preserve unexpected existing content"
+
+
+def test_prepare_agent_leaves_legacy_empty_mount_point_untouched(tmp_path):
+    paths = _paths(tmp_path)
+    target = paths["coral_dir"] / "public/research_diagnostics"
+    target.touch(mode=0o444)
+    inode = target.stat().st_ino
+    provider = SrtSandbox(SandboxConfig(enabled=True, network="allowlist"))
+    spec = provider.prepare_agent(AgentSandboxContext("agent-1", **paths))
+    settings = json.loads(Path(spec.command_prefix[-2]).read_text())
+    assert target.is_file() and target.stat().st_ino == inode
+    assert str(target) in settings["filesystem"]["denyWrite"]
+    assert str(paths["coral_dir"] / "public/diagnostics") in settings["filesystem"]["denyWrite"]
+
+
 def test_read_mounts_preserve_writable_descendants_and_shared_reads(tmp_path):
     paths = _paths(tmp_path)
     sibling = tmp_path / "agents/agent-2"

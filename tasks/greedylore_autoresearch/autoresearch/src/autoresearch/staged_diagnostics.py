@@ -35,7 +35,6 @@ def execute(execution, job, code, work, row):
     payload = {'request_id': job['request_id'], 'argv': job['argv'], 'timeout': job['timeout'], 'gpus': 4}
     result = execute_diagnostic(task, payload, execution._check, borrowed=execution.lease.borrow())
     _atomic_json(work / 'diagnostic-result.json', result, mode=0o644)
-    # A separate small record makes probes independent Analyzer inputs.
-    public = execution.coral / 'public/research_diagnostics' / execution.host.node_id / job['request_id']
-    execution._archive(work, public)
+    # Execution's canonical archive is persisted before the separate public mirror.
+    # A mirror failure must not overwrite this actual execution outcome.
     return result

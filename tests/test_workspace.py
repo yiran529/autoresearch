@@ -72,6 +72,8 @@ def test_create_project_structure():
         assert (paths.coral_dir / "public" / "logs").is_dir()
         assert (paths.coral_dir / "public" / "skills").is_dir()
         assert (paths.coral_dir / "public" / "notes").is_dir()
+        assert (paths.coral_dir / "public" / "diagnostics").is_dir()
+        assert (paths.coral_dir / "public" / "research_diagnostics").is_dir()
         assert (paths.coral_dir / "private").is_dir()
         assert (paths.coral_dir / "config.yaml").is_file()
         assert paths.agents_dir.exists()

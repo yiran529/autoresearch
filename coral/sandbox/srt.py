@@ -102,6 +102,7 @@ class SrtSandbox:
         TLS bundle override for rustls clients (:func:`_tls_cert_env`).
         """
         prepare_srt_worktree(ctx.worktree_path)
+        _prepare_protected_directories(ctx.coral_dir, _worktree_island(ctx.worktree_path))
         settings = build_srt_settings(
             self.cfg,
             worktree_path=ctx.worktree_path,
@@ -407,8 +408,7 @@ def _tls_cert_env() -> dict[str, str]:
     return {}
 
 
-def _protected_write_paths(coral_dir: Path, island_id: str | None) -> list[str]:
-    """Formal run records that agents may read but only trusted services write."""
+def _protected_state_roots(coral_dir: Path, island_id: str | None) -> list[Path]:
     coral_dir = Path(coral_dir)
     islands_dir = coral_dir / "islands"
     if not islands_dir.exists():
@@ -419,6 +419,32 @@ def _protected_write_paths(coral_dir: Path, island_id: str | None) -> list[str]:
             current_root = island_root(coral_dir, island_id)
             if current_root not in roots:
                 roots.append(current_root)
+    return roots
+
+
+def _prepare_protected_directories(coral_dir: Path, island_id: str | None) -> None:
+    """Materialize directory denies before SRT can create file mount points.
+
+    Never replace a conflicting file here: it may be mounted by a live sandbox.
+    Recovery must quiesce that sandbox and preserve the old file first.
+    """
+    for root in _protected_state_roots(coral_dir, island_id):
+        for name in ("attempts", "eval_logs", "diagnostics", "research_diagnostics", "notes/nodes"):
+            path = root / name
+            if any(part.is_symlink() for part in (path, *path.parents)):
+                raise ValueError(f"protected directory traverses a symlink: {path}")
+            if name == "research_diagnostics" and path.is_file() and path.stat().st_size == 0:
+                # A legacy SRT mount point may still be in use. Keep its deny
+                # intact; the trusted publisher uses diagnostics/research_probes.
+                logger.warning("Retaining legacy diagnostic mount point: %s", path)
+                continue
+            path.mkdir(parents=True, exist_ok=True)
+
+
+def _protected_write_paths(coral_dir: Path, island_id: str | None) -> list[str]:
+    """Formal run records that agents may read but only trusted services write."""
+    coral_dir = Path(coral_dir)
+    roots = _protected_state_roots(coral_dir, island_id)
     protected = [coral_dir / "private", coral_dir / ".git", coral_dir / "config.yaml"]
     for root in roots:
         protected.extend(

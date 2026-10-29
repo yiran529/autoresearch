@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -548,5 +549,59 @@ class Execution:
         from .staged_diagnostics import execute
         result = execute(self, job, code, work, row)
         self._archive(work, public)
-        return {**PathView([(work, public)]).project_result(result, published=True),
-                'evidence_path': public.relative_to(self.coral / 'public').as_posix()}
+        result = {**PathView([(work, public)]).project_result(result, published=True),
+                  'evidence_path': public.relative_to(self.coral / 'public').as_posix()}
+        return self.publish_diagnostic(job, result)
+
+    def publish_diagnostic(self, job, result):
+        """Retry only the small mirror, even after dynamic artifacts are cleaned."""
+        from .artifact_paths import research_diagnostics_root
+
+        try:
+            public = safe_path(self.coral / 'public' / result['evidence_path'])
+            target = safe_path(research_diagnostics_root(self.coral)
+                               / self.host.node_id / job['request_id'])
+            inventory = json.loads((public / 'artifact_inventory.json').read_text())
+            for record in inventory['files']:
+                if not record.get('preserved'):
+                    continue
+                relative = Path(record['path'])
+                if relative.is_absolute() or '..' in relative.parts:
+                    raise ValueError('diagnostic inventory escapes archive')
+                source, destination = safe_path(public / relative), safe_path(target / relative)
+                if hashlib.sha256(source.read_bytes()).hexdigest() != record['sha256']:
+                    raise ValueError('diagnostic archive differs from preserved inventory')
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, destination)
+            _atomic_json(target / 'artifact_inventory.json', inventory, mode=0o644)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            publication = {'status': 'failed', 'reason': f'{type(exc).__name__}: {exc}'}
+        else:
+            publication = {'status': 'completed',
+                           'evidence_path': target.relative_to(self.coral / 'public').as_posix()}
+        return {**result, 'publication': publication}
+
+    def recover_diagnostic(self, job):
+        """Read an authenticated durable execution result, without GPU execution."""
+        from .artifact_paths import PathView
+
+        row = self.host.record.read()['iterations'][job['iteration'] - 1]
+        sha = job.get('sha') or row['code_sha']
+        relative = f"eval_logs/{sha}/{job['request_id']}"
+        public = safe_path(self.coral / 'public' / relative)
+        saved = public / 'diagnostic-result.json'
+        if not saved.is_file():
+            return None
+        inventory = json.loads((public / 'artifact_inventory.json').read_text())
+        entry = next((item for item in inventory['files']
+                      if item['path'] == 'diagnostic-result.json' and item.get('preserved')), None)
+        contents = safe_path(saved).read_bytes()
+        if entry is None or hashlib.sha256(contents).hexdigest() != entry['sha256']:
+            raise ValueError('diagnostic execution result differs from preserved inventory')
+        result = json.loads(contents)
+        if result.get('status') not in {'completed', 'failed', 'infra_failed', 'cancelled', 'timed_out'}:
+            raise ValueError('invalid saved diagnostic status')
+        work = self.artifacts.namespace / 'nodes' / self.host.node_id / 'runs' / job['request_id']
+        result = {**PathView([(work, public)]).project_result(result, published=True),
+                  'evidence_path': relative}
+        return self.publish_diagnostic(job, result)
