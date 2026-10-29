@@ -168,6 +168,10 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
     from autoresearch import diagnostic_session
     config = {'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'medium',
               'analyzer_allow_unix_sockets': allow_unix, 'analyzer_timeout_seconds': 17}
+    data = task.workspace / 'test-data'
+    data.mkdir()
+    (data / 'shard').write_text('analyzer stream')
+    config['diagnostic_resources'] = [{'id': 'c4', 'path': str(data), 'view': '/resources/c4'}]
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:9999')
     monkeypatch.setenv('no_proxy', 'localhost,127.0.0.1')
     monkeypatch.setenv('UNRELATED_SECRET', 'must not reach the model')
@@ -202,6 +206,9 @@ def test_diagnostic_analyzer_uses_configured_model_and_effort(task, monkeypatch,
             assert 0 < timeout <= 17
             # The diagnostic child needs the same selected code/evidence as Codex.
             assert str(code_root) in task.read()['runtime']['readonly_paths']
+            assert task.read()['runtime']['resources']['resources'][0]['view'] == '/resources/c4'
+            assert 'c4: /resources/c4' in prompt
+            assert 'managed_diagnostic_readonly' in prompt
             command = self.command
             assert command[command.index('--cd') + 1] == '/workspace/results'
             assert command[command.index('--add-dir') + 1] == '/workspace/experiments'

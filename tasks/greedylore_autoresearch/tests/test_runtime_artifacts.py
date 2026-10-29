@@ -183,3 +183,79 @@ def test_cancelled_staged_node_archives_small_evidence_then_cleans_only_own_file
     assert state['nodes']['N001']['cleanup']['status'] == 'done'
     assert not own.exists() and other.exists()
     assert (coral / 'public/cancelled/N001/runs/run/failure.log').is_file()
+
+
+def test_checkpoint_public_projection_is_detached_and_reports_retention(tmp_path):
+    import shutil
+
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    store = RuntimeArtifacts(configured(tmp_path))
+    checkpoint = store.path('N001', 'checkpoints/step-1')
+    checkpoint.mkdir(parents=True)
+    (checkpoint / 'model.pt').write_bytes(b'tensor')
+    (checkpoint / 'manifest.json').write_text(json.dumps({'status': 'complete', 'update_step': 1}))
+    public = store.coral_dir / 'public/eval_logs/sha/run/checkpoints/model/manifest.json'
+    store.publish_checkpoint('N001', checkpoint, public)
+    original = {'request_id': 'same-request', 'result': {'checkpoint_path': str(checkpoint)}}
+    ledger_bytes = store.ledger_path.read_bytes()
+    public_bytes = public.read_bytes()
+    before = list(public.parent.rglob('*'))
+    projected = store.project_response(original)
+    result = projected['result']
+    assert result['checkpoint_path'] == str(public.parent)
+    assert result['checkpoint']['manifest_path'] == str(public)
+    assert result['checkpoint']['ref'] == public.relative_to(store.coral_dir / 'public').as_posix()
+    assert result['checkpoint']['access'] == {'metadata': 'agent_readonly', 'tensors': 'host_selected_managed_diagnostic_only'}
+    assert result['checkpoint']['retention'] == 'available'
+    assert result['checkpoint']['diagnostic_path'].startswith('/workspace/checkpoints/')
+    assert store.project_response(original) == projected
+    assert original['result']['checkpoint_path'] == str(checkpoint)
+    assert store.ledger_path.read_bytes() == ledger_bytes
+    assert public.read_bytes() == public_bytes and list(public.parent.rglob('*')) == before
+    shutil.rmtree(checkpoint)
+    assert store.resolve_checkpoint(public) is None
+    assert store.project_response(original)['result']['checkpoint']['retention'] == 'unavailable'
+    assert store.project_response(original)['result']['checkpoint']['diagnostic_path'] is None
+    store.cleanup_node('N001', terminal=True)
+    assert store.project_response(original)['result']['checkpoint']['retention'] == 'cleaned'
+
+
+def test_public_checkpoint_reports_explicit_pruning_and_checks_manifest_identity(tmp_path):
+    import hashlib
+
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    store = RuntimeArtifacts(configured(tmp_path))
+    checkpoint = store.path('N001', 'checkpoints/step-1')
+    checkpoint.mkdir(parents=True)
+    (checkpoint / 'manifest.json').write_text(json.dumps({'status': 'complete'}))
+    public = store.coral_dir / 'public/eval_logs/sha/run/checkpoints/model/manifest.json'
+    store.publish_checkpoint('N001', checkpoint, public)
+    (store.coral_dir / 'private/checkpoint_retention.json').write_text(json.dumps({
+        'version': 1, 'pruned': {str(public.relative_to(store.coral_dir)): {
+            'manifest_sha256': hashlib.sha256(public.read_bytes()).hexdigest(), 'payloads': []}}}))
+    assert store.checkpoint_descriptor(public)['retention'] == 'pruned'
+    assert store.resolve_checkpoint(public) is None
+    public.write_text('{}')
+    with pytest.raises(ValueError, match='integrity'):
+        store.checkpoint_descriptor(public)
+
+
+def test_checkpoint_metadata_rejects_manifest_payload_traversal(tmp_path):
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    store = RuntimeArtifacts(configured(tmp_path))
+    checkpoint = store.path('N001', 'checkpoints/step-1')
+    checkpoint.mkdir(parents=True)
+    (checkpoint / 'manifest.json').write_text(json.dumps({'status': 'complete', 'files': {'../foreign': {}}}))
+    public = store.coral_dir / 'public/eval_logs/sha/run/checkpoints/model/manifest.json'
+    store.publish_checkpoint('N001', checkpoint, public)
+    with pytest.raises(ValueError, match='payload name'):
+        store.checkpoint_descriptor(public)
+
+
+def test_unknown_checkpoint_is_not_advertised_as_a_readable_host_location(tmp_path):
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    store = RuntimeArtifacts(configured(tmp_path))
+    result = store.project_response({'checkpoint_path': '/unselected/host/tensors'})
+    assert result['checkpoint_path'] is None
+    assert result['checkpoint']['diagnostic_path'] is None
+    assert result['checkpoint']['retention'] == 'unavailable'

@@ -181,3 +181,89 @@ print('readable and readonly')
             assert completed.returncode == 0, completed.stdout + completed.stderr
             assert 'readable and readonly' in completed.stdout
             shutil.rmtree(dynamic, ignore_errors=True)
+
+
+def test_checkpoint_metadata_readable_under_home_in_real_srt(tmp_path):
+    import yaml
+    from autoresearch.diagnostic_sandbox import isolation_available
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+
+    from coral.config import SandboxConfig
+    from coral.sandbox.srt import build_srt_settings
+
+    node = Path('/home/wyr/.local/lib/coral-engineer-tools/node-direct/bin/node')
+    srt = Path('/home/wyr/.local/lib/coral-engineer-tools/srt/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js')
+    if not (node.is_file() and srt.is_file() and isolation_available()):
+        pytest.skip('local SRT installation and namespaces unavailable')
+    with tempfile.TemporaryDirectory(prefix='coral-checkpoint-test-', dir=Path.home()) as temporary:
+        root = Path(temporary)
+        coral = root / 'run/.coral'
+        coral.mkdir(parents=True)
+        (coral / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {
+            'dynamic_artifact_root': str(root / 'dynamic'), 'dynamic_artifact_min_free_bytes': 0}}}))
+        store = RuntimeArtifacts(coral)
+        checkpoint = store.path('N001', 'checkpoints/step-1')
+        checkpoint.mkdir(parents=True)
+        (checkpoint / 'manifest.json').write_text('{"status":"complete"}')
+        (checkpoint / 'model.pt').write_text('selected tensor')
+        public = coral / 'public/eval_logs/sha/run/checkpoints/model/manifest.json'
+        store.publish_checkpoint('N001', checkpoint, public)
+        repo, worktree = root / 'repo', root / 'agents/researcher'
+        (repo / '.git').mkdir(parents=True)
+        worktree.mkdir(parents=True)
+        settings = tmp_path / 'checkpoint-srt.json'
+        settings.write_text(json.dumps(build_srt_settings(SandboxConfig(enabled=True,
+            network='allowlist', extra_settings={'network': {'allowAllUnixSockets': True}}),
+            proxy_port=None, worktree_path=worktree, coral_dir=coral, repo_dir=repo, shared_dir_name='.codex')))
+        descriptor = store.checkpoint_descriptor(public)
+        probe = f'''import json
+from pathlib import Path
+assert json.loads(Path({descriptor['manifest_path']!r}).read_text())['status'] == 'complete'
+assert not Path({str(checkpoint / 'model.pt')!r}).exists()
+try:
+ Path({descriptor['manifest_path']!r}).write_text('tampered')
+except OSError:
+ pass
+else:
+ raise AssertionError('metadata writable')
+print('metadata readable; private tensors denied')
+'''
+        command = [str(node), str(srt), '--settings', str(settings), '--', '/usr/bin/python3', '-c', probe]
+        for _ in range(2):
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert 'private tensors denied' in result.stdout
+            store.cleanup_node('N001', terminal=True)
+        assert store.checkpoint_descriptor(public)['retention'] == 'cleaned'
+
+
+def test_projected_checkpoint_diagnostic_path_reads_exact_selected_tensors(tmp_path):
+    from autoresearch.diagnostic_sandbox import build_sandbox, isolation_available
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    from test_runtime_artifacts import configured
+    if not isolation_available():
+        pytest.skip('real bubblewrap namespaces unavailable')
+    coral = configured(tmp_path)
+    artifacts = RuntimeArtifacts(coral)
+    selected = artifacts.path('N001', 'checkpoints/step-1')
+    selected.mkdir(parents=True)
+    (selected / 'manifest.json').write_text('{"status":"complete"}')
+    (selected / 'model.pt').write_text('selected bytes')
+    foreign = artifacts.path('N002', 'model.pt')
+    foreign.write_text('foreign bytes')
+    public = coral / 'public/eval_logs/sha/run/checkpoints/model/manifest.json'
+    artifacts.publish_checkpoint('N001', selected, public)
+    descriptor = artifacts.project_response({'checkpoint_path': str(selected)})['checkpoint']
+    workspace = coral / 'public/diagnostics/task/workspace'
+    for name in ('experiments', 'results', 'records'):
+        (workspace / name).mkdir(parents=True)
+    probe = f'''from pathlib import Path
+assert (Path({descriptor['diagnostic_path']!r})/'model.pt').read_text() == 'selected bytes'
+assert (Path({str(selected)!r})/'model.pt').read_text() == 'selected bytes'
+assert not Path({str(foreign)!r}).exists()
+print('projected diagnostic path is usable')
+'''
+    result = subprocess.run(build_sandbox(workspace, [], [], ['/usr/bin/python3', '-c', probe],
+        checkpoint_paths=[selected], coral_dir=coral), capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert 'projected diagnostic path is usable' in result.stdout

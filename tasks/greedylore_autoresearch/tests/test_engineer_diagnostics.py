@@ -69,11 +69,23 @@ def test_dynamic_engineer_returns_public_paths_without_rewriting_host_evidence(e
     (coral / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {
         'staged_research': True, 'dynamic_artifact_root': str(tmp_path / 'dynamic'),
         'dynamic_artifact_min_free_bytes': 0}}}))
+    from autoresearch.runtime_resources import configured_resources
+    data, target = tmp_path / 'data', tmp_path / 'target'
+    data.mkdir()
+    target.mkdir()
+    (target / 'shard').write_text('engineer stream')
+    (data / 'shard').symlink_to(target / 'shard')
+    config = yaml.safe_load((coral / 'config.yaml').read_text())
+    config['grader']['args']['diagnostic_resources'] = [
+        {'id': 'c4', 'path': str(data), 'target_roots': [str(target)], 'view': '/resources/c4'}]
+    (coral / 'config.yaml').write_text(yaml.safe_dump(config))
+    expected_resources = configured_resources(config['grader']['args'])
     RuntimeArtifacts(coral).node_root(node_id)
 
     def execute(task, payload, cancelled):
         cancelled()
         record = task.records / payload['request_id']
+        assert task.read()['runtime']['resources'] == expected_resources
         (record / 'stdout.log').write_text('engineer probe output')
         (record / 'stderr.log').write_text('')
         (record / 'results').mkdir()

@@ -18,6 +18,7 @@ from coral.grader.trusted_writes import _atomic_json
 from .artifact_paths import diagnostic_view
 from .atomic import atomic_write_text
 from .diagnostic_sandbox import build_sandbox
+from .runtime_resources import configured_resources, describe_resources
 
 
 def settings(coral_dir: Path) -> dict:
@@ -66,14 +67,15 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
 
     def remaining():
         return max(0, deadline - time.monotonic())
-    runtime_roots = [Path(path).absolute() for path in config.get('diagnostic_runtime_roots', [])]
+    resources = configured_resources(config)
     # Runtime dependencies are opt-in trusted configuration, never model-supplied.
     # No private grader venv or credentials are included in experiment mounts.
     runtime_path = config.get('diagnostic_path', '/usr/local/bin:/usr/bin:/bin')
     with task.locked(timeout=min(5, remaining())):
         state = task.read()
         checkpoint_paths = state.get('checkpoint_paths', [])
-        state['runtime'] = {'readonly_paths': [str(path) for path in [*runtime_roots, *read_roots]],
+        state['runtime'] = {'readonly_paths': [str(path) for path in read_roots],
+                            'resources': resources,
                             'path': runtime_path, 'gpu_lock_dir': config.get('gpu_lock_dir')}
         _atomic_json(task.path, state)
     tools = task.workspace / 'tools'
@@ -101,7 +103,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         binary = Path(binary).resolve()
         isolation_binary = Path(shutil.which('bwrap')).resolve()
         socket = task.coral_dir / 'public/trusted.sock'
-        mounts = [*runtime_roots, binary.parent, isolation_binary.parent, *read_roots, schema, tools, socket,
+        mounts = [binary.parent, isolation_binary.parent, *read_roots, schema, tools, socket,
                   task.records]
         task.records.mkdir(exist_ok=True)
         for name in ('/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ssl/certs'):
@@ -110,7 +112,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
         # build_sandbox forbids private mounts; home is a new, otherwise empty directory
         # explicitly added for Codex bookkeeping, not the grader's actual home.
         command = build_sandbox(task.workspace, mounts, [], ['true'], network=True,
-                                checkpoint_paths=checkpoint_paths, coral_dir=str(task.coral_dir))
+                                checkpoint_paths=checkpoint_paths, coral_dir=str(task.coral_dir), resources=resources)
         command = command[:-2]  # replace the placeholder command following '--'
         # build_sandbox supplies the same stable view to model and experiments.
         view = diagnostic_view(task.workspace, checkpoint_paths=checkpoint_paths)
@@ -179,7 +181,7 @@ def _run_diagnostic_codex_once(prompt, read_roots, output_schema, scratch, task,
                 '- Diagnostic commands use the same /workspace paths.\n'
                 '- Read returned logs/results under /workspace/records/<request-id>/; records are read-only.\n'
                 '- Cite record_ref or records/<request-id>/... in the final document.\n\n'
-                'Fixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
+                + describe_resources(resources) + '\n\nFixed read roots:\n' + '\n'.join(str(path) for path in read_roots)
             )
             _stdout, stderr = process.communicate(view.rewrite_text(prompt + location),
                                                   timeout=remaining())

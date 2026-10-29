@@ -539,3 +539,51 @@ def test_progress_reports_published_eligible_attempt(tmp_path):
     write_attempt(h.store.coral_dir, Attempt('b' * 40, h.agent_id, 'Research', 1.0,
         'regressed', None, '2026-01-01', metadata={'staged_research': True, 'performance_eligible': True}))
     assert h.status()['progress']['formal_eligibility'] == 'eligible'
+
+
+def test_status_wait_and_replayed_action_project_checkpoint_without_mutating_evidence(tmp_path, monkeypatch):
+    import json
+
+    from autoresearch.runtime_artifacts import RuntimeArtifacts
+    from autoresearch.staged_research import handle_action
+    h, r, backend = host(tmp_path)
+    config = r.store.coral_dir / 'config.yaml'
+    value = yaml.safe_load(config.read_text())
+    value['grader']['args'].update(dynamic_artifact_root=str(tmp_path / 'dynamic'), dynamic_artifact_min_free_bytes=0)
+    config.write_text(yaml.safe_dump(value))
+    artifacts = RuntimeArtifacts(r.store.coral_dir)
+    checkpoint = artifacts.path(h.node_id, 'checkpoints/step-1')
+    checkpoint.mkdir(parents=True)
+    (checkpoint / 'manifest.json').write_text(json.dumps({'status': 'complete', 'update_step': 1}))
+    public = r.store.coral_dir / 'public/eval_logs/sha/run/checkpoints/model/manifest.json'
+    artifacts.publish_checkpoint(h.node_id, checkpoint, public)
+    backend.run = lambda *_: {'status': 'completed', 'update_step': 1, 'checkpoint_path': str(checkpoint)}
+    h.enqueue('train', {'iteration': 1, 'sha': 'b'*40}, 'original', {})
+    h.drain()
+    saved = {path: path.read_bytes() for path in (h.path, r.private, r.public, public, artifacts.ledger_path)}
+    for _ in range(2):
+        job = h.wait('original')
+        assert job['result']['checkpoint_path'] == str(public.parent)
+        assert job['result']['checkpoint']['retention'] == 'available'
+        assert h.status()['jobs']['original']['result'] == job['result']
+    # Exercise the public mutation/replay boundary without launching a worker.
+    monkeypatch.setattr('autoresearch.staged_research._handle_action', lambda *_: h._read()['jobs']['original'])
+    replay = handle_action(r.store, h.agent_id, {}, {})
+    assert replay['request_id'] == 'original'
+    assert replay['result'] == job['result']
+    assert all(path.read_bytes() == content for path, content in saved.items())
+
+
+def test_historical_status_does_not_require_current_diagnostic_resources(tmp_path):
+    h, r, _ = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b'*40}, 'saved', {})
+    h.drain()
+    config = r.store.coral_dir / 'config.yaml'
+    options = yaml.safe_load(config.read_text())
+    options['grader']['args']['diagnostic_resources'] = [
+        {'id': 'missing', 'path': str(tmp_path / 'absent-data'), 'target_roots': []}]
+    config.write_text(yaml.safe_dump(options))
+    saved = h.path.read_bytes()
+    assert h.status()['jobs']['saved']['status'] == 'completed'
+    assert h.wait('saved')['request_id'] == 'saved'
+    assert h.path.read_bytes() == saved

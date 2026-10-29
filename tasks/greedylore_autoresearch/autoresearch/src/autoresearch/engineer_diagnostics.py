@@ -19,6 +19,7 @@ from coral.grader.trusted_writes import (
 from .diagnostic_sandbox import snapshot_files
 from .diagnostic_session import settings
 from .diagnostics import DiagnosticTask, _validate_request
+from .runtime_resources import configured_resources
 from .state import WorkflowStore, _owned_active
 
 
@@ -126,7 +127,7 @@ def run_engineer_diagnostic(coral: Path, peer: int, payload: dict, executor):
                 shutil.rmtree(task.workspace / 'experiments')
             snapshot_files(staged, task.workspace / 'experiments')
         state.update(candidate_sha=sha, code_path=str(code), runtime={
-            'readonly_paths': config.get('diagnostic_runtime_roots', []),
+            'readonly_paths': [], 'resources': configured_resources(config),
             'path': config.get('diagnostic_path', '/usr/local/bin:/usr/bin:/bin'),
             'gpu_lock_dir': config.get('gpu_lock_dir')})
 

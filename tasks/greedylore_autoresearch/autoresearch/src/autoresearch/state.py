@@ -468,7 +468,10 @@ class WorkflowStore:
             toolkit.mkdir(parents=True, exist_ok=True)
             task_root = Path(__file__).resolve().parents[3]
             from .runtime_artifacts import settings
-            staged = settings(self.coral_dir).get("staged_research") is True
+            options = settings(self.coral_dir)
+            staged = options.get("staged_research") is True
+            from .runtime_resources import publish_catalog
+            publish_catalog(toolkit, options)
             rules = "workflow_rules.md" if staged else "workflow_rules_legacy.md"
             shutil.copyfile(task_root / "roles" / rules, toolkit / "workflow_rules.md")
             shutil.copytree(task_root / "references", toolkit / "references", dirs_exist_ok=True)

@@ -77,6 +77,12 @@ Write that request to `/tmp/diagnostic1.json` and submit:
 ```bash
 autoresearch research diagnostic --node N001 --file /tmp/diagnostic1.json --request-id n001-probe1
 ```
+Read the host resource catalog before choosing data paths:
+```bash
+cat .codex/notes/toolkit/runtime_resources.json
+```
+Its declared views are available inside managed diagnostics. Current template views include `/resources/c4`, `/resources/cifar100`, and `/resources/tokenizer/snapshots/a9723ea7f1b39c1eae772870f3b547bf6ef7e6c1`; the per-run catalog is authoritative. Original paths are also retained for saved stream replay. A standalone nested shell can replace `/dev/shm` again; use the managed diagnostic command for data access.
+
 Use a real script directory inside your Worktree or `/tmp/<your-agent-id>/`, and the host-provided interpreter. Scripts are staged as `experiments/`; commands start at the diagnostic workspace root. Write persistent results to `results/`. The host supplies `CORAL_DIAGNOSTIC_CODE` and permitted checkpoint paths; do not substitute arbitrary host paths. Inspect returned records/stdout/stderr and cite persistent evidence. Record your conclusion in `/tmp/decision1.json`:
 ```json
 {"iteration": 1, "action": "continue", "reason": "State which mechanism predictions are supported, contradicted or untested; cite persistent run/diagnostic evidence and explain why remaining uncertainty permits continuation."}
@@ -123,6 +129,8 @@ autoresearch research finish --node N001 --file /tmp/finish.json --request-id n0
 ```
 The host checks completed development eligibility and first freezes the selected SHA, design, compression policy and workload mapping. The command waits through Final evaluation: fresh mandatory fixed-protocol timing, language transfer and ResNet18/CIFAR100. Final timing has its own budget; development measurements are not reused and timing magnitude adds no new gate. Training completion itself does not launch timing. Use null if none qualifies; if no candidate ever ran, also provide a committed representative `sha` as unexecuted evidence. Do not switch candidates after freeze. Successful host completion retires Researcher and hands over to Analysis; no further Researcher action is required.
 ## 4. State, recovery and evidence
+`status`, `wait`, and action/replay replies project checkpoint locations without changing private execution records or frozen evidence. When present, read `result.checkpoint.manifest_path` directly for metadata, or resolve its `ref` under this run's `.coral/public/`. `result.checkpoint_path` names that metadata directory only. Pass `checkpoint.diagnostic_path` as the checkpoint directory inside an authorized iteration diagnostic; this `/workspace/checkpoints/...` address is null after removal and is not an ordinary-shell path. Inspect `checkpoint.access` and `checkpoint.retention` before planning an inspection; `available` means retained, with tensor access still restricted to host-selected diagnostics. Cleanup/pruning preserves metadata and reports the changed retention status. Legacy `diagnostic_checkpoint.path` has the same metadata-only meaning when accompanied by explicit access information.
+
 The host appends execution observations and `timings[]`, and keeps diagnostics; there is no observation-write action. Put interpretation, evidence links and continue/revise/stop reasoning in `decision.reason`. `design` never edits code or runs training; `finish` never starts further Development experiments.
 If the terminal wait or connection is interrupted, reconnect without resubmitting or consuming another execution:
 ```bash

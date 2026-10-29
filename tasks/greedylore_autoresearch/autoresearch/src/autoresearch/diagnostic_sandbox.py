@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import shutil
 import signal
 import stat
@@ -73,7 +74,7 @@ def isolation_available() -> bool:
 
 
 def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=False,
-                  write_sources=None, checkpoint_paths=(), coral_dir=None) -> list[str]:
+                  write_sources=None, checkpoint_paths=(), coral_dir=None, resources=None) -> list[str]:
     """Create a minimal namespace; devices are NVIDIA minors, not NVML indices."""
     workspace = Path(workspace).absolute()
     for path in (workspace, workspace / 'experiments', workspace / 'results', workspace / 'records'):
@@ -109,7 +110,8 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
         if (coral_root is None or not path.is_relative_to(coral_root / 'public/eval_logs')
                 or path.parent.name != 'checkpoints' or not path.is_dir()):
             raise ValueError('invalid host-selected checkpoint mount')
-    for value in readonly_paths:
+    resource_mounts = (resources or {}).get('mounts', [])
+    for value in dict.fromkeys([*readonly_paths, *checkpoints, *(source for source, _ in resource_mounts)]):
         path = Path(value).absolute()
         _no_symlinks(path)
         if 'private' in path.parts or not path.exists() or path == Path('/'):
@@ -122,6 +124,11 @@ def build_sandbox(workspace: Path, readonly_paths, devices, argv, *, network=Fal
                     and path != coral_root / 'public/trusted.sock' and path not in checkpoints):
                 raise ValueError('diagnostic runtime mount exposes another task or private run data')
         command.extend(['--ro-bind', str(path), str(path)])
+    for source, target in resource_mounts:
+        if source != target:
+            if not re.fullmatch(r'/resources/[A-Za-z0-9_-]{1,64}', target):
+                raise ValueError('invalid resource view')
+            command.extend(['--ro-bind', source, target])
     # Both the model's nested sandbox and diagnostic commands use this view.
     # Keep original paths available for existing scripts; both views share the
     # same frozen writable inputs, never the live Analyzer inputs during execution.
@@ -268,7 +275,8 @@ def execute_diagnostic(task, payload, cancelled, *, borrowed=None) -> dict:
         _no_symlinks(task.workspace / 'records')
         (task.workspace / 'records').mkdir(exist_ok=True)
         build_sandbox(task.workspace, runtime.get('readonly_paths', []), [], payload['argv'],
-                      checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir))
+                      checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir),
+                      resources=runtime.get('resources'))
     except (ValueError, OSError) as exc:
         return {'status': 'unavailable', 'started': False, 'reason': str(exc)}
     queued = time.monotonic()
@@ -316,7 +324,8 @@ def execute_diagnostic(task, payload, cancelled, *, borrowed=None) -> dict:
                                 device_minors, payload['argv'], write_sources={
                                     'experiments': frozen / 'experiments',
                                     'results': frozen / 'results',
-                                }, checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir))
+                                }, checkpoint_paths=state.get('checkpoint_paths', []), coral_dir=str(task.coral_dir),
+                                resources=runtime.get('resources'))
         # Do not inherit grader credentials, Python paths or its virtual environment.
         # UUID order matches the reservation; device nodes were resolved by UUID,
         # not by the independently ordered nvidia-smi indices.

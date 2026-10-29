@@ -108,4 +108,7 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
   失败，须单独归因，不作为本轮新问题隐瞒。
 - 文档拆分：Engineer 命令、诊断、计时和 Analysis 提交接口已迁入独立参考；性能方法保留在 runtime 参考。定向文档与 handoff 检查 11 passed；toolkit 状态测试因工作区预先删除的 legacy 规则文件失败。隔离完整工作流成功模拟 1 passed、5 deselected（48.88s）；捕获的实际 toolkit 内容确认独立 Engineer 命令参考已交付。
 - 阶段 1：请求限额 64 KiB、响应限额 4 MiB；状态增加只读阶段进度与显式有界摘要，正式资格来自发布的 Attempt。定向回归见任务报告。
-- 阶段 2–4：待实施；最终验证：待实施。
+- 阶段 2：宿主 `diagnostic_resources` 声明由同一有界解析器生成挂载与 `public/notes/toolkit/runtime_resources.json`（会话准备时发布，状态读取不写入）。Researcher、Engineer、Analyzer 和实际诊断执行共用其结构，保留原始路径，允许额外 `/resources/<id>` 视图。每次环境准备解析一次；所有实际挂载在 `/dev/shm` tmpfs 之后。每份声明最多 64 个目标根，总目录扫描最多 4096 个条目、深度 64、每条链接最多 40 跳，拒绝缺失、循环、越界、非普通文件和过宽根。显式目标根授权整个只读目录；仅选中被链接引用的目标根，且扫描其内容。稳定视图拒绝逃出源根的相对链接，应改用共同父根或省略 view。
+- 阶段 2 实际模板：C4 源 `/home/wyr/greedy_lore/c4/c4_en/en`，目标仅 `/dev/shm/wyr_tmp/c4-half`，视图 `/resources/c4`；tokenizer 声明 model 专用 `models--t5-base` 目录（包含 snapshots/blobs，使相对链接保真），视图 `/resources/tokenizer`；CIFAR100 源 `/home/wyr/ARC-TopK-release/data`，视图 `/resources/cifar100`。当前宿主 C4 链接目标缺失：不修复、不下载、不更改运行中实验，部署前需宿主恢复已授权数据。
+- 阶段 2 checkpoint：公开响应按私有账本映射公开 manifest，给出稳定 ref、manifest hash、access 和 retention；兼容 checkpoint_path 仅表示元数据目录；diagnostic_path 复用原有稳定 tensor view 地址供获准的诊断脚本使用，清理后为 null。普通角色通过现有 SRT 本 run public 只读白名单读取；不扩展核心 home 权限。Researcher 仅挂载当前 iteration 的宿主选中 checkpoint，Analyzer 仅挂载固定 Attempt 的选中 checkpoint；Engineer 保留无 tensor 选择的现有边界。available 不等于任意诊断均可访问。原 journal/cache/evidence 的宿主路径与哈希不改写；读取不新增证据文件。pruned/cleaned/unavailable 明确区分，选择已裁剪目标不再抛文件不存在错误。
+- 阶段 2 验证：主工作区定向回归 153 passed；隔离 `/tmp` 源码副本（仅该副本补齐 HEAD 的两个 legacy 测试资产）最终资源、路径、Engineer、staged、handover 联合回归 227 passed，包含真实 SRT、嵌套 bwrap 与 UDS；无 GPU、训练或模型调用。工作区原有两个删除保持未暂存。阶段 3–4 与最终验证待实施。

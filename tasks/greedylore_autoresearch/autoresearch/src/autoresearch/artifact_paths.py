@@ -88,6 +88,12 @@ class PathView:
         return result
 
 
+def checkpoint_view(path) -> Path:
+    """Address only: access still requires host selection and an actual mount."""
+    identity = hashlib.sha256(str(_absolute(path)).encode()).hexdigest()[:24]
+    return WORKSPACE_VIEW / 'checkpoints' / identity
+
+
 def diagnostic_view(workspace, *, checkpoint_paths=()) -> PathView:
     workspace = _absolute(workspace)
     mounts = [(workspace, WORKSPACE_VIEW)]
@@ -95,6 +101,5 @@ def diagnostic_view(workspace, *, checkpoint_paths=()) -> PathView:
     if records.is_dir():
         mounts.append((records, WORKSPACE_VIEW / 'records'))
     for path in sorted({_absolute(value) for value in checkpoint_paths}):
-        identity = hashlib.sha256(str(path).encode()).hexdigest()[:24]
-        mounts.append((path, WORKSPACE_VIEW / 'checkpoints' / identity))
+        mounts.append((path, checkpoint_view(path)))
     return PathView(mounts)

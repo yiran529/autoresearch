@@ -6,6 +6,7 @@ from coral.grader.trusted_writes import _atomic_json
 
 from .diagnostic_sandbox import execute_diagnostic, snapshot_files
 from .runtime_artifacts import safe_path
+from .runtime_resources import configured_resources
 
 
 def execute(execution, job, code, work, row):
@@ -27,8 +28,8 @@ def execute(execution, job, code, work, row):
                 if checkpoint is not None:
                     checkpoints.append(checkpoint)
     state = {'source_role': 'researcher', 'code_path': str(code), 'checkpoint_paths': list(map(str, checkpoints)),
-             'runtime': {'readonly_paths': [str(code), *map(str, checkpoints),
-                 *execution.options.get('diagnostic_runtime_roots', [])],
+             'runtime': {'readonly_paths': [str(code), *map(str, checkpoints)],
+                 'resources': configured_resources(execution.options),
                  'path': execution.options.get('diagnostic_path', '/usr/local/bin:/usr/bin:/bin')}}
     task = SimpleNamespace(coral_dir=execution.coral, workspace=workspace, records=work / 'records',
         read=lambda: state, register_job=execution.lease.register_job, clear_job=execution.lease.clear_job)

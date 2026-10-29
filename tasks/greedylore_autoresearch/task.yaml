@@ -44,9 +44,24 @@ grader:
     max_active_nodes: 2
     # Opt in per run only: local IPC exception for the isolated Analyzer.
     analyzer_allow_unix_sockets: false
-    # Explicit public Python/CUDA/data roots can be mounted read-only when needed.
+    # Explicit Python/CUDA library roots remain direct read-only mounts; declare data below.
     # Never include .coral/private, home directories, credentials or other runs.
     diagnostic_runtime_roots: []
+    # Host-only declarations: original paths match the pinned evaluation contract.
+    # Missing links/targets fail before diagnostics acquire a GPU; never mount all /dev/shm.
+    diagnostic_resources:
+    - id: c4
+      path: /home/wyr/greedy_lore/c4/c4_en/en
+      target_roots: [/dev/shm/wyr_tmp/c4-half]
+      view: /resources/c4
+    - id: tokenizer
+      path: /home/wyr/.cache/huggingface/hub/models--t5-base
+      target_roots: []
+      view: /resources/tokenizer
+    - id: cifar100
+      path: /home/wyr/ARC-TopK-release/data
+      target_roots: []
+      view: /resources/cifar100
     diagnostic_path: /usr/local/bin:/usr/bin:/bin
     max_engineering_runs_per_node: 1
     trusted_submission_validator: autoresearch.submission:validate_submission

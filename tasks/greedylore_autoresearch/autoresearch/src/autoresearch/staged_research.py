@@ -19,7 +19,7 @@ import yaml
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 
 from .research_record import ResearchRecord
-from .runtime_artifacts import safe_path, settings
+from .runtime_artifacts import RuntimeArtifacts, safe_path, settings
 
 
 class StagedResearch:
@@ -47,7 +47,7 @@ class StagedResearch:
         from .staged_status import summary as summarize
         document = self.record.read() if self.record.private.exists() else {}
         state['progress'] = progress(self, state, document)
-        return summarize(state) if summary else state
+        return RuntimeArtifacts(self.store.coral_dir).project_response(summarize(state) if summary else state)
 
     def wait(self, request_id):
         """One authenticated read; waiting and retry delays stay in the CLI."""
@@ -403,6 +403,11 @@ class StagedResearch:
 
 
 def handle_action(store, owner, payload, context):
+    result = _handle_action(store, owner, payload, context)
+    return RuntimeArtifacts(store.coral_dir).project_response(result)
+
+
+def _handle_action(store, owner, payload, context):
     if set(payload) != {'node_id', 'action', 'data', 'request_id'}:
         raise ValueError('invalid staged research action')
     node, action, data, request_id = (payload[k] for k in ('node_id', 'action', 'data', 'request_id'))

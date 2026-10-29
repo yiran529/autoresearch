@@ -130,24 +130,103 @@ class RuntimeArtifacts:
             ledger['checkpoints'][relative] = record
             _atomic_json(self.ledger_path, ledger)
 
-    def resolve_checkpoint(self, public_manifest):
+    def checkpoint_descriptor(self, public_manifest):
+        """Read-only metadata view; never publish evidence as a side effect."""
+        from .artifact_paths import checkpoint_view
+        from .checkpoint_retention import checkpoint_is_pruned
+
         public_manifest = safe_path(Path(public_manifest))
         relative = public_manifest.relative_to(self.coral_dir / 'public').as_posix()
         ledger = self._read()
         row = ledger['checkpoints'].get(relative)
+        content = public_manifest.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        if row is not None and digest != row['manifest_sha256']:
+            raise ValueError('public checkpoint manifest integrity mismatch')
+        manifest = json.loads(content)
+        if not isinstance(manifest, dict) or not isinstance(manifest.get('files', {}), dict):
+            raise ValueError('invalid checkpoint manifest')
+        if any(not isinstance(name, str) or Path(name).name != name or name in {'', '.', '..'}
+               for name in manifest.get('files', {})):
+            raise ValueError('invalid checkpoint payload name')
+        root = safe_path(Path(row['path'])) if row else public_manifest.parent
+        retention = 'available'
+        if checkpoint_is_pruned(self.coral_dir, public_manifest):
+            retention = 'pruned'
+        elif row is not None and ledger['nodes'][row['node_id']].get('cleaned'):
+            retention = 'cleaned'
+        else:
+            if (manifest.get('status') != 'complete' or not (root / 'manifest.json').is_file()
+                    or any(not safe_path(root / name).is_file() for name in manifest.get('files', {}))):
+                retention = 'unavailable'
+        return {'ref': relative, 'manifest_path': str(public_manifest), 'manifest_sha256': digest,
+                'access': {'metadata': 'agent_readonly', 'tensors': 'host_selected_managed_diagnostic_only'},
+                'diagnostic_path': str(checkpoint_view(root)) if retention == 'available' else None,
+                'retention': retention}
+
+    def resolve_checkpoint(self, public_manifest):
+        public_manifest = safe_path(Path(public_manifest))
+        relative = public_manifest.relative_to(self.coral_dir / 'public').as_posix()
+        row = self._read()['checkpoints'].get(relative)
         if row is None:
-            return None
-        if ledger['nodes'][row['node_id']].get('cleaned'):
             return None
         checkpoint = safe_path(Path(row['path']))
         expected_root = self.namespace / 'nodes' / row['node_id']
         if not checkpoint.is_relative_to(expected_root):
             raise ValueError('checkpoint ownership mismatch')
+        if self.checkpoint_descriptor(public_manifest)['retention'] != 'available':
+            return None
         content = (checkpoint / 'manifest.json').read_bytes()
         if (hashlib.sha256(content).hexdigest() != row['manifest_sha256']
                 or content != public_manifest.read_bytes()):
             raise ValueError('external checkpoint manifest integrity mismatch')
         return checkpoint
+
+    def project_response(self, document):
+        """Detach response checkpoint locations from private execution records.
+
+        A compatibility checkpoint_path denotes a *metadata directory* only;
+        the adjacent descriptor states access and retention explicitly.
+        """
+        rows = self._read()['checkpoints']
+        public_root = self.coral_dir / 'public'
+        by_host = {row['path']: public_root / relative for relative, row in rows.items()}
+        descriptors = {}
+
+        def descriptor(value):
+            public = by_host.get(value)
+            if public is None and isinstance(value, str):
+                legacy = Path(value) / 'manifest.json'
+                if legacy.is_relative_to(public_root) and legacy.is_file():
+                    public = safe_path(legacy)
+            if public is None:
+                return {'access': {'metadata': 'unavailable', 'tensors': 'host_selected_managed_diagnostic_only'},
+                        'diagnostic_path': None, 'retention': 'unavailable'}
+            key = str(public)
+            if key not in descriptors:
+                descriptors[key] = self.checkpoint_descriptor(public)
+            return dict(descriptors[key])
+
+        def project(value):
+            if isinstance(value, list):
+                return [project(item) for item in value]
+            if not isinstance(value, dict):
+                return value
+            result = {key: project(item) for key, item in value.items()}
+            if result.get('checkpoint_path'):
+                info = descriptor(result['checkpoint_path'])
+                result['checkpoint'] = info
+                result['checkpoint_path'] = (str(Path(info['manifest_path']).parent)
+                                             if 'manifest_path' in info else None)
+            diagnostic = result.get('diagnostic_checkpoint')
+            if isinstance(diagnostic, dict) and diagnostic.get('path'):
+                info = descriptor(diagnostic['path'])
+                diagnostic.update(info)
+                diagnostic['path'] = (str(Path(info['manifest_path']).parent)
+                                      if 'manifest_path' in info else None)
+            return result
+
+        return project(document)
 
     def cleanup_node(self, node_id, *, terminal, _already_locked=False):
         if not terminal:

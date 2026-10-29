@@ -36,9 +36,18 @@ def test_analyzer_can_read_failure_correct_script_and_run_again(task, tmp_path, 
     checkpoint.mkdir(parents=True)
     (checkpoint / 'model.pt').write_text('matching checkpoint')
     checkpoint_alias = diagnostic_view(task.workspace, checkpoint_paths=[checkpoint]).path(checkpoint)
+    from autoresearch.runtime_resources import resolve_resources
+    data, target = tmp_path / 'data', tmp_path / 'target'
+    data.mkdir()
+    target.mkdir()
+    (target / 'shard').write_text('original data stream')
+    (data / 'shard').symlink_to(target / 'shard')
+    resources = resolve_resources([{'id': 'c4', 'path': str(data),
+        'target_roots': [str(target)], 'view': '/resources/c4'}])
     state = task.read()
     state['checkpoint_paths'] = [str(checkpoint)]
-    state['runtime'] = {'readonly_paths': [str(code), str(checkpoint)], 'path': '/usr/bin:/bin'}
+    state['runtime'] = {'readonly_paths': [str(code), str(checkpoint)], 'path': '/usr/bin:/bin',
+                        'resources': resources}
     diagnostics._atomic_json(task.path, state)
 
     class CpuReservation:
@@ -68,6 +77,8 @@ script = root/'experiments/probe.py'
 prefix = ('import sys\nfrom pathlib import Path\nsys.path.insert(0, '
           + repr('/workspace/code/'+sha) + ')\nfrom c4 import VALUE\nprint(VALUE, flush=True)\n')
 prefix += 'assert (Path('+repr(__CHECKPOINT__)+')/"model.pt").read_text() == "matching checkpoint"\n'
+prefix += 'assert Path("/resources/c4/shard").read_text() == "original data stream"\n'
+prefix += 'assert Path('+repr(__DATA__)+').read_text() == "original data stream"\n'
 script.write_text(prefix + 'print("x"*12000)\nprint(VALUE, flush=True)\n'
                   + 'print("y"*12000, file=sys.stderr)\nraise ValueError("probe needs correction")\n')
 def run(request):
@@ -104,7 +115,7 @@ assert (Path(fixed['results_path'])/'value.json').read_text() == 'fixed candidat
 assert (root/'results/value.json').read_text() == 'fixed candidate'
 (root/'results/roundtrip.json').write_text(json.dumps({'failed': failed, 'fixed': fixed}))
 '''.replace('__HOST_SECRET__', repr(str(secret))).replace('__SHA__', repr('a' * 40)).replace(
-        '__CHECKPOINT__', repr(str(checkpoint_alias)))
+        '__CHECKPOINT__', repr(str(checkpoint_alias))).replace('__DATA__', repr(str(data / 'shard')))
     (task.workspace / 'experiments/controller.py').write_text(controller)
     bwrap = shutil.which('bwrap')
     inner = [bwrap, '--die-with-parent', '--unshare-all', '--share-net', '--ro-bind', '/', '/',
