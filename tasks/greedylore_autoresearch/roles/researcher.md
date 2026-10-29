@@ -92,9 +92,7 @@ Before implementing a candidate, check the command guide's required `origin`/`de
 
 ### Purpose
 
-Implement and test candidates on the fixed development tasks. Use quality, mechanism and cost evidence to refine the method and decide which candidate to retain, or whether to end this investigation.
-
-Choose experiment schedules, pause points and diagnostic depth. Allow the proposed mechanism to operate, and spend computation on uncertainties most likely to change the next decision.
+Implement and test candidates on the fixed development tasks to assess practical quality and cost. Investigate mechanisms to explain observed outcomes, distinguish competing explanations and guide method refinement and future hypotheses. Use this evidence to select a candidate or decide whether to stop.
 
 ### Implementation and preparation
 
@@ -102,7 +100,6 @@ Implement the registered design and run proportionate correctness checks. Verify
 
 Commit candidate code and `submission.yaml` before managed experiments. Define per-workload compression mapping through `method_policy.py::configure_compression(args, workload)` and the shared hook, and verify matrix and convolution gradient support.
 
-- A new algorithm need not be numerically equivalent to the Parent. Distinguish algorithm, parameter and Engineering changes.
 - Include `mode: research`, Spec references and required event telemetry in `submission.yaml`.
 - Declare a complete effective `timing.period_steps`, or null for a nonperiodic method.
 
@@ -125,10 +122,10 @@ Combine training, diagnosis and timing according to the question, building enoug
 | Diagnostic experiment | `autoresearch research diagnostic` | Use logs, saved training states and controlled interventions to distinguish decision-relevant explanations |
 | Development timing | `autoresearch research timing` | Measure actual cost and whether a mechanism or local saving translates into end-to-end efficiency |
 
-- Diagnose paused or completed trajectories only. Branches must not change candidate state or supply extra candidate training; match relevant states and let branches evolve independently.
+- Diagnose only paused/completed trajectories; match relevant states, isolate branches and neither alter candidate state nor add candidate training.
 - Use separate probe data; confirm exploration-selected effects on fresh data when feasible, otherwise label them exploratory.
-- Timing may run before training, while paused or after completion. Reuse matching results by default; intentional repeats require `repeat_reason`, and decisions use the latest completed matching result.
-- Diagnostics and development timing are optional, not required every iteration. Development timing is not a nomination prerequisite.
+- Timing may run before training, while paused or after completion. Reuse matching results unless intentionally repeating with `repeat_reason`; use the latest completed match for decisions.
+- Diagnostics and development timing are optional; development timing is not required for nomination.
 
 Execution requests use:
 
