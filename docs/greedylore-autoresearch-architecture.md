@@ -2,6 +2,10 @@
 
 本文描述当前仓库中 GreedyLoRE AutoResearch 的实现，按职责划分为七个逻辑模块，说明各模块的输入、输出、代码位置和协作边界。这些模块并非七个独立部署的服务；部分职责由同一文件承担。
 
+2026-10-29 的通信、资源访问、诊断环境与受理反馈改进正在按
+[运行时可靠性设计](greedylore-runtime-reliability-design-20261029.md)分阶段实施。
+该设计记录具体接口、验证状态和部署边界；历史结果继续按其保存的 Contract 解释。
+
 ## 1. 总体结构
 
 CORAL 提供 Agent 进程管理、Git worktree、评分队列、沙箱、共享状态和查询界面。GreedyLoRE 在此基础上增加研究树、任务状态机、Researcher / Engineer 分工、固定评估协议，以及独立分析和全局记忆。
