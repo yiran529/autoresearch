@@ -975,3 +975,88 @@ def test_copied_analyzer_client_receives_large_response(tmp_path):
 def test_trusted_request_cap_still_64_kib(tmp_path):
     with pytest.raises(TrustedWriteError, match='request exceeds 64 KiB'):
         request_trusted(tmp_path, 'research_action', {'value': 'x' * 65536})
+
+
+@pytest.mark.parametrize('frame', [b'{}\n', b'{"ok":1,"result":{}}\n',
+                                  b'{"ok":true}\n', b'{"ok":false,"error":12}\n'])
+@pytest.mark.parametrize('client_kind', ['host', 'copied'])
+def test_clients_reject_malformed_response_envelopes(tmp_path, frame, client_kind):
+    import shutil
+    import socket
+
+    from autoresearch import diagnostic_client
+
+    from coral.grader import trusted_protocol
+
+    coral_dir = tmp_path / '.coral'
+    (coral_dir / 'public').mkdir(parents=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(coral_dir / 'public/trusted.sock'))
+    server.listen()
+    def respond():
+        with server.accept()[0] as connection:
+            connection.recv(65536)
+            connection.sendall(frame)
+    worker = threading.Thread(target=respond)
+    worker.start()
+    try:
+        if client_kind == 'host':
+            with pytest.raises(TrustedWriteError, match='invalid trusted response'):
+                request_trusted(coral_dir, 'research_action', {})
+        else:
+            tools = tmp_path / 'tools'
+            tools.mkdir()
+            shutil.copyfile(diagnostic_client.__file__, tools / 'autoresearch')
+            shutil.copyfile(trusted_protocol.__file__, tools / 'trusted_protocol.py')
+            result = subprocess.run([sys.executable, str(tools / 'autoresearch'), 'diagnostic',
+                'run', '--request-id', 'test', '--', 'true'], capture_output=True, text=True,
+                env={'CORAL_DIAGNOSTIC_RUN': str(coral_dir)}, timeout=5)
+            assert result.returncode != 0
+            assert 'invalid trusted response' in result.stderr
+    finally:
+        worker.join(timeout=5)
+        server.close()
+
+
+@pytest.mark.parametrize(('frame', 'expected'), [
+    (b'', 'empty trusted response'),
+    (b'{"ok":true}', 'truncated trusted response'),
+    (b'{"ok":false,"error":"task rejected"}\n', 'task rejected'),
+    (b'x' * (4 * 1024 * 1024 + 1), 'trusted response exceeds 4 MiB'),
+])
+def test_copied_analyzer_response_failures(tmp_path, frame, expected):
+    import shutil
+    import socket
+
+    from autoresearch import diagnostic_client
+
+    from coral.grader import trusted_protocol
+
+    coral_dir = tmp_path / '.coral'
+    (coral_dir / 'public').mkdir(parents=True)
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    shutil.copyfile(diagnostic_client.__file__, tools / 'autoresearch')
+    shutil.copyfile(trusted_protocol.__file__, tools / 'trusted_protocol.py')
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(coral_dir / 'public/trusted.sock'))
+    server.listen()
+    def respond():
+        with server.accept()[0] as connection:
+            connection.recv(65536)
+            try:
+                connection.sendall(frame)
+            except BrokenPipeError:
+                pass
+    worker = threading.Thread(target=respond)
+    worker.start()
+    try:
+        result = subprocess.run([sys.executable, str(tools / 'autoresearch'), 'diagnostic',
+            'run', '--request-id', 'test', '--', 'true'], capture_output=True, text=True,
+            env={'CORAL_DIAGNOSTIC_RUN': str(coral_dir)}, timeout=5)
+        assert result.returncode != 0
+        assert expected in result.stderr
+        assert 'Traceback' not in result.stderr
+    finally:
+        worker.join(timeout=5)
+        server.close()

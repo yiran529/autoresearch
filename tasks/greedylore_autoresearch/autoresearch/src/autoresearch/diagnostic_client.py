@@ -15,6 +15,7 @@ try:
         MAX_RESPONSE_BYTES,
         PROTOCOL_VERSION,
         FrameError,
+        parse_response,
         read_frame,
     )
 except ModuleNotFoundError:
@@ -23,6 +24,7 @@ except ModuleNotFoundError:
         MAX_RESPONSE_BYTES,
         PROTOCOL_VERSION,
         FrameError,
+        parse_response,
         read_frame,
     )
 
@@ -58,15 +60,13 @@ def main():
             except FrameError as exc:
                 raise SystemExit(str(exc)) from exc
         try:
-            result = json.loads(response)
-            if not isinstance(result, dict):
-                raise ValueError('response is not an object')
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise SystemExit('invalid trusted response') from exc
-        if result.get('ok'):
+            result = parse_response(response)
+        except FrameError as exc:
+            raise SystemExit(str(exc)) from exc
+        if result['ok']:
             print(json.dumps(result['result']))
             return
-        error = result.get('error', 'diagnostic rejected')
+        error = result['error']
         if 'active Analyzer diagnostic task' not in error or time.monotonic() >= deadline:
             raise SystemExit(error)
         time.sleep(0.05)

@@ -22,18 +22,38 @@ def progress(host, state, document):
                             'quality_pass': _small(latest.get('quality_pass', latest.get('eligible')))})
     final = state.get('final_evaluation') or {}
     components = final.get('components') or {}
+    legacy = not final and bool(state.get('transfer_terminal')) and isinstance(state.get('transfer'), dict)
+    if legacy:
+        final = {'status': state['transfer'].get('status', 'unknown')}
     names = list(dict.fromkeys(['timing', *(document.get('evaluation_stages') or {}).get('final_quality', []), *components]))
+    if legacy:
+        names.append('transfer')
     stages = {}
     for name in names[:64]:
         attempts = components.get(name) or []
         latest = attempts[-1] if attempts else {}
         result = latest.get('result') or {}
+        if legacy and name == 'transfer':
+            result = state['transfer']
+            latest = {'status': result.get('status', 'unknown')}
+        elif final.get('status') == 'skipped' and not attempts:
+            latest = {'status': 'skipped'}
+        elif legacy and name == 'timing':
+            timings = (row or {}).get('timings') or []
+            if timings:
+                result = timings[-1].get('result') or {}
+                latest = {'status': result.get('status', 'unknown')}
+            elif any(ob.get('timing') for ob in (row or {}).get('observations', [])):
+                latest = {'status': 'completed'}
+                result = {'status': 'completed'}
+            else:
+                latest = {'status': 'unknown'}
         stages[str(name)[:128]] = {'status': _small(latest.get('status', 'pending')),
                         'result_status': _small(result.get('status')),
                         'quality_pass': _small(result.get('quality_pass')),
                         'evidence_path': _small(result.get('evidence_path'))}
     publication = 'completed' if state.get('publication_complete') else ('pending' if state.get('transfer_terminal') else 'not_started')
-    eligibility = 'pending'
+    eligibility = 'unknown' if state.get('publication_complete') else 'pending'
     sha = row.get('code_sha') if row else None
     if sha and state.get('publication_complete'):
         attempt = read_attempt(host.store.coral_dir, sha)

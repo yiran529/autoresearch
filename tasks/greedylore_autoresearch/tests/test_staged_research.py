@@ -464,3 +464,78 @@ def test_progress_tracks_stages_and_published_attempt(tmp_path):
     write_attempt(h.store.coral_dir, Attempt('b' * 40, h.agent_id, 'Research', 1.0,
         'regressed', None, '2026-01-01', metadata={'staged_research': True, 'performance_eligible': False}))
     assert h.status()['progress']['formal_eligibility'] == 'ineligible'
+
+
+def test_progress_legacy_transfer_and_skipped_components(tmp_path):
+    h, r, _ = host(tmp_path)
+    state = h._read()
+    state.update(transfer={'status': 'completed', 'evidence_path': 'legacy/final'},
+                 transfer_terminal=True, publication_complete=True)
+    h._save(state)
+    progress = h.status()['progress']
+    assert progress['final']['status'] == 'completed'
+    assert progress['final']['components']['transfer']['result_status'] == 'completed'
+    assert progress['final']['components']['timing']['status'] == 'unknown'
+    assert progress['formal_eligibility'] == 'unknown'
+    document = r.read()
+    document['selected_iteration'] = 1
+    document['iterations'][0]['observations'] = [{'timing': {'metadata': {}}}]
+    private = __import__('json').loads(r.private.read_text())
+    private['document'] = document
+    r.private.write_text(__import__('json').dumps(private))
+    assert h.status()['progress']['final']['components']['timing']['status'] == 'completed'
+    document['selected_iteration'] = None
+    document['evaluation_stages'] = {'final_quality': ['small', 'large']}
+    private = __import__('json').loads(r.private.read_text())
+    private['document'] = document
+    r.private.write_text(__import__('json').dumps(private))
+    state['final_evaluation'] = {'status': 'skipped', 'components': {}}
+    state['transfer']['status'] = 'skipped'
+    h._save(state)
+    progress = h.status()['progress']
+    assert progress['final']['status'] == 'skipped'
+    assert all(item['status'] == 'skipped' for item in progress['final']['components'].values())
+
+
+def test_status_preserves_sealed_analysis_and_evidence(tmp_path):
+    import hashlib
+    import json
+
+    from autoresearch.analysis import resolve_evidence
+    from autoresearch.validation import seal_document
+    from test_analysis_recovery import _analysis_payload, _context
+
+    h, _, _ = host(tmp_path)
+    from dataclasses import replace
+    context = replace(_context(tmp_path / 'analysis-source'),
+                      log_root=h.store.coral_dir / 'public/eval_logs')
+    source = context.log_root / ('r' * 40) / 'raw.json'
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'{"measurement": 42}\n')
+    evidence = resolve_evidence('N001', 'research', context=context)
+    assert any(item.sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
+               for item in evidence.evidence_records)
+    sealed = h.store.notes_root / 'nodes/N001/research_analysis_v1.md'
+    sealed.write_text(json.dumps(seal_document(_analysis_payload(evidence), evidence)))
+    before = {p: (p.read_bytes(), hashlib.sha256(p.read_bytes()).hexdigest()) for p in (sealed, source)}
+    h.status()
+    h.status(summary=True)
+    assert {p: (p.read_bytes(), hashlib.sha256(p.read_bytes()).hexdigest()) for p in before} == before
+
+
+def test_progress_reports_published_eligible_attempt(tmp_path):
+    from coral.hub.attempts import write_attempt
+    from coral.types import Attempt
+
+    h, r, _ = host(tmp_path)
+    h.enqueue('train', {'iteration': 1, 'sha': 'b' * 40}, 'train', {})
+    h.drain()
+    private = __import__('json').loads(r.private.read_text())
+    private['document']['selected_iteration'] = 1
+    r.private.write_text(__import__('json').dumps(private))
+    state = h._read()
+    state.update(transfer_terminal=True, publication_complete=True)
+    h._save(state)
+    write_attempt(h.store.coral_dir, Attempt('b' * 40, h.agent_id, 'Research', 1.0,
+        'regressed', None, '2026-01-01', metadata={'staged_research': True, 'performance_eligible': True}))
+    assert h.status()['progress']['formal_eligibility'] == 'eligible'

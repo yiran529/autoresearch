@@ -28,6 +28,7 @@ from coral.grader.trusted_protocol import (
     MAX_RESPONSE_BYTES,
     PROTOCOL_VERSION,
     FrameError,
+    parse_response,
     read_frame,
 )
 from coral.hub._island import island_root
@@ -1232,17 +1233,12 @@ def _request_trusted_once(
     finally:
         client.close()
     try:
-        response = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise TrustedWriteError("invalid trusted response") from exc
-    if not isinstance(response, dict):
-        raise TrustedWriteError("invalid trusted response")
-    if not response.get("ok"):
-        raise TrustedWriteError(str(response.get("error", "trusted write rejected")))
-    result = response.get("result")
-    if not isinstance(result, dict):
-        raise TrustedWriteError("trusted response result is not an object")
-    return result
+        response = parse_response(raw)
+    except FrameError as exc:
+        raise TrustedWriteError(str(exc)) from exc
+    if not response['ok']:
+        raise TrustedWriteError(response['error'])
+    return response['result']
 
 
 def request_trusted(
