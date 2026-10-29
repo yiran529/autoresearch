@@ -50,6 +50,8 @@ The two legacy role deletions predated this work and remain untouched and unstag
 
 ## Independent operator simulations
 
+These earlier simulations had synthetic model boundaries. The subsequent [fresh Luna behavior test](greedylore-luna-behavior-validation-20261029.md) separately records actual model-authored diagnostics, publication and downstream reference checks, including failures and coverage limits.
+
 Each simulation used disposable synthetic fixtures and no active run or real GPU/model work:
 
 1. A real CLI, UDS transport and controller exercised a 1.24 MB staged journal, bounded summary and same-request recovery. Fixture identity resolution was synthetic, so that exercise alone did not verify production registry authentication.
