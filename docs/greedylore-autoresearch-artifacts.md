@@ -364,3 +364,5 @@ coral resume --task <task> --run <run> agents.dynamic.max_engineers=0
 - [质量结果构造](../tasks/greedylore_autoresearch/seed/c4/run_llama_pretraining.py)、[测速结果构造](../tasks/greedylore_autoresearch/seed/c4/table_v_timing.py)。
 - [canonical artifact 路径](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/artifacts.py)、[Evaluation](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/evaluation.py)、[Analysis schema](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/validation.py)、[Memory](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/memory.py)。
 - [诊断身份与记录](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/diagnostics.py)、[诊断执行与归档](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/diagnostic_sandbox.py)、[工作流状态与调度](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/state.py)。
+
+运行时资源公开目录及 checkpoint 公开 manifest 与受管 tensor 视图的当前约定见 [运行时可靠性设计](greedylore-runtime-reliability-design-20261029.md)。资源不可用时公开目录记录错误，已保存的发布和清理继续；诊断执行仍在使用 GPU 前拒绝不可用资源。

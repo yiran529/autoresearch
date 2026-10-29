@@ -84,7 +84,7 @@ Prepare submission after at least one formal Attempt reaches a terminal state an
 
 Prepare the final JSON in authorized scratch outside the tracked Worktree, following `references/engineer_commands.md`. Its `attempt_shas` must list every distinct formal candidate SHA in this claim exactly once, including failures and regressions.
 
-Submit with `autoresearch engineering finish --analysis-file /absolute/scratch/final.json` and wait for host validation, versioned publication, and retirement. There is no separate independent Engineering Analyzer. Node inheritance also requires published Research Analysis.
+Submit with `autoresearch engineering finish --analysis-file /absolute/scratch/final.json --wait` and wait for host validation, versioned publication, and retirement. There is no separate independent Engineering Analyzer. Node inheritance also requires published Research Analysis.
 
 - `finalizing` means the submission is persisted, not that publication is complete.
 - After submission, do not change the summary or add candidates. Reuse the same content after an interruption.

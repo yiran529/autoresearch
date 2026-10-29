@@ -538,6 +538,7 @@ def prepare(*, contract_version=1):
         private=["taskdata/eval_contract.yaml"],
     )
     # This driver explicitly covers the retained pre-staged compatibility protocol.
+    config["grader"]["args"]["diagnostic_resources"] = []
     config["grader"]["args"]["staged_research"] = False
     config["grader"]["args"]["trusted_workflow_handler"] = "simulation_support:workflow_handler"
     config["grader"]["args"]["trusted_workflow_worker"] = "simulation_support:run_finalization"

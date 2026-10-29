@@ -93,7 +93,41 @@ def test_engineer_timing_cli_sends_committed_sha_without_autocommitting(monkeypa
 
     calls = []
     monkeypatch.setattr(cli, '_coral_dir', lambda: Path('/run/.coral'))
-    monkeypatch.setattr(cli, 'request_trusted', lambda root, operation, payload: calls.append((operation, payload)) or {'status': 'regressed'})
+    monkeypatch.setattr(cli, 'request_trusted', lambda root, operation, payload: calls.append((operation, payload)) or {'status': 'regressed', 'commit_hash': 'a' * 40})
     cli.main(['engineering', 'timing', '--sha', 'a' * 40, '--request-id', 'timing-1', '--retry'])
     assert calls == [('engineering_timing', {'sha': 'a' * 40, 'request_id': 'timing-1', 'retry': True})]
     assert json.loads(capsys.readouterr().out)['status'] == 'regressed'
+
+
+def test_engineering_timing_receipt_precedes_poll(monkeypatch, capsys):
+    from autoresearch import cli
+
+    from coral.hooks import post_commit
+    sha = 'a' * 40
+    monkeypatch.setattr(cli, '_coral_dir', lambda: Path('/run/.coral'))
+    monkeypatch.setattr(cli, '_workflow_context', lambda: (Path('/run/.coral'), Path('/notes'), None))
+    monkeypatch.setattr(cli, 'request_trusted', lambda *args: {'status': 'pending', 'commit_hash': sha})
+    def poll(*args, **kwargs):
+        captured = capsys.readouterr()
+        assert sha in captured.err and 'timing-1' in captured.err
+        assert captured.out == ''
+        return SimpleNamespace(to_dict=lambda: {'status': 'improved'})
+    monkeypatch.setattr(post_commit, '_poll_until_graded', poll)
+    cli.main(['engineering', 'timing', '--sha', sha, '--request-id', 'timing-1'])
+    assert json.loads(capsys.readouterr().out)['status'] == 'improved'
+
+
+def test_engineering_finish_wait_replays_identical_submission(monkeypatch, tmp_path, capsys):
+    from autoresearch import cli
+    path = tmp_path / 'analysis.json'
+    path.write_text('{"summary": "done"}')
+    calls = []
+    monkeypatch.setattr(cli, '_coral_dir', lambda: Path('/run/.coral'))
+    def request(root, operation, payload):
+        calls.append((operation, payload))
+        return {'status': 'completed' if len(calls) == 2 else 'finalizing'}
+    monkeypatch.setattr(cli, 'request_trusted', request)
+    monkeypatch.setattr(cli.time, 'sleep', lambda _: None)
+    cli.main(['engineering', 'finish', '--analysis-file', str(path), '--wait'])
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert json.loads(capsys.readouterr().out)['status'] == 'completed'

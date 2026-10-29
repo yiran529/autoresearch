@@ -93,6 +93,8 @@ def cmd_eval(args: argparse.Namespace) -> None:
             wait=wait,
             poll_timeout=timeout,
             tune=tune,
+            on_accepted=lambda accepted: print(
+                f"Accepted attempt: {accepted.commit_hash}", file=sys.stderr, flush=True),
         )
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)

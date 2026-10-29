@@ -732,3 +732,54 @@ def test_submit_wait_survives_long_gpu_queue(tmp_path, monkeypatch, gpu_wait, re
         monotonic=lambda: clock[0], sleep=lambda _: clock.__setitem__(0, clock[0] + 600)))
     monkeypatch.setattr(post_commit, 'read_attempt', read)
     assert submit_eval('candidate', 'agent-0', str(repo)).status == 'improved'
+
+
+def test_submit_eval_reports_durable_acceptance_before_poll(tmp_path, monkeypatch):
+    from coral.hooks import post_commit
+    repo = _setup_repo_with_config(tmp_path)
+    (repo / 'hello.py').write_text("print('receipt')\n")
+    events = []
+    def poll(coral_dir, commit_hash, timeout, *, island_id=None):
+        assert events == [commit_hash]
+        return post_commit.read_attempt(coral_dir, commit_hash, island_id=island_id)
+    monkeypatch.setattr(post_commit, '_poll_until_graded', poll)
+    submit_eval('receipt', 'agent-0', str(repo), on_accepted=lambda attempt: events.append(attempt.commit_hash))
+    assert events == [_head_hash(repo)]
+
+
+def test_submit_eval_rejected_trusted_submission_has_no_receipt_or_attempt(tmp_path, monkeypatch):
+    repo = _setup_repo_with_config(tmp_path)
+    _set_grader_config(repo, args={'trusted_submission_validator': 'task.submission:validate_submission'})
+    (repo / 'hello.py').write_text("print('rejected')\n")
+    events = []
+    def reject(*args):
+        raise RuntimeError('HEAD moved')
+    monkeypatch.setattr('coral.grader.trusted_writes.request_trusted', reject)
+    with pytest.raises(RuntimeError, match='HEAD moved'):
+        submit_eval('rejected', 'agent-0', str(repo), wait=False, on_accepted=events.append)
+    assert not events
+    assert not list((repo / '.coral' / 'public' / 'attempts').glob('*.json'))
+
+
+def test_submit_eval_no_wait_reports_accepted_attempt(tmp_path):
+    repo = _setup_repo_with_config(tmp_path)
+    (repo / 'hello.py').write_text("print('accepted')\n")
+    events = []
+    attempt = submit_eval('accepted', 'agent-0', str(repo), wait=False, on_accepted=events.append)
+    assert events == [attempt]
+    assert attempt.status == 'pending'
+    assert (repo / '.coral' / 'public' / 'attempts' / f'{attempt.commit_hash}.json').is_file()
+
+
+def test_eval_cli_receipt_is_stderr_and_final_output_stays_stdout(tmp_path, capsys):
+    from argparse import Namespace
+
+    from coral.cli.eval import cmd_eval
+    repo = _setup_repo_with_config(tmp_path)
+    (repo / 'hello.py').write_text("print('cli')\n")
+    cmd_eval(Namespace(message='cli', agent='agent-0', workdir=str(repo), wait=False,
+                       timeout=None, tune=False))
+    captured = capsys.readouterr()
+    assert f'Accepted attempt: {_head_hash(repo)}' in captured.err
+    assert 'Accepted attempt:' not in captured.out
+    assert 'CORAL Eval: PENDING' in captured.out

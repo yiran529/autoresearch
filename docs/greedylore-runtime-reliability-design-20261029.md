@@ -122,3 +122,8 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 阶段 3 环境：同一 `build_sandbox(resources=...)` 供 CPU 预检与诊断使用；host-owned 最小 hosts/nsswitch 不覆盖显式挂载。命名空间实际读取声明资源中的普通文件首字节（4096 个 inode 有界），验证 localhost 与 IPv4 loopback，环境不继承凭据或 PYTHONPATH，且无 GPU 节点。暂存探针目录在 `/tmp` 清理；原有 staged CPU tensor IPC 检查独立保留。元数据/缺失协议资产不会自动改写或切换协议。
 - 阶段 3 打包：离线 wheel 检查发现 ancestor `autoresearch/` ignore 会使 wheel 仅含 metadata；对已限定 `src/autoresearch` 包的 hatch 构建关闭 VCS ignore、排除 pycache，确保 host-owned localhost 文件和 launcher 随包交付。离线 wheel 内容逐字节验证及其实际 bwrap 探针通过。
 - 阶段 3 验证：最终主工作区 namespace/environment/submission/CLI/trusted-write 定向回归 178 passed；隔离 `/tmp` 历史资产兼容副本上的资源、Engineer、handoff、contract 与真实 SRT 检查 66 passed。含真实 authenticated UDS、只读/凭据隔离、CPU 两 rank Gloo all-reduce、worker 失败与 SIGTERM；无 GPU、训练、模型或包网络下载。两份 legacy 删除仍保持未暂存。
+
+- 阶段 4：`coral eval` 在持久受理后、等待评分前向 stderr 输出完整 SHA；Engineering timing 同时输出 request ID。`--no-wait` 仍完成受理；拒绝不输出受理事件。Engineering `finish --analysis-file <file> --wait` 以同一内容重放已受理提交直到发布完成；默认仍返回 finalizing，断线时使用同一文件重试。
+- 资源目录发布遇到缺失或无效声明时写入 `status: unavailable` 和错误，允许已有冻结 Analysis 发布、清理和 roster 恢复；预检及实际诊断独立解析资源，仍在 GPU 前 fail closed。
+- 独立操作演练记录在本地 `.superpowers/sdd/2026-10-29-greedylore-runtime-reliability/simulation-task1.md`、`simulation-task2.md`、`simulation-task3.md`：分别覆盖状态/通信、资源与 checkpoint 视图、真实 namespace 与 CPU Gloo 预检；采用临时合成数据，不代表在线实验或 GPU 验证。
+- 最终离线回归：六种 staged 情景全部通过（真实 CLI、认证、控制器与发布，训练、GPU 和模型边界合成）；真实 SRT 双场景通过，当前源码加历史角色资产的独立兼容副本 115 项通过。主工作区两份原有 legacy 删除仍未恢复，在线服务和数据未部署或修改。

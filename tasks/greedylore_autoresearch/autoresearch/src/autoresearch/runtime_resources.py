@@ -169,4 +169,10 @@ def publish_catalog(toolkit, options):
     from .atomic import atomic_write_text
 
     target = safe_path(Path(toolkit) / 'runtime_resources.json')
-    return atomic_write_text(target, json.dumps(configured_resources(options), indent=2) + '\n', mode=0o444)
+    try:
+        catalog = configured_resources(options)
+    except (ValueError, OSError) as exc:
+        # This is public metadata only. Execution independently resolves the
+        # declarations and still fails closed when a resource is unavailable.
+        catalog = {'version': 1, 'status': 'unavailable', 'error': str(exc)}
+    return atomic_write_text(target, json.dumps(catalog, indent=2) + '\n', mode=0o444)

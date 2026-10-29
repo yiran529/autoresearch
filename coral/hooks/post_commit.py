@@ -11,6 +11,7 @@ import json
 import logging
 import subprocess
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -130,6 +131,7 @@ def submit_eval(
     wait: bool = True,
     poll_timeout: float | None = None,
     tune: bool = False,
+    on_accepted: Callable[[Attempt], None] | None = None,
 ) -> Attempt:
     """Stage changes, commit with message, write a pending attempt record.
 
@@ -138,6 +140,8 @@ def submit_eval(
     returns the final Attempt. If False, returns immediately with a pending
     Attempt — the caller (or a future `coral wait` invocation) is responsible
     for observing the final result.
+
+    ``on_accepted`` receives the persisted Attempt before any grade polling.
 
     If ``tune`` is True, the attempt is marked as a tune-mode submission
     (``budget_class="tune"`` on its metadata). The grader still runs and the
@@ -242,6 +246,9 @@ def submit_eval(
             metadata=metadata,
         )
         write_attempt(str(coral_dir), attempt, island_id=island_id)
+
+    if on_accepted is not None:
+        on_accepted(attempt)
 
     if not wait:
         return attempt

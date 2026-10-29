@@ -1102,3 +1102,41 @@ def test_infrastructure_block_prevents_new_node_admission(root_run):
     assert set(_state(root_run)['nodes']) == {'N000'}
     marker.unlink()
     assert any(a.agent_id == 'research-N001' for a in store.reconcile(1, 0))
+
+
+def test_missing_diagnostic_resource_does_not_block_frozen_engineering_publication(engineering_ready, monkeypatch, tmp_path):
+    from autoresearch import runtime_artifacts
+    from autoresearch.runtime_resources import configured_resources
+    store, _, body = _engineer_with_attempts(engineering_ready, count=1)
+    assert store.submit_engineering_analysis('engineer-E0001', body)['status'] == 'finalizing'
+    options = {'staged_research': True, 'diagnostic_resources': [
+        {'id': 'missing', 'path': str(tmp_path / 'absent')}], 'dynamic_artifact_root': str(tmp_path / 'dynamic')}
+    monkeypatch.setattr(runtime_artifacts, 'settings', lambda _: options)
+    store.reconcile(0, 0)
+    assert _state(store.coral_dir)['engineering_workers']['engineer-E0001']['status'] == 'completed'
+    catalog = json.loads((store.notes_root / 'toolkit/runtime_resources.json').read_text())
+    assert catalog['status'] == 'unavailable' and catalog['error']
+    with pytest.raises(ValueError):
+        configured_resources(options)
+
+
+def test_engineering_finish_wait_completes_real_publication(engineering_ready, monkeypatch, tmp_path, capsys):
+    from autoresearch import cli
+    from autoresearch.state import handle_workflow
+
+    from coral.grader.trusted_writes import AgentBinding, TrustedWriteService
+
+    store, node, body = _engineer_with_attempts(engineering_ready, count=1)
+    service = TrustedWriteService(store.coral_dir, SimpleNamespace(grader=SimpleNamespace(args={})),
+                                  workflow_handler=handle_workflow)
+    binding = AgentBinding('engineer-E0001', 1, 1, str(store.repo_path), None)
+    monkeypatch.setattr(cli, '_coral_dir', lambda: store.coral_dir)
+    monkeypatch.setattr(cli, 'request_trusted', lambda _, op, payload:
+                        service.handle_authenticated(op, payload, binding))
+    monkeypatch.setattr(cli.time, 'sleep', lambda _: store.advance())
+    summary = tmp_path / 'analysis.json'
+    summary.write_text(json.dumps(body))
+    cli.main(['engineering', 'finish', '--analysis-file', str(summary), '--wait'])
+    assert json.loads(capsys.readouterr().out)['status'] == 'completed'
+    assert _state(store.coral_dir)['engineering_workers'][binding.agent_id]['status'] == 'completed'
+    assert (node / 'engineering_analysis_v1.json').is_file()

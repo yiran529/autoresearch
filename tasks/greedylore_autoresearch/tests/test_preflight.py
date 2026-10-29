@@ -166,7 +166,7 @@ def test_ipv4_launcher_parser_and_autoport():
 
 @pytest.mark.parametrize('worker_fails', [False, True, 'signal'])
 def test_real_two_process_ipv4_rendezvous(tmp_path, worker_fails):
-    python = Path('/home/wyr/greedy_lore/.venv/bin/python')
+    python = Path(os.environ.get('CORAL_CPU_TORCH_PYTHON', '/home/wyr/greedy_lore/.venv/bin/python'))
     assert python.is_file(), 'approved existing Torch environment is required for this integration check'
     root = workspace(tmp_path / 'workspace')
     script = root / 'experiments/ranks.py'

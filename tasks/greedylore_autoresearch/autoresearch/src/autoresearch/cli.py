@@ -234,6 +234,7 @@ def _parser() -> argparse.ArgumentParser:
     timing.add_argument('--retry', action='store_true', help='explicit same-SHA infrastructure retry with a new ID')
     engineering_commands.add_parser("cancel", help="cancel an unbound Engineer assignment")
     finish = engineering_commands.add_parser("finish", help="submit your final Engineering Analysis")
+    finish.add_argument("--wait", action="store_true", help="wait for publication using the identical submission")
     finish.add_argument("--analysis-file", type=Path, required=True,
                         help="scratch JSON with summary, findings, limitations and all attempt_shas")
 
@@ -365,6 +366,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         result = request_trusted(coral_dir, 'engineering_timing', {
             'sha': args.sha, 'request_id': args.request_id, 'retry': args.retry,
         })
+        print(f'Accepted engineering timing: {result["commit_hash"]} request: {args.request_id}',
+              file=sys.stderr, flush=True)
         if result['status'] == 'pending':
             from coral.hooks.post_commit import _poll_until_graded
 
@@ -375,9 +378,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif args.command == "engineering" and args.engineering_command == "finish":
         from autoresearch.validation import load_document
 
-        result = request_trusted(_coral_dir(), "finish_assignment", {
-            "mode": "engineering", "analysis": load_document(args.analysis_file),
-        })
+        coral_dir = _coral_dir()
+        payload = {"mode": "engineering", "analysis": load_document(args.analysis_file)}
+        result = request_trusted(coral_dir, "finish_assignment", payload)
+        while args.wait and result.get("status") == "finalizing":
+            time.sleep(_RESEARCH_POLL_INTERVAL)
+            result = request_trusted(coral_dir, "finish_assignment", payload)
     elif args.command == "refresh-evaluation":
         result = _refresh_evaluation(args)
     elif args.command == "analyze":

@@ -115,7 +115,7 @@ Research Analysis 关注质量变化、算法机制、竞争解释、局限和�
 
 支持 checkpoint 的新 seed 在每个 quality workload 的最后一次更新后、最终验证前保存一个分布式 checkpoint，位于该 grader run 的 `checkpoints/<workload>/`。模型保存一份，各 rank 分别保存 optimizer/scheduler、可序列化的 compressor 状态、RNG 和最后一批训练输入。全部 rank 保存成功后才发布完整 manifest；磁盘不足、未知状态或单 rank 写入失败会使 checkpoint unavailable，不改变 quality 指标。Timing 不保存，也不启用 checkpoint hook 包装。旧候选缺少保存接口时保留原 quality 命令。
 
-Analyzer 及其诊断进程只读挂载当前 Attempt 的完整 checkpoint。小型 manifest 进入固定证据，大型 tensor 文件不复制进 evidence/workspace 或 64 MiB 诊断归档。加载辅助函数 `diagnostic_checkpoint.load_checkpoint` 位于匹配 SHA 的代码快照；恢复须匹配模型、优化器、world size 和 DDP bucket 布局，不隐式清零 EF，也不承诺恢复原数据流位置。可读取现成 checkpoint，也可通过现有权威诊断命令进行预算内的小规模训练；实验设计仍以 Reference 为准。当前不实现 checkpoint 自动删除，已完成 Analysis 仍保留其 checkpoint。
+Analyzer 及其诊断进程只读挂载当前 Attempt 的完整 checkpoint。小型 manifest 进入固定证据，大型 tensor 文件不复制进 evidence/workspace 或 64 MiB 诊断归档。加载辅助函数 `diagnostic_checkpoint.load_checkpoint` 位于匹配 SHA 的代码快照；恢复须匹配模型、优化器、world size 和 DDP bucket 布局，不隐式清零 EF，也不承诺恢复原数据流位置。可读取现成 checkpoint，也可通过现有权威诊断命令进行预算内的小规模训练；实验设计仍以 Reference 为准。普通 Node 完成后宿主按 retention ledger 清理 tensor，保留 manifest 与证据；详细访问和保留状态见 [运行时可靠性设计](greedylore-runtime-reliability-design-20261029.md)。
 
 关键证据不足时，Analyzer 可在同一 Session 中编写小型诊断脚本，通过权威入口申请 GPU；它不是正式 Attempt，不改变质量、评分或 Engineer 的 3 次成功／10 次总运行限制：
 
@@ -193,3 +193,5 @@ CORAL CLI 提供实验、日志、笔记和状态查询；Starlette 后端与 Re
 七模块是职责划分，不表示代码已完全解耦：`state.py` 同时处理研究树约束和工作流调度，`lifecycle.py` 同时衔接任务完成、分析和记忆。角色规则也不都等价于服务端硬约束，Engineering 的 3 次成功／10 次总运行限制同时由角色指令和服务端授权检查约束。
 
 通用机制与任务语义仍有需要注意的接缝：Research 提交校验目前要求候选直接 Git parent 等于 Spec 的 Parent SHA，与正式提交前允许普通 commit 的角色规则存在冲突；dynamic Agent 仍可能收到鼓励持续实验的通用恢复 prompt；长训练需要同时考虑评分超时、CLI 等待期限和 Agent watchdog。理解这些边界有助于排查工作流问题，不能仅依据 prompt 推断系统实际行为。
+
+运行时资源声明、预检、受理回执与 Engineering 等待/恢复接口的当前实现见 [运行时可靠性设计](greedylore-runtime-reliability-design-20261029.md)。
