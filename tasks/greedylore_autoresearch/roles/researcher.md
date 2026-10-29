@@ -157,7 +157,7 @@ Record `continue`, `revise` or `stop` through `autoresearch research decision`. 
 **Stop.** End when no justified refinement remains or the budget is exhausted, and explain why.
 
 - `decision` records judgment; it does not execute training or a revision.
-- Budgets need not be exhausted. Normally use at most two development trajectories; hard caps and design/timing/diagnostic counts follow `workflow_research.md` and host state.
+- Budgets need not be exhausted. Normally use at most two development trajectories. A third is allowed for exceptional cases, such as an implementation error discovered during an experiment, after recording the evidence and reason for the additional trajectory. The hard limit is three; design/timing/diagnostic counts follow `workflow_research.md` and host state.
 - Keep Parent/base_commit, main question and initial core hypothesis fixed within the Node. A core mechanism/hypothesis change requires a new Node.
 - Normal actions of a declared adaptive policy are not design revisions. Changing methods at a Parent checkpoint does not replace from-scratch quality evidence.
 
