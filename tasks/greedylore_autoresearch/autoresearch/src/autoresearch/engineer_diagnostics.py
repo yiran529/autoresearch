@@ -107,11 +107,13 @@ def run_engineer_diagnostic(coral: Path, peer: int, payload: dict, executor):
         _atomic_json(task.path, state)
 
     def prepare(state):
-        scratch = scratch_dir(worker, binding.agent_id)
         # snapshot_files separately rejects symlinks in every path component.
-        if not (scripts.is_relative_to(repo) or scripts.is_relative_to(scratch)) or '..' in scripts.parts:
-            raise PermissionError(f'diagnostic scripts must be in this Worktree or {scratch}; '
-                                  'run engineering claim to obtain your scratch directory')
+        if '..' in scripts.parts or not scripts.is_relative_to(repo):
+            current = _authorize(coral, binding)
+            scratch = scratch_dir(current, binding.agent_id)
+            if '..' in scripts.parts or not scripts.is_relative_to(scratch):
+                raise PermissionError(f'diagnostic scripts must be in this Worktree or {scratch}; '
+                                      'run engineering claim to obtain your scratch directory')
         if subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain',
                                     '--untracked-files=no']).strip():
             raise ValueError('commit tracked candidate changes before GPU diagnostics')

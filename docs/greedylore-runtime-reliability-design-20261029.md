@@ -146,7 +146,7 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 先写并观察失败测试：同名 worker 的跨 run 不同目录；同一路径重建 run 目录不同；恢复路径稳定；当前目录脚本可执行、旧目录和别的 run 目录拒绝且不执行/不扣费；旧 request 在规则变化后仍可恢复；已有 Worktree 脚本和预算/封存行为不回归。使用真实 WorkflowStore/handler，GPU 执行可用既有 CPU 测试替身。
 - 运行相应 Engineer/workflow/CLI/handoff 回归与 Ruff，更新本节实施结果，通过后单独 commit。缺失 legacy 测试资产只在临时源码兼容副本补齐，主工作区删除保留。
 
-**Task 1 实施结果**：宿主在 worker 分配或旧 active worker 的 claim/reconcile 时持久化随机身份，claim 返回稳定 scratch 路径；新诊断在执行准备阶段限制路径，已受理的相同 request 保持原样重放。兼容副本中 Engineer、workflow、CLI、handoff 等回归 125 passed，Ruff 通过；副本仅补入两份历史 legacy 角色资产，主工作区原有删除保持未暂存。
+**Task 1 实施结果**：宿主在 worker 分配或旧 active worker 的 claim/reconcile 时持久化随机身份，claim 返回稳定 scratch 路径；新诊断在执行准备阶段限制路径，已受理的相同 request 保持原样重放。审查修补使诊断准备读取当前授权状态，并允许尚未迁移的 worker 使用 Worktree；兼容副本中 Engineer、workflow、CLI、handoff 等回归 128 passed，Ruff 通过；副本仅补入两份历史 legacy 角色资产，主工作区原有删除保持未暂存。
 
 ### Task 2: 新 Analysis 的明确引用与归档规则
 

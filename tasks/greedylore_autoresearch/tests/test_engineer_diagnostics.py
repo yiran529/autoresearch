@@ -356,10 +356,21 @@ def test_scratch_owner_enforced_and_historical_request_replays(engineer, tmp_pat
         # Represent an already accepted request under the previous path policy.
         state = task.read()
         old_payload = request('historic', scripts_dir=str(Path('/tmp') / agent / 'experiments'))
-        state['requests']['historic'] = {'request': old_payload, 'result': state['requests']['owned']['result']}
+        historic_result = dict(state['requests']['owned']['result'])
+        historic_result['diagnostic_id'] = f'{task.task_id}/historic'
+        historic_result['record_path'] = str(task.records / 'historic' / 'record.json')
+        historic_result['record_ref'] = f'diagnostics/{task.task_id}/records/historic/record.json'
+        shutil.copytree(task.records / 'owned', task.records / 'historic')
+        historic_record = json.loads((task.records / 'historic/record.json').read_text())
+        historic_record.update(old_payload, **historic_result)
+        (task.records / 'historic/record.json').write_text(json.dumps(historic_record))
+        state['requests']['historic'] = {'request': old_payload, 'result': historic_result}
+        state['executions'] = 2
         task.path.write_text(json.dumps(state))
-        assert diagnostics.handle_diagnostic(old_payload, context,
-            executor=lambda *_: pytest.fail('historical request reexecuted')) == result
+        replay = diagnostics.handle_diagnostic(old_payload, context,
+            executor=lambda *_: pytest.fail('historical request reexecuted'))
+        assert replay == historic_result
+        assert task.read()['executions'] == 2
         changed = dict(old_payload, timeout=old_payload['timeout'] + 1)
         with pytest.raises(ValueError, match='identity'):
             diagnostics.handle_diagnostic(changed, context, executor=lambda *_: pytest.fail('ran'))
@@ -372,7 +383,7 @@ def test_legacy_worker_gets_scratch_without_losing_saved_state(engineer, migrati
     coral, repo, _, agent, _ = engineer
     state = _state(coral)
     worker = state['engineering_workers'][agent]
-    worker.pop('scratch_identity')
+    worker.pop('scratch_identity', None)
     worker['saved_request_marker'] = {'request': 'accepted'}
     (coral / 'private/autoresearch_state.json').write_text(json.dumps(state))
     store = _store(coral, repo)
@@ -382,3 +393,73 @@ def test_legacy_worker_gets_scratch_without_losing_saved_state(engineer, migrati
     assert claim['scratch_dir'] == str(Path('/tmp/coral-engineer') /
                                        _state(coral)['engineering_workers'][agent]['scratch_identity'] / agent)
     assert _state(coral)['engineering_workers'][agent]['saved_request_marker'] == {'request': 'accepted'}
+
+
+def test_inflight_legacy_diagnostic_uses_migrated_worker(engineer, monkeypatch):
+    from autoresearch import engineer_diagnostics
+
+    coral, repo, _, agent, _ = engineer
+    state = _state(coral)
+    state['engineering_workers'][agent].pop('scratch_identity')
+    (coral / 'private/autoresearch_state.json').write_text(json.dumps(state))
+    from uuid import uuid4
+
+    token = uuid4().hex
+    scratch = Path('/tmp/coral-engineer') / token / agent
+    # Claim migrates the worker after the first authorization returns its snapshot.
+    monkeypatch.setattr('autoresearch.engineer_scratch.secrets.token_hex', lambda _: token)
+    original = engineer_diagnostics._authorize
+    calls = 0
+    def authorize(run, binding):
+        nonlocal calls
+        worker = original(run, binding)
+        calls += 1
+        if calls == 1:
+            assert _store(coral, repo).claim_engineering(agent, 'N001')['scratch_dir'] == str(scratch)
+        return worker
+    monkeypatch.setattr(engineer_diagnostics, '_authorize', authorize)
+    scripts = scratch / 'experiments'
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / 'probe.py').write_text('print("ok")\n')
+    try:
+        result = diagnostics.handle_diagnostic(request(scripts_dir=str(scripts)),
+            {'coral_dir': str(coral), 'peer_pid': os.getpid()},
+            executor=lambda *_: {'status': 'completed', 'started': True})
+        assert result['status'] == 'completed'
+    finally:
+        import shutil
+        shutil.rmtree(scratch.parent, ignore_errors=True)
+
+
+def test_legacy_worker_can_run_worktree_scripts_before_migration(engineer):
+    coral, _, _, agent, scripts = engineer
+    state = _state(coral)
+    state['engineering_workers'][agent].pop('scratch_identity')
+    (coral / 'private/autoresearch_state.json').write_text(json.dumps(state))
+    result = diagnostics.handle_diagnostic(request(scripts_dir=str(scripts)),
+        {'coral_dir': str(coral), 'peer_pid': os.getpid()},
+        executor=lambda *_: {'status': 'completed', 'started': True})
+    assert result['status'] == 'completed'
+
+
+def test_scratch_scripts_execute_from_staged_snapshot(engineer):
+    import shutil
+    import subprocess
+    import sys
+
+    coral, repo, _, agent, _ = engineer
+    scratch = Path(_store(coral, repo).claim_engineering(agent, 'N001')['scratch_dir'])
+    scripts = scratch / 'experiments'
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / 'probe.py').write_text('print("owned staged script executed")\n')
+    def execute(task, *_):
+        completed = subprocess.run([sys.executable, str(task.workspace / 'experiments/probe.py')],
+                                   capture_output=True, text=True, check=True)
+        assert completed.stdout == 'owned staged script executed\n'
+        return {'status': 'completed', 'started': True}
+    try:
+        result = diagnostics.handle_diagnostic(request(scripts_dir=str(scripts)),
+            {'coral_dir': str(coral), 'peer_pid': os.getpid()}, executor=execute)
+        assert result['status'] == 'completed'
+    finally:
+        shutil.rmtree(scratch.parent, ignore_errors=True)
