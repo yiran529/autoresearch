@@ -19,6 +19,7 @@ from coral.grader.trusted_writes import (
 from .diagnostic_sandbox import snapshot_files
 from .diagnostic_session import settings
 from .diagnostics import DiagnosticTask, _validate_request
+from .engineer_scratch import scratch_dir
 from .runtime_resources import configured_resources
 from .state import WorkflowStore, _owned_active
 
@@ -89,10 +90,6 @@ def run_engineer_diagnostic(coral: Path, peer: int, payload: dict, executor):
         raise ValueError('Engineer diagnostic requires --scripts-dir')
     scripts = Path(scripts)
     repo = Path(binding.worktree)
-    scratch = Path('/tmp') / binding.agent_id
-    # snapshot_files separately rejects symlinks in every path component.
-    if not (scripts.is_relative_to(repo) or scripts.is_relative_to(scratch)) or '..' in scripts.parts:
-        raise PermissionError('diagnostic scripts must belong to this Worktree or /tmp/<agent-id>/')
     task = DiagnosticTask(coral, f"{worker['node_id']}-{binding.agent_id}")
     identity = {'node_id': worker['node_id'], 'mode': 'engineering', 'version': None,
                 'research_sha': worker['research_sha'], 'owner_agent_id': binding.agent_id,
@@ -110,6 +107,11 @@ def run_engineer_diagnostic(coral: Path, peer: int, payload: dict, executor):
         _atomic_json(task.path, state)
 
     def prepare(state):
+        scratch = scratch_dir(worker, binding.agent_id)
+        # snapshot_files separately rejects symlinks in every path component.
+        if not (scripts.is_relative_to(repo) or scripts.is_relative_to(scratch)) or '..' in scripts.parts:
+            raise PermissionError(f'diagnostic scripts must be in this Worktree or {scratch}; '
+                                  'run engineering claim to obtain your scratch directory')
         if subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain',
                                     '--untracked-files=no']).strip():
             raise ValueError('commit tracked candidate changes before GPU diagnostics')

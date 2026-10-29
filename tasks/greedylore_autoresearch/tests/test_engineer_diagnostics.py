@@ -306,3 +306,79 @@ def test_engineer_scripts_cannot_follow_symlink(engineer, tmp_path):
         {'coral_dir': str(coral), 'peer_pid': os.getpid()},
         executor=lambda *_: {'status': 'completed', 'started': True})
     assert result['status'] == 'completed'
+
+
+def test_scratch_identity_is_saved_per_worker_and_new_run(engineering_ready, tmp_path):
+    import shutil
+
+    coral, repo, _ = engineering_ready
+    template = tmp_path / 'pre-allocation'
+    shutil.copytree(coral, template)
+    other = tmp_path / 'other-coral'
+    shutil.copytree(template, other)
+    store = _store(coral, repo)
+    agent = store.reconcile(0, 1)[0].agent_id
+    first = store.claim_engineering(agent, 'N001')['scratch_dir']
+    assert store.claim_engineering(agent, 'N001')['scratch_dir'] == first
+    assert _store(coral, repo).claim_engineering(agent, 'N001')['scratch_dir'] == first
+    assert Path(first).parent.parent == Path('/tmp/coral-engineer')
+    assert len(Path(first).parent.name) == 32
+    other_store = _store(other, repo)
+    assert other_store.reconcile(0, 1)[0].agent_id == agent
+    assert other_store.claim_engineering(agent, 'N001')['scratch_dir'] != first
+    shutil.rmtree(coral)
+    shutil.copytree(template, coral)
+    recreated = _store(coral, repo)
+    assert recreated.reconcile(0, 1)[0].agent_id == agent
+    assert recreated.claim_engineering(agent, 'N001')['scratch_dir'] != first
+
+
+def test_scratch_owner_enforced_and_historical_request_replays(engineer, tmp_path):
+    import shutil
+
+    coral, repo, _, agent, _ = engineer
+    scratch = Path(_store(coral, repo).claim_engineering(agent, 'N001')['scratch_dir'])
+    scripts = scratch / 'experiments'
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / 'probe.py').write_text('print("probe")\n')
+    context = {'coral_dir': str(coral), 'peer_pid': os.getpid()}
+    try:
+        payload = request('owned', scripts_dir=str(scripts))
+        result = diagnostics.handle_diagnostic(payload, context,
+            executor=lambda *_: {'status': 'completed', 'started': True})
+        task = diagnostics.DiagnosticTask(coral, result['diagnostic_id'].split('/')[0])
+        for forbidden in (Path('/tmp') / agent / 'experiments',
+                          Path('/tmp/coral-engineer') / ('a' * 32) / agent / 'experiments'):
+            with pytest.raises(PermissionError, match='claim|scratch'):
+                diagnostics.handle_diagnostic(request('forbidden', scripts_dir=str(forbidden)), context,
+                    executor=lambda *_: pytest.fail('foreign scripts executed'))
+            assert task.read()['executions'] == 1
+        # Represent an already accepted request under the previous path policy.
+        state = task.read()
+        old_payload = request('historic', scripts_dir=str(Path('/tmp') / agent / 'experiments'))
+        state['requests']['historic'] = {'request': old_payload, 'result': state['requests']['owned']['result']}
+        task.path.write_text(json.dumps(state))
+        assert diagnostics.handle_diagnostic(old_payload, context,
+            executor=lambda *_: pytest.fail('historical request reexecuted')) == result
+        changed = dict(old_payload, timeout=old_payload['timeout'] + 1)
+        with pytest.raises(ValueError, match='identity'):
+            diagnostics.handle_diagnostic(changed, context, executor=lambda *_: pytest.fail('ran'))
+    finally:
+        shutil.rmtree(scratch.parent, ignore_errors=True)
+
+
+@pytest.mark.parametrize('migration', ['claim', 'reconcile'])
+def test_legacy_worker_gets_scratch_without_losing_saved_state(engineer, migration):
+    coral, repo, _, agent, _ = engineer
+    state = _state(coral)
+    worker = state['engineering_workers'][agent]
+    worker.pop('scratch_identity')
+    worker['saved_request_marker'] = {'request': 'accepted'}
+    (coral / 'private/autoresearch_state.json').write_text(json.dumps(state))
+    store = _store(coral, repo)
+    if migration == 'reconcile':
+        store.reconcile(0, 1)
+    claim = store.claim_engineering(agent, 'N001')
+    assert claim['scratch_dir'] == str(Path('/tmp/coral-engineer') /
+                                       _state(coral)['engineering_workers'][agent]['scratch_identity'] / agent)
+    assert _state(coral)['engineering_workers'][agent]['saved_request_marker'] == {'request': 'accepted'}

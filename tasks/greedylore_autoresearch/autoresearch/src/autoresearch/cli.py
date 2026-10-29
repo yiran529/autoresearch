@@ -185,7 +185,7 @@ def _parser() -> argparse.ArgumentParser:
     diagnostic_run.add_argument("--gpus", type=int, default=1)
     diagnostic_run.add_argument("--timeout", type=float, default=DIAGNOSTIC_EXECUTION_TIMEOUT)
     diagnostic_run.add_argument("--request-id", default=None, help="reuse this ID after a channel timeout")
-    diagnostic_run.add_argument("--scripts-dir", type=Path, help="Engineer diagnostic scripts in your Worktree or /tmp/<agent-id>/")
+    diagnostic_run.add_argument("--scripts-dir", type=Path, help="Engineer diagnostic scripts in your Worktree or the scratch_dir returned by engineering claim")
     diagnostic_run.add_argument("argv", nargs=argparse.REMAINDER)
 
     retry = commands.add_parser("retry", help="retry one same-SHA infrastructure failure")

@@ -22,6 +22,7 @@ from coral.hub.attempts import read_attempt, read_attempts
 
 from .analysis import AnalysisContext, _artifact_evidence, resolve_evidence
 from .atomic import atomic_write_text
+from .engineer_scratch import ensure_scratch_identity, scratch_dir
 from .nodes import create_node
 from .research import (
     frozen_research_attempt,
@@ -489,6 +490,9 @@ class WorkflowStore:
                 if node_id != "N000" and node_id in admitted
             )
             changed = not self.state_path.is_file()
+            for worker in state['engineering_workers'].values():
+                if worker.get('status') == 'active' and ensure_scratch_identity(worker):
+                    changed = True
             while (live_research < max_researchers and self._node_completed_unlocked(state, "N000")
                    and not (self.coral_dir / "private/research_infrastructure_block.json").exists()):
                 if (self.max_active_nodes
@@ -537,6 +541,7 @@ class WorkflowStore:
                 record.pop("error", None)
                 state["engineering_workers"][agent_id] = {
                     "status": "active", "node_id": node_id, "research_sha": research_sha}
+                ensure_scratch_identity(state["engineering_workers"][agent_id])
                 state["next_engineer_seq"] = sequence + 1
                 live_engineers += 1
                 changed = True
@@ -554,8 +559,11 @@ class WorkflowStore:
                 raise WorkflowError("Engineering assignment owner was not found")
             if worker["status"] == "active" and worker.get("node_id") == node_id:
                 self._reject_changed_anchor_unlocked(state, worker, node_id)
+                if ensure_scratch_identity(worker):
+                    self._save_unlocked(state)
                 return {
                     "agent_id": agent_id, "node_id": node_id,
+                    "scratch_dir": str(scratch_dir(worker, agent_id)),
                     "status": "active", "research_sha": worker["research_sha"],
                     "run_limits": {"successful": ENGINEERING_SUCCESS_LIMIT, "total": FORMAL_TOTAL_LIMIT},
                     **({'design_source': self._engineering_design_source(node_id, worker['research_sha'])}
