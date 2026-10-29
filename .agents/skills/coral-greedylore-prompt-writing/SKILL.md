@@ -33,9 +33,13 @@ The following content must currently be retained:
 
 Do not turn preferences into prohibitions or weaken them into generic freedom of choice. Assign preferences according to role responsibilities while preserving independent analytical judgment.
 
+Distinguish encouragement, permission and prohibition in both wording and emphasis. When direct copying is forbidden and borrowing ideas is allowed, lead with the prohibition and express borrowing as permission rather than advice to use existing work.
+
 ## 4. Give autonomy executable capability boundaries
 
 Explain what agents can do, why they would do it, and under which conditions. Preserve real phase dependencies while leaving methods, investigation order, and depth of effort to the agent.
+
+Judge instructions by the information they add to the supplied role, task and capabilities. Omit explanations already clear from those inputs, including generic reminders to act autonomously; retain explicit permissions and non-obvious boundaries needed for independent execution.
 
 - Do not reduce autonomy to a fixed sequence.
 - Do not omit necessary conditions when removing micromanagement.
@@ -50,6 +54,8 @@ Give actual commands for required operations, with references for complex fields
 ## 6. Constrain research quality through purpose
 
 Require enough evidence to answer the research question, distinguish consequential explanations, and assess practical quality and cost. Let agents choose log analysis, derivations, checks, controlled experiments, and their order.
+
+Connect requested research activities to the uncertainties they address and judgments they inform. Mechanism work, for example, should help explain observations, distinguish competing explanations and guide method refinement or future hypotheses.
 
 - Preserve original predictions, reasons for revision, failures, counterevidence, unexpected gains, and important unknowns.
 - Distinguish mechanism explanations from practical value; do not make mechanism confirmation an additional promotion gate.
@@ -73,6 +79,8 @@ Startup entry points cover identity, location, current state, and role entry poi
 
 Clearly express existing execution protocols, permissions, and non-obvious constraints. Explain distinctions between easily confused states, execution behavior, and recovery semantics where needed.
 
+Preserve each constraint's scope, conditions, exceptions and force when shortening it. Keep behavior-changing details such as diagnostic isolation, fresh-data confirmation, timing reuse and result selection.
+
 - Do not change budgets, eligibility, permissions, schemas, or evaluation protocols through editorial revision.
 - Interpret historical runs under their saved contracts.
 - Use 1800-second blocking waits for long-running tasks, allowing early return and continuation when the task ends. Preserve the original session and request identity to avoid duplicate execution and meaningless polling. Subsequent revisions must not omit or generalize away the explicit 1800-second requirement.
@@ -89,7 +97,9 @@ Retain findings, counterexamples, and reliable effects that can influence design
 
 Check the original task requirements, hard constraints, research preferences, optional capabilities, required commands, and output contracts. Identify their locations in the revised text or other reachable inputs.
 
-- Check omissions, weakening, unintended strengthening, inaccessible references, and contradictions.
+For local revisions, prefer the smallest edit that resolves the issue: add a missing purpose, remove redundant text or shorten the affected constraint. Preserve accurate surrounding prose, structure and research preferences.
+
+- Check omissions, weakening, unintended strengthening, scope changes, inaccessible references, and contradictions.
 - First verify that the original text agrees with the current contract.
 - Treat length changes as supplementary information.
 - Explicitly check the three research requirements in Section 3 and the 1800-second waiting requirement in Section 9, ensuring their complete preservation in revisions and translations.
