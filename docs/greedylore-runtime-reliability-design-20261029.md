@@ -169,3 +169,5 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 模型行为成功与独立宿主故障注入分别记录。校验器反例测试不冒充模型首次就会犯错/修复；如需反馈后续跑，保留首次结果并标记。
 - 清理生产者自己的动态/角色 scratch 后，由 fresh consumer 读取实际公共引用并核对哈希；保存失败、修复、实际脚本目录和公开证据清单。科学输入和 GPU reservation 可合成，真实 CLI、SRT/bwrap、UDS 和发布不可用手写产物替代。
 - 更新本轮验证结果、进行独立最终审查并 commit；只清理本轮拥有的模拟进程/目录，保留审计归档。在线同步不在本轮授权范围。
+
+**Task 3 实施结果**：fresh Luna Engineer 从 claim 获取并使用本 run scratch，自主完成诊断、归档与 finish；fresh Analyzer 修复诊断失败后发布受管结果和日志。独立宿主检查覆盖其他真实 run 的 scratch 拒绝与不扣费、明确临时引用在真实 `analyze()` 中封存前拒绝、证据哈希和生产者清理；引用反例是宿主注入，不记为模型犯错。生产者工作区已归档并退役；fresh consumer 首次误用 manifest hash 规则并混淆两个独立 fixture，保留首次报告后经规则和范围澄清完成复核，公共证据哈希匹配，缺失输入与清理后的 checkpoint 限制保留。合成 CPU 数据、GPU reservation、桥接启动器和未启用 authorizer 的测试 publisher 等边界、失败记录及缺失历史输入见 [验证记录](greedylore-luna-runtime-fixes-validation-20261029.md)。
