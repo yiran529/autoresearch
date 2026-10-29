@@ -733,6 +733,7 @@ def test_reconcile_provides_public_task_toolkit(root_run):
     _store(root_run).reconcile(1, 0)
     toolkit = root_run / 'public/notes/toolkit'
     assert (toolkit / 'workflow_rules.md').is_file()
+    assert (toolkit / 'references/engineer_commands.md').is_file()
     assert (toolkit / 'references/initial_diagnostics.md').is_file()
     assert (toolkit / 'references/low_rank.md').is_file()
     assert not (toolkit / 'taskdata').exists()

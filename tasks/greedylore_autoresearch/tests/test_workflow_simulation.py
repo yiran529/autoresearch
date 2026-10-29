@@ -276,7 +276,7 @@ def _check_delivered_prompts(root, scenario):
         assert capture['resources']['README.md'] == (task / 'README.md').read_text()
         for template in ('research_intent.json', 'submission.yaml'):
             assert capture['resources'][f'templates/{template}'] == (task / 'templates' / template).read_text()
-        for ref in ('common', 'initial_diagnostics', 'low_rank', 'quantization', 'sparsification', 'temporal', 'hybrid', 'engineer_runtime', 'semantic_criteria', 'algorithm_construction'):
+        for ref in ('common', 'initial_diagnostics', 'low_rank', 'quantization', 'sparsification', 'temporal', 'hybrid', 'engineer_commands', 'engineer_runtime', 'semantic_criteria', 'algorithm_construction'):
             assert capture['resources'][f'references/{ref}.md'] == (task / f'references/{ref}.md').read_text()
         if expected_role == 'researcher':
             node = aid.removeprefix('research-')

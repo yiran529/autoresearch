@@ -47,6 +47,7 @@ def test_required_handoff_assets_exist_and_are_nonempty():
         "references/algorithm_construction.md",
         "references/research_commands.md",
         "templates/research_origin.json",
+        "references/engineer_commands.md",
         "references/engineer_runtime.md",
         "references/semantic_criteria.md",
         "templates/node_spec.md",

@@ -26,7 +26,7 @@ Use the Node README, Spec/Evaluation, corresponding quality evidence, and fixed-
 
 ### Available references
 
-Shared materials are in `notes/toolkit/`. `workflow_rules.md` contains shared execution boundaries; `references/engineer_runtime.md` provides diagnostics, timing, optimization examples, and submission interfaces; `references/semantic_criteria.md` provides semantic checking criteria.
+Shared materials are in `notes/toolkit/`. `workflow_rules.md` contains shared execution boundaries; `references/engineer_commands.md` provides diagnostic execution, timing, final JSON and submission/recovery interfaces; `references/engineer_runtime.md` provides performance diagnosis and optimization methods; `references/semantic_criteria.md` provides semantic checking criteria.
 
 Wisdom, Engineering Summary, and published Analyses can help identify reusable optimizations and their boundaries. Use summaries for navigation, verify important judgments against their sources, and use profiling recipes as needed.
 
@@ -49,7 +49,7 @@ Prioritize reusing evidence sufficient to make the choice. When uncertainty coul
 | Controlled GPU diagnostics | `autoresearch diagnostic run` | Investigate representative execution, cost, and implementation attribution in isolated snapshots |
 | Formal engineering timing | `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>` | Assess end-to-end gains under the fixed protocol |
 
-Commit candidate changes before GPU diagnostics; use script, snapshot, and result paths as specified in `references/engineer_runtime.md`. Before formal timing, commit code and `submission.yaml` with `mode: engineering`. `base_commit` and `quality_anchor` must always point to the fixed Research SHA. Later candidates may build on a previous Engineering Commit.
+Commit candidate changes before GPU diagnostics; use script, snapshot, and result paths as specified in `references/engineer_commands.md`. Before formal timing, commit code and `submission.yaml` with `mode: engineering`. `base_commit` and `quality_anchor` must always point to the fixed Research SHA. Later candidates may build on a previous Engineering Commit.
 
 - `engineering timing` does not stage or commit for you. Run GPU work only through host-managed entry points.
 - Keep diagnostic instrumentation separate from formal timing. Diagnostics do not produce formal scores.
@@ -73,7 +73,7 @@ Within budget, continue pursuing well-supported, semantics-preserving opportunit
 
 ### Expected deliverable
 
-Write the final Engineering Analysis yourself. Cover every formal Attempt in the current claim, fixed candidate SHAs, successes and failures, regressions, formal measurements, and checks actually performed. Explain the stopping reason and remaining opportunities; distinguish implementation headroom, intrinsic algorithmic limits, and causes that cannot be separated.
+Write the final Engineering Analysis yourself. Cover every formal Attempt in the current claim, fixed candidate SHAs, successes and failures (including infrastructure failures), regressions, formal measurements, and checks actually performed. Explain the stopping reason and remaining opportunities; distinguish implementation headroom, intrinsic algorithmic limits, mixed explanations, insufficient evidence, and causes that cannot be separated. Include contradictory observations and measurement limits.
 
 Prepare submission after at least one formal Attempt reaches a terminal state and a stopping condition or limit is met. First wait for all diagnostics to finish, then use `autoresearch evidence archive` to preserve self-check scripts and logs that you need to cite.
 
@@ -82,14 +82,7 @@ Prepare submission after at least one formal Attempt reaches a terminal state an
 
 ### Output interface
 
-Write a JSON file in authorized scratch, outside the tracked Worktree, containing exactly these fields.
-
-| Field | Content |
-|---|---|
-| `summary` | Nonempty summary |
-| `findings` | Nonempty string array of key findings and evidence |
-| `limitations` | Nonempty string array of limitations affecting judgment |
-| `attempt_shas` | Every distinct formal candidate SHA in the current claim, exactly once, including failures and regressions |
+Prepare the final JSON in authorized scratch outside the tracked Worktree, following `references/engineer_commands.md`. Its `attempt_shas` must list every distinct formal candidate SHA in this claim exactly once, including failures and regressions.
 
 Submit with `autoresearch engineering finish --analysis-file /absolute/scratch/final.json` and wait for host validation, versioned publication, and retirement. There is no separate independent Engineering Analyzer. Node inheritance also requires published Research Analysis.
 

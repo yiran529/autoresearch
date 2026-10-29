@@ -4,20 +4,7 @@
 
 **Use as a selective diagnosis toolkit, not a mandatory profiling checklist.** Follow the shared execution supplement `workflow_rules.md`, `roles/engineer.md`, evaluation contract and semantic criteria. This reference does not override the existing claim/submit/finish controls or the **4 successful formal Engineering runs and 10 total formal runs per assignment (including failures and same-SHA retries)**. Profile only in authorized independent diagnostic/scratch settings; official timing runs must remain clean.
 
-### Controlled GPU diagnostics
-
-- An active, non-finalizing Engineer claim may use `autoresearch diagnostic run`. The host authenticates the calling process and its Node binding; no additional Analyzer is launched. `engineer_diagnostics: false` disables this capability.
-- Commit tracked candidate changes first; an ordinary Git commit does not create a formal Attempt. Place scripts in your Worktree or `/tmp/<your-agent-id>/diagnostics/experiments/`. Prefer scratch so diagnostic instrumentation stays out of committed formal candidates.
-- Example: `autoresearch diagnostic run --scripts-dir /absolute/path/to/experiments --gpus 4 --timeout 600 -- python experiments/probe.py --output results/probe.json`. The host stages scripts as `experiments/` in a separate workspace, freezes committed HEAD as `code/<sha>/`, and sets `PYTHONPATH` and `CORAL_DIAGNOSTIC_CODE` to that code. Read data only from host-configured runtime roots. Use paths relative to the diagnostic workspace, not your live Worktree.
-- Only `experiments/`, `results/` and ephemeral sandbox `/tmp` are writable during execution. Put durable output in `results/`. The host retains the script/code snapshots, command, candidate/Research SHA, GPU identities, stdout/stderr and result files under `public/diagnostics/<node>-<agent-id>/records/<request-id>/`. These records are read-only to agents; the returned record and result paths identify them.
-- The separate diagnostic budget is 10 successful and 20 total executions across resumes, 1–4 GPUs and at most 600 seconds per execution; GPU queue wait is at most 3600 seconds. Failures/timeouts consume total executions; requests that never start do not. Diagnostics share GPU allocation with formal evaluations but produce no official score and consume no formal-run slots.
-- Inspect failed records, fix scripts and use a new request ID to execute again. Reuse `--request-id` with identical arguments only to retrieve an existing result. Cite both successful and failed diagnostics in your final Analysis; do not add profiler durations to claim formal step time. Wait for all diagnostics before `engineering finish`; the host seals their durable records with the final Analysis and rejects subsequent diagnosis.
-
-### Formal timing
-
-- Read the claim's design source and use its fixed Research SHA as the anchor. Developed Nodes require the frozen selected iteration in `research.json`; Root uses its fixed baseline Spec/A0. Do not substitute the initial Spec or last iteration for a developed Node's selection.
-- After semantic checks, commit the candidate and run `autoresearch engineering timing --sha <full-HEAD-SHA> --request-id <id>`. It waits for the grader's result without committing files, using the existing complete-cycle/event/hardware contract and formal budgets. Quality remains inherited, not remeasured. Inspect Evaluation/Attempts on resume.
-- After a channel interruption repeat the same ID/SHA/flags to recover that execution. An intentional infrastructure retry uses `--retry` and a new ID, retaining the SHA and consuming the existing retry/formal allowances. Other failures require a corrected candidate; no empty commits or tuning mode.
+For managed diagnostics, formal timing, final Analysis JSON and submission/recovery interfaces, use [the Engineer command guide](engineer_commands.md).
 
 ## 1. Decide what performance difference is real
 
@@ -141,10 +128,3 @@ Document each recipe as: `observed bottleneck + evidence → proposed implementa
 - [NVIDIA NCCL User Guide](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/) — collective semantics and tuning/environment behavior; topology and backend version matter.
 - [PowerSGD](https://arxiv.org/abs/1905.13727) — low-rank factor and aggregation structure; use for identifying algorithm-imposed communication dependencies.
 - [DiLoCo](https://arxiv.org/abs/2311.08105) and [Streaming DiLoCo](https://arxiv.org/abs/2501.18512) — outer-step communication bursts, fragmentation/overlap as adjacent systems prior art; optimization semantics may differ.
-
-
-## 8. Engineer-authored final Analysis
-
-Within the formal-run limits, continue optimizing until no clear, substantial semantics-preserving end-to-end improvement opportunity remains; do not stop merely because one candidate improved. After at least one terminal formal result and once this stopping condition or a formal-run limit is reached, author the final Analysis yourself and briefly explain the stopping reason and any remaining headroom. Cover every claim Attempt, including regressions, candidate failures and infrastructure failures, its fixed SHA, formal end-to-end measurements and the semantic checks actually run. Distinguish implementation headroom, algorithm-imposed costs/dependencies, mixed explanations and insufficient evidence. Include contradictory observations and measurement limits. Quality remains `inherited (provisional)`; current implementation timings are not theoretical lower bounds.
-
-Write JSON in authorized scratch outside the tracked Worktree: `summary` is non-empty text; `findings` and `limitations` are non-empty arrays of strings; `attempt_shas` lists every distinct formal claim SHA exactly once. Cite actual IDs, paths and check results inside those text fields. Submit with `autoresearch engineering finish --analysis-file /absolute/scratch/final.json`. The host verifies ownership, terminal Attempts and complete SHA coverage, freezes the submission, seals the evidence envelope and publishes an immutable version before completing the claim. A `finalizing` response confirms persisted submission, not completed publication. Reuse the identical submission after interruption; do not submit new candidates or directly edit shared artifacts. No independent Engineering Analyzer is started.
