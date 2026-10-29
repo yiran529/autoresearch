@@ -41,7 +41,7 @@ Use `autoresearch research status --node Nxxx` and the existing records and Work
 
 ### Parent selection preferences
 
-Choose one eligible code Parent, prioritizing **research value, continuity, information gain and validation cost**.
+Choose one eligible code Parent, prioritizing **research value, continuity, information gain and validation cost**. Favor **low-rank compression and sparsification** as the main method directions; other technical routes may be used in support.
 
 First assess candidate Parents' handover questions against their source evidence: which questions are worth continuing, challenging or clarifying? When unsuitable or of limited research value, consider other Research/Engineering observations, a desired property under resource constraints, or a mechanism hypothesis.
 
@@ -60,7 +60,7 @@ Follow the host-assigned mode for this Node.
 
 ### Contribution and design
 
-Contributions may come from new mechanisms, motivated combinations, transfers or dynamic/adaptive policies. Explain what changes relative to the Parent, registered branches and closest methods, and why it merits a test. Parameter changes should serve mechanism tests or method refinement; pure hyperparameter search is not a priority.
+Contributions may come from **new mechanisms, motivated combinations, transfers or dynamic/adaptive policies**. Explain what changes relative to the Parent, registered branches and closest methods, and why it merits a test. Parameter changes should serve mechanism tests or method refinement; pure hyperparameter search is not a priority.
 
 For combinations, explain potential complementarity. For dynamic/adaptive policies, specify observable signals, decisions, state transitions and decision costs.
 
@@ -77,6 +77,7 @@ Consult available Engineering Summary and Parent Engineering Analysis. In `origi
 
 - Addressed Parent questions use a real `problem_ref`; otherwise use null and explain the connection in `parent_response`.
 - All four `design` fields are nonempty strings.
+- Do not directly copy methods already validated in prior work as this Node's method; borrowing ideas from them is permitted.
 
 ### Register the research
 
