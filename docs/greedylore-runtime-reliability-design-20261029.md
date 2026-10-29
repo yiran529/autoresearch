@@ -127,3 +127,41 @@ Analysis 的证据集合和哈希不被状态查询或资源说明改写。
 - 资源目录发布遇到缺失或无效声明时写入 `status: unavailable` 和错误，允许已有冻结 Analysis 发布、清理和 roster 恢复；预检及实际诊断独立解析资源，仍在 GPU 前 fail closed。
 - 四阶段独立操作演练及其边界见 [验证记录](greedylore-runtime-reliability-validation-20261029.md)；采用临时合成数据，不代表在线实验或 GPU 验证。
 - 最终离线回归：六种 staged 情景全部通过（真实 CLI、认证、控制器与发布，训练、GPU 和模型边界合成）；真实 SRT 双场景通过，当前源码加历史角色资产的独立兼容副本 115 项通过。主工作区两份原有 legacy 删除仍未恢复，在线服务和数据未部署或修改。
+
+## 9. Luna 行为测试后的修补
+
+依据 [独立 Luna 测试](greedylore-luna-behavior-validation-20261029.md) 的实测结果，本轮修补两项已获授权的问题：跨 run 复用 `/tmp/<agent-id>` 会混入旧脚本；新 Analysis 正文仍能把未归档临时文件写成证据引用。工作保留在当前 CORAL feature 分支，原有两份 legacy 删除不恢复、不暂存；不部署到在线 run。
+
+接口与权限保持原有边界：诊断仍用 `--scripts-dir`，Engineer 仍可提交本 Worktree 的脚本，不新增 tensor 权限、不改变预算、科学契约或已有 Analysis。新目录由宿主生成并保存在当前 run 的私有工作流状态。新提交的临时引用检查只识别明确引用和已知临时别名；普通路径描述、说明证据缺失及合法持久文件的同名 basename 不应被误判。
+
+### Task 1: 持久化并强制使用本 run 的 Engineer scratch
+
+**实现范围**：`autoresearch/src/autoresearch/engineer_scratch.py`（必要时新增的小型路径模块）、`state.py`、`engineer_diagnostics.py`、`cli.py`；权威操作说明为 `references/engineer_commands.md`。代码路径均相对本 task 根目录。
+
+- 每个 Engineer worker 获得宿主生成、持久化的随机 scratch 身份；不得仅用 `.coral` 路径 hash，因为删除状态后在同一路径创建的新 run 也必须获得新目录。目录形式为 `/tmp/coral-engineer/<32位随机十六进制身份>/<agent-id>/`。同一 run 的 worker 恢复和重复 claim 返回相同目录；另一 run 的同名 agent 获得不同目录。
+- `engineering claim` 响应增加 `scratch_dir`。新 worker 在分配时记录身份；旧 active worker 可在 claim 或正常 reconcile 时补齐，保留所有预算、request 和已受理提交。目录内容只通过现有脚本暂存/归档接口使用，不自动导入旧 `/tmp/<agent-id>` 内容。
+- 新执行仅允许本 Worktree 或宿主返回的 scratch 子目录，继续拒绝 `..`、软链接和别的 run 的目录。错误给出当前合法目录/claim 入口；不得悄悄改用另一数据流或重置执行次数。
+- 终态 request 的同 ID、同 payload 恢复仍须返回原结果；收紧新执行的目录规则不应让已经受理的历史 request 无法恢复。不同 payload 继续拒绝。路径检查应在新执行前完成，失败不消费诊断/正式预算。
+- 不删除用户已有的通用 scratch；本轮不引入会破坏 `finish --analysis-file` 重放文件的自动清理。
+- 先写并观察失败测试：同名 worker 的跨 run 不同目录；同一路径重建 run 目录不同；恢复路径稳定；当前目录脚本可执行、旧目录和别的 run 目录拒绝且不执行/不扣费；旧 request 在规则变化后仍可恢复；已有 Worktree 脚本和预算/封存行为不回归。使用真实 WorkflowStore/handler，GPU 执行可用既有 CPU 测试替身。
+- 运行相应 Engineer/workflow/CLI/handoff 回归与 Ruff，更新本节实施结果，通过后单独 commit。缺失 legacy 测试资产只在临时源码兼容副本补齐，主工作区删除保留。
+
+### Task 2: 新 Analysis 的明确引用与归档规则
+
+**实现范围**：`validation.py`，视调用需要最小修改 `analysis.py`、`analysis_sources.py`、`engineering.py`；权威 Analyzer 说明为 `prompts/research_analysis.md`，跨角色通则放 `roles/workflow_rules.md`，Engineer 专有命令继续引用 `references/engineer_commands.md`，不在多个入口重复全文规则。
+
+- 保留已有临时 `/tmp` 引用校验，在新提交中识别 Markdown 文件链接和 `Evidence:`/`Sources:` 证据子句里的工作文件引用。至少覆盖测试中漏掉的 `Evidence: ...; prompt.txt`、显式链接到 `prompt.txt`、`output.json`、`results/<file>`、`experiments/<file>` 和 `/workspace/results|experiments/...`；不要把已归档的 `diagnostics/.../results/output.json`、合法固定代码文件或普通文字里的未归档/缺失说明误拦。
+- 可用既有冻结 inventory、当前 task 的持久 records 和已有 alias 规则验证明确引用；保持已经支持的 `records/<request>/...` 与 `evidence/...` 语义，优先让新正文使用返回的公共相对 `record_ref`。不要自动把任意文件从外层工作区发布成可信证据，也不要对任意自然语言文件名做通用推断。
+- 无法作为持久证据的明确引用应在新提交封存前拒绝，错误应说明具体引用及修正办法：把支持材料放入受管诊断的 `results/` 后重新执行并引用记录，或用支持的 evidence archive；Analyzer 不具备 Engineer archive 命令时只提示其实际可用操作。
+- 对历史已封存 Analysis 不追溯重验证；相同已受理 Engineering body 的恢复保持幂等。新提交失败不能创建正式 Analysis、冻结 Engineering summary 或损坏已存在证据。
+- 在 Analyzer 权威提示中明确：诊断执行时写入 `results/` 的小型输出随记录保存；模型在外层另写的日志和最终输出文件不是自动发布的诊断证据。需要长期引用的日志应在诊断内生成并引用实际持久路径。提交 schema 与自主研究判断保持不变。
+- 按 prompt-writing skill 保留研究偏好、角色职责、可选诊断和 1800 秒等待约束；不把归档规则变成额外科学 gate。可顺手补充当前 reader 文档里 `sha256`（文件字节）和 `document_sha256`（规范化 JSON 文档）的已有语义，不改 hash 算法。
+- 先写并观察上述失败案例的回归测试，再实现；包括有效同名持久输出通过、缺失说明不误拦、真实 analyze/Engineering submit 拒绝后可修正、历史恢复不回归。通过定向回归、Ruff 和独立审查后单独 commit。
+
+### Task 3: 真实操作模拟与最终验证
+
+- 使用本轮更新后的生产代码和权威提示搭建新隔离环境。仅给 fresh Luna 正常角色入口、资源清单和任务目标，不提供正确 scratch 路径、脚本或预期数值。
+- 必须覆盖：Luna 从 claim 读取 `scratch_dir` 并真正使用；预先残留的通用旧目录/另一 run 目录不能进入新脚本快照；受管诊断产生持久结果与日志，Engineer 自主 archive/finish；Analyzer 的明确临时引用由真实校验器拒绝，修正提交后成功发布。
+- 模型行为成功与独立宿主故障注入分别记录。校验器反例测试不冒充模型首次就会犯错/修复；如需反馈后续跑，保留首次结果并标记。
+- 清理生产者自己的动态/角色 scratch 后，由 fresh consumer 读取实际公共引用并核对哈希；保存失败、修复、实际脚本目录和公开证据清单。科学输入和 GPU reservation 可合成，真实 CLI、SRT/bwrap、UDS 和发布不可用手写产物替代。
+- 更新本轮验证结果、进行独立最终审查并 commit；只清理本轮拥有的模拟进程/目录，保留审计归档。在线同步不在本轮授权范围。
