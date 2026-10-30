@@ -253,6 +253,8 @@ getattr(simulation_support, sys.argv[1])(sys.argv[2])
 
 
 def _check_delivered_prompts(root, scenario):
+    from coral.template.shared_research_goal import with_shared_research_goal
+
     task = Path(__file__).resolve().parents[1]
     capture_paths = sorted((root / 'prompt_audit').glob('*.json'))
     captures = [json.loads(p.read_text()) for p in capture_paths]
@@ -293,17 +295,18 @@ def _check_delivered_prompts(root, scenario):
             assert 'at most 4 successful formal Engineering runs and 10 total formal Engineering runs' in capture['startup_prompt']
             assert 'do not wait for Research Analysis' in capture['startup_prompt']
             assert 'continue while evidence supports a clear, substantial end-to-end improvement opportunity' in capture['startup_prompt']
-            assert 'one improved candidate is not sufficient to stop' in capture['role_text']
+            assert 'One improved candidate alone is insufficient reason to stop.' in capture['role_text']
             assert '--analysis-file /absolute/scratch/final.json' in capture['instructions']
-            assert 'author the final engineering analysis yourself' in capture['role_text'].lower()
+            assert 'Write the final Engineering Analysis yourself.' in capture['role_text']
     assert {state['nodes'][p['agent_id'].removeprefix('research-')]['research']['research_mode']
             for p in producers if p['role'] == 'researcher'} == {'REFINE', 'EXPLORE'}
     analyzers = [p for p in captures if p['role'] == 'research_analyzer']
     assert {p['node_id'] for p in analyzers} >= {'N000', 'N001', 'N002', 'N003'}
     for capture in analyzers:
-        assert capture['stdin'].startswith((task / 'prompts/research_analysis.md').read_text())
-        assert 'each at most 600 seconds' in capture['stdin']
-        assert 'no new algorithms' in capture['stdin']
+        assert capture['stdin'].startswith(with_shared_research_goal(
+            (task / 'prompts/research_analysis.md').read_text(), task))
+        assert 'at most 10 successful / 20 total runs, 600 seconds each' in capture['stdin']
+        assert 'Do not propose new algorithms' in capture['stdin']
         assert '--ephemeral' in capture['argv'] and 'resume' not in capture['argv']
         assert capture['argv'][capture['argv'].index('--sandbox') + 1] == 'read-only'
         assert set(capture['schema']['required']) == {'summary', 'findings', 'limitations', 'handover'}
@@ -327,7 +330,9 @@ def _check_delivered_prompts(root, scenario):
         if capture['node_id'] != 'N000':
             assert 'notes/nodes/N000/research_analysis_v1.md' in capture['evidence_files']
     for capture in (p for p in captures if p['role'] == 'memory'):
-        assert capture['stdin'].startswith((task / 'prompts/global_memory_manager.md').read_text())
+        memory_prompt = with_shared_research_goal(
+            (task / 'prompts/global_memory_manager.md').read_text(), task)
+        assert capture['stdin'].startswith(memory_prompt)
         assert set(capture['schema']['required']) == {'research_summary', 'engineering_summary', 'wisdom'}
         assert '--ephemeral' in capture['argv'] and 'resume' not in capture['argv']
         assert all('/private/' not in r['path'] for r in capture['read_roots'])
@@ -336,7 +341,6 @@ def _check_delivered_prompts(root, scenario):
         for ref, digest in capture['analysis_hashes'].items():
             source = root / 'run/.coral/public/notes' / ref
             assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
-        memory_prompt = (task / 'prompts/global_memory_manager.md').read_text()
         trigger = json.JSONDecoder().raw_decode(capture['stdin'][len(memory_prompt):].lstrip())[0]
         assert trigger['trigger_refs']
         assert set(trigger['trigger_refs']) <= set(capture['analysis_refs'])

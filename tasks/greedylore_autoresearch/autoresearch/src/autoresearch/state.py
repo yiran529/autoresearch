@@ -203,12 +203,12 @@ class WorkflowStore:
                 raise WorkflowError("workflow state has an invalid research mode")
         return state
 
-    def _save_unlocked(self, state: dict[str, Any]) -> None:
+    def _save_unlocked(self, state: dict[str, Any], *, admitted: set[str] | None = None) -> None:
         state["revision"] += 1
         _atomic_json(self.state_path, state)
-        self._rebuild_tree_unlocked(state)
+        self._rebuild_tree_unlocked(state, admitted=admitted)
 
-    def _rebuild_tree_unlocked(self, state: dict[str, Any]) -> None:
+    def _rebuild_tree_unlocked(self, state: dict[str, Any], *, admitted: set[str] | None = None) -> None:
         from .handover import publish_handovers
         from .navigation import node_relationship, rebuild_node_indexes
 
@@ -217,7 +217,8 @@ class WorkflowStore:
         rows = ["# Research Tree", "", "Open a Node's index for its code SHAs, reports and persistent evidence.", "",
                 "| Node | Parent | Research mode | Research | Analysis | Engineering | Node status |",
                 "| --- | --- | --- | --- | --- | --- | --- |"]
-        admitted = self._admitted_node_ids_unlocked(state)
+        if admitted is None:
+            admitted = self._admitted_node_ids_unlocked(state)
         for node_id, record in sorted(state["nodes"].items()):
             analysis = (record.get("analysis") or {}).get("status", "—")
             claims = record.get("engineering_claims", [])
@@ -258,17 +259,71 @@ class WorkflowStore:
         with trusted_writes_lock(self.coral_dir):
             return self._node_completed_unlocked(self._load_unlocked(), node_id)
 
+    def _analysis_publication_exists_unlocked(self, relative: str) -> bool:
+        from .handover import _safe_file
+
+        try:
+            path = _safe_file(self.notes_root, relative)
+            if not path.is_file():
+                return False
+            sibling = path.with_suffix('.json')
+            if sibling.exists() or sibling.is_symlink():
+                return _safe_file(self.notes_root, sibling.relative_to(self.notes_root).as_posix()).is_file()
+            # Legacy JSON-in-md has no sibling. Only read a bounded prefix to
+            # distinguish it from a modern Markdown view missing its JSON record.
+            with path.open('rb') as stream:
+                return stream.read(256).lstrip().startswith(b'{')
+        except (ValueError, OSError):
+            return False
+
+    def _research_published_unlocked(self, node_id: str, record: dict) -> bool:
+        """Cheap publication check; evidence is validated at transition boundaries.
+
+        Only the host writes completion state, after validating the publication.
+        Scheduling trusts that decision without reconstructing historical evidence.
+        Missing files and noncanonical pointers still retain the Node's slot.
+        """
+        job = record.get('analysis') or {}
+        version = job.get('version')
+        if (record['research']['status'] != 'completed' or job.get('status') != 'completed'
+                or type(version) is not int or version < 1):
+            return False
+        relative = f'nodes/{node_id}/research_analysis_v{version}.md'
+        return job.get('analysis_ref') == relative and self._analysis_publication_exists_unlocked(relative)
+
+    def _completion_published_unlocked(self, state: dict, node_id: str) -> bool:
+        record = state['nodes'][node_id]
+        if not self._node_completed(record) or not self._research_published_unlocked(node_id, record):
+            return False
+        if not record.get('engineering_claims'):
+            return True
+        try:
+            owner = record['engineering_claims'][-1]['agent_id']
+            worker = state['engineering_workers'].get(owner, {})
+            submission = worker.get('analysis_submission')
+            if submission is not None:
+                version = submission.get('version')
+                if type(version) is not int or version < 1:
+                    return False
+                relative = f'nodes/{node_id}/engineering_analysis_v{version}.md'
+                return self._analysis_publication_exists_unlocked(relative)
+            # Older version-2 states may not retain the author submission.
+            for path in (self.notes_root / 'nodes' / node_id).glob('engineering_analysis_v*.md'):
+                version = path.stem.removeprefix('engineering_analysis_v')
+                if (version.isdigit() and int(version) > 0
+                        and self._analysis_publication_exists_unlocked(f'nodes/{node_id}/{path.name}')):
+                    return True
+        except (ValueError, OSError):
+            pass
+        return False
+
     def _unfinished_node_ids_unlocked(self, state: dict) -> list[str]:
         """Oldest unfinished Nodes keep their slots through Analysis and Engineering."""
         unfinished = []
         for node_id, record in sorted(state['nodes'].items()):
             if record['research']['status'] == 'cancelled':
                 continue
-            try:
-                completed = self._node_completed_unlocked(state, node_id)
-            except (ValueError, OSError):
-                completed = False
-            if not completed:
+            if not self._completion_published_unlocked(state, node_id):
                 unfinished.append(node_id)
         return unfinished
 
@@ -287,8 +342,9 @@ class WorkflowStore:
             self._rebuild_tree_unlocked(state)
         return self.tree_path
 
-    def _assignments(self, state: dict[str, Any]) -> tuple[WorkflowAssignment, ...]:
-        admitted = self._admitted_node_ids_unlocked(state)
+    def _assignments(self, state: dict[str, Any], *, admitted: set[str] | None = None) -> tuple[WorkflowAssignment, ...]:
+        if admitted is None:
+            admitted = self._admitted_node_ids_unlocked(state)
         assignments = [
             WorkflowAssignment(record["research"]["agent_id"], "research", node_id,
                                "waiting" if node_id not in admitted else
@@ -387,6 +443,8 @@ class WorkflowStore:
         for node_id, record in state["nodes"].items():
             if record["research"]["status"] not in {"active", "completed"}:
                 continue
+            if not record.get('error') and self._research_published_unlocked(node_id, record):
+                continue
             try:
                 if (record['research'].get('iterative') and record.get('analysis') is None
                         and record['research'].get('protocol') != 'staged-v2'):
@@ -483,7 +541,8 @@ class WorkflowStore:
             shutil.copyfile(task_root / "README.md", toolkit / "README.md")
             state = self._load_unlocked()
             self._advance_unlocked(state)
-            admitted = self._admitted_node_ids_unlocked(state)
+            unfinished = self._unfinished_node_ids_unlocked(state) if self.max_active_nodes else []
+            admitted = set(unfinished[:self.max_active_nodes]) if self.max_active_nodes else set(state['nodes'])
             live_research = sum(
                 record["research"]["status"] in {"reserved", "active"}
                 for node_id, record in state["nodes"].items()
@@ -493,10 +552,11 @@ class WorkflowStore:
             for worker in state['engineering_workers'].values():
                 if worker.get('status') == 'active' and ensure_scratch_identity(worker):
                     changed = True
-            while (live_research < max_researchers and self._node_completed_unlocked(state, "N000")
+            while (live_research < max_researchers
+                   and self._completion_published_unlocked(state, 'N000')
                    and not (self.coral_dir / "private/research_infrastructure_block.json").exists()):
                 if (self.max_active_nodes
-                        and len(self._unfinished_node_ids_unlocked(state)) >= self.max_active_nodes):
+                        and len(unfinished) >= self.max_active_nodes):
                     break
                 sequence = state["next_node_seq"]
                 if sequence > 999:
@@ -512,9 +572,10 @@ class WorkflowStore:
                     "engineering_claims": [], "engineering_status": "blocked", "analysis": None,
                 }
                 state["next_node_seq"] = sequence + 1
+                unfinished.append(node_id)
+                admitted.add(node_id)
                 live_research += 1
                 changed = True
-            admitted = self._admitted_node_ids_unlocked(state)
             live_engineers = sum(worker["status"] == "active"
                                  and (worker.get('node_id') is None
                                       or worker['node_id'] in admitted)
@@ -546,10 +607,10 @@ class WorkflowStore:
                 live_engineers += 1
                 changed = True
             if changed:
-                self._save_unlocked(state)
+                self._save_unlocked(state, admitted=admitted)
             else:
-                self._rebuild_tree_unlocked(state)
-            return self._assignments(state)
+                self._rebuild_tree_unlocked(state, admitted=admitted)
+            return self._assignments(state, admitted=admitted)
 
     def claim_engineering(self, agent_id: str, node_id: str) -> dict[str, Any]:
         with trusted_writes_lock(self.coral_dir):
