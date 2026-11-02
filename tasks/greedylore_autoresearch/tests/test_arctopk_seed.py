@@ -63,6 +63,45 @@ def test_arc_contract_drives_all_three_commands(tmp_path):
     assert cell["model"] == "llama350m" and cell["measured_iterations"] == 400
 
 
+@pytest.mark.parametrize("workload", ["llama130m_muon", "resnet18_cifar100_muon", "timing"])
+def test_real_torchrun_preserves_arc_short_option(tmp_path, workload):
+    """The launcher must not consume the method's --r as an abbreviated option."""
+    import os
+    import subprocess
+
+    contract = EvalContract.load(arc_contract(tmp_path))
+    if workload == "timing":
+        spec = build_timing_command(
+            next(iter(contract.efficiency.cells.values())), 0, tmp_path, tmp_path / "out", range(4)
+        )
+    else:
+        spec = build_quality_command(
+            contract.quality[workload], tmp_path, tmp_path / "out", range(4)
+        )
+    probe = tmp_path / "launcher_probe.py"
+    probe.write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--r', type=int, required=True)\n"
+        "args, _ = p.parse_known_args()\n"
+        "assert args.r == 4\n"
+        "print('ARC_SHORT_OPTION_OK', flush=True)\n"
+    )
+    command = list(spec.command)
+    tail = command[command.index("--nproc_per_node") + 2 :]
+    entry = next(i for i, value in enumerate(tail) if value.endswith(".py"))
+    tail[entry] = str(probe)
+    result = subprocess.run(
+        ["/home/wyr/greedy_lore/.venv/bin/python", "-m", "torch.distributed.run",
+         "--standalone", "--nproc_per_node", "1", *tail],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "OMP_NUM_THREADS": "1",
+             "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ARC_SHORT_OPTION_OK" in result.stdout
+
+
 def test_arc_root_spec_uses_recorded_identity():
     frozen = copy.deepcopy(SEED)
     assert _root_spec("b" * 40, frozen)["hypothesis"] == "Provided ARC-TopK r4/EF14 baseline."

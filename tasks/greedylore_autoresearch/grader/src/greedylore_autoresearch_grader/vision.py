@@ -24,7 +24,7 @@ def build_vision_command(
     name = compressor['name'] if isinstance(compressor, Mapping) else compressor
     command = [
         'uv', 'run', '--frozen', '--project', str(candidate),
-        'python', '-m', 'torch.distributed.run', '--standalone', '--nproc_per_node', str(count),
+        'python', '-m', 'torch.distributed.run', '--standalone', '--nproc_per_node', str(count), '--',
         'pytorch-cifar/train_ddp.py', '--dataset', str(profile['dataset']),
         '--data-dir', str(profile['data_path']), '--output-dir', str(output),
         '--epochs', str(profile['epochs']), '--stop-after-steps', str(profile['stop_after_steps']),

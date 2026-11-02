@@ -71,6 +71,8 @@ CIFAR100 从官方训练集固定按类留出 5000 张作 validation，其余 45
 
 候选通过提交的 `method_policy.py` 定义压缩设置及每任务映射，不能改固定数据、训练预算、优化器、精度或评估设置。GreedyLoRE 的 rank、prefix 和 refresh 默认值属于方法设置；ARC 初始为 `group_topk`、`r=4`、保留比例 0.2、EF14。两者共享 hook 构造入口，Dense 关闭压缩；这些 Root 设置不代表已证明最优。
 
+语言、视觉与 timing 的宿主命令在 `torchrun` 启动参数和训练脚本之间使用 `--`，确保 ARC 的 `--r` 等方法参数传给训练脚本，不被 launcher 的参数缩写规则误解析。分隔符不改变保存的 Contract、训练设置或指标解释。
+
 timing 默认 warmup 101 步、测量 400 步，最多 800 步，需按声明周期对齐，并保留各 rank 的实际事件。固定周期包含相互作用的维护动作；无固定周期时声明 `period_steps: null`。ARC 每压缩步采用新随机投影，使用 null，不伪造 refresh 事件。窗口外稀有动作的长期成本不由一次测量证明。正式速度使用匹配 Dense 的 BF16/FP32 几何平均 speedup；有效的速度退步仍是结果，不增加 speedup 大小晋级门槛。
 
 辅助 utility 为 `U = S × exp(-mean(Lcandidate − LRoot))`：两项语言 loss 差等权、有符号，`S` 为相对阶段匹配 Root 的测时 speedup。Vision 单独设门槛，U 不决定选题、Parent 资格或候选选择。缺失或不兼容的证据返回 null 并说明原因；历史 v1/v2 的旧 U 语义保持不变。

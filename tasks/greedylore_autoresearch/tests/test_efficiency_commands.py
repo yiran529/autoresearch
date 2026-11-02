@@ -11,7 +11,8 @@ def test_timing_error_inherit_is_accepted_by_integer_parser(contract, tmp_path):
     parser.add_argument('--error_inherit', type=int)
     for cell in contract.efficiency.cells.values():
         spec = build_timing_command(cell, 0, tmp_path, tmp_path / 'out', (0, 1, 2, 3))
-        args, _ = parser.parse_known_args(spec.argv)
+        script_args = spec.argv[spec.argv.index('c4/table_v_timing.py') + 1:]
+        args, _ = parser.parse_known_args(script_args)
         assert args.error_inherit == 0
 
 

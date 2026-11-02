@@ -41,7 +41,7 @@ def build_quality_command(
     command = [
         "uv", "run", "--frozen", "--project", str(candidate),
         "python", "-m", "torch.distributed.run", "--standalone",
-        "--nproc_per_node", str(count), "c4/run_llama_pretraining.py",
+        "--nproc_per_node", str(count), "--", "c4/run_llama_pretraining.py",
         "--model_config", _MODEL_CONFIG[str(profile["model"])],
         "--dataset_path", str(profile["c4_path"]),
         "--tokenizer_path", str(profile["tokenizer_path"]),

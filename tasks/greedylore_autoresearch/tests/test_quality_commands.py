@@ -8,7 +8,8 @@ def test_quality_error_inherit_is_accepted_by_integer_parser(contract, tmp_path)
     parser.add_argument('--error_inherit', type=int)
     for profile in contract.quality.values():
         spec = build_quality_command(profile, tmp_path, tmp_path / 'out', (0, 1, 2, 3))
-        args, _ = parser.parse_known_args(spec.argv)
+        script_args = spec.argv[spec.argv.index('c4/run_llama_pretraining.py') + 1:]
+        args, _ = parser.parse_known_args(script_args)
         assert args.error_inherit == 0
 
 

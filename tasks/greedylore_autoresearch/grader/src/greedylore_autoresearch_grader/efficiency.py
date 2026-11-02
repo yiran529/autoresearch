@@ -42,7 +42,7 @@ def build_timing_command(
     command = [
         "uv", "run", "--frozen", "--project", str(candidate),
         "python", "-m", "torch.distributed.run", "--standalone",
-        "--nproc_per_node", str(cell["gpu_count"]), "c4/table_v_timing.py",
+        "--nproc_per_node", str(cell["gpu_count"]), "--", "c4/table_v_timing.py",
         "--model_config", {"llama130m": "c4/configs/llama_130m.json",
                            "llama350m": "c4/configs/llama_350m.json"}[cell["model"]],
         "--dataset_path", str(cell["c4_path"]),
