@@ -74,6 +74,18 @@ If an open PR is already in flight:
   Code sessions, check whether `CLAUDE.md` needs the corresponding detail.
 - If only one file should change, say why in the PR description.
 
+### AutoResearch documentation
+
+For every change to AutoResearch behavior, seeds, evaluation, scheduling,
+role instructions, commands, artifacts, or recovery (including shared CORAL
+changes affecting the task), read and apply
+[maintaining-autoresearch-docs](.agents/skills/maintaining-autoresearch-docs/SKILL.md).
+Update the affected maintained documents in the same change. If the existing
+descriptions remain accurate, record the concrete no-impact reason in the
+handoff or PR; unrelated changes do not require cosmetic documentation edits.
+The skill's canonical source is under `.agents/skills/`; `.claude/skills/`
+links to it so both entrypoints use the same instructions.
+
 ## 5. Disclosure in PR descriptions
 
 If an agent did the bulk of the writing, say so plainly. We don't penalize

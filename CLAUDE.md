@@ -207,6 +207,18 @@ uv run ruff format .
 
 Project-local skills live under `.claude/skills/`. Claude Code loads them on demand by description match — describe the task and the matching skill triggers automatically.
 
+### AutoResearch documentation
+
+For every change to AutoResearch behavior, seeds, evaluation, scheduling,
+role instructions, commands, artifacts, or recovery (including shared CORAL
+changes affecting the task), read and apply
+[maintaining-autoresearch-docs](.agents/skills/maintaining-autoresearch-docs/SKILL.md).
+Update the affected maintained documents in the same change. If the existing
+descriptions remain accurate, record the concrete no-impact reason in the
+handoff or PR; unrelated changes do not require cosmetic documentation edits.
+The skill's canonical source is under `.agents/skills/`; `.claude/skills/`
+links to it so both entrypoints use the same instructions.
+
 All ordinary PRs target `dev`. A release PR promotes `dev` to `main` with a
 merge commit; the promotion workflow verifies identical trees and puts the
 version tag on the promoted `dev` parent, so release ancestry remains shared
@@ -217,3 +229,4 @@ without merging `main` back into `dev`. Do not make main-only release changes.
 | [coral-debug](.claude/skills/coral-debug/SKILL.md) | Editing existing code under `coral/` or chasing a bug — reproduce loops, where-to-look pointers, run inspection, lint/test |
 | [coral-new-task](.claude/skills/coral-new-task/SKILL.md) | Adding a new `examples/<task>/` — seed + task.yaml + grader package, validation loop, common pitfalls |
 | [coral-extend](.claude/skills/coral-extend/SKILL.md) | Extending the framework itself — new runtime, CLI command, bundled skill, hook, or config field |
+| [maintaining-autoresearch-docs](.agents/skills/maintaining-autoresearch-docs/SKILL.md) | Changing AutoResearch behavior or shared CORAL behavior affecting the task; synchronize the maintained documentation |

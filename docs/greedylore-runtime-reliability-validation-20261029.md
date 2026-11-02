@@ -1,73 +1,44 @@
-# GreedyLoRE runtime reliability: validation and decisions
+# CORAL AutoResearch 历史验证索引
 
-This record covers the implementation through `8d206cb` on 2026-10-29. All scientific execution boundaries in the staged simulations were synthetic. The active experiment was not deployed, restarted or modified; no GPU, training, model invocation, package fetch, external network access or push was performed. Independent whole-range code review of `e0c3302..8d206cb` found 0 Critical and 0 Important issues and one minor documentation issue, addressed in this record and the linked design update. The reviewer did not rerun the broad suites.
+整理：2026-11-02。本文保留既有引用路径，汇总历史验证的版本、证据与限制；**不表示这些检查在当前 HEAD 重新执行过，也不表示活跃 Run 已部署最新代码**。当前机制见 [架构](greedylore-autoresearch-architecture.md)、[工作流](greedylore-autoresearch-workflow.md)、[产物](greedylore-autoresearch-artifacts.md) 和 [运行时](greedylore-runtime-reliability-design-20261029.md)。
 
-## Stages and commits
+## 1. 验证记录与可追溯来源
 
-| Stage | Implementation commits | Scope |
-|---|---|---|
-| Preparation | `a73bddc`, `0d8774c` | Design and implementation plan |
-| 0 | `fa57162` | Engineer command reference and methodology separation |
-| 1 | `304aa04`, `3520968` | Bounded responses, stage status and envelope/progress corrections |
-| 2 | `f08bd0e`, `513c4c8` | Declared resources, checkpoint views and traversal validation |
-| 3 | `8c23328` | Authenticated preflight, namespace and IPv4 helper |
-| 4 | `8d206cb` | Durable acceptance receipts, Engineering finish wait and unavailable resource catalog |
+原顶层临时报告已合并到本索引。完整原文保存在整理前的 Git commit `64aa372`，可按下表路径读取，例如：
 
-## Offline verification
-
-Commands used the existing repository venv, offline mode and local namespace/socket escalation for actual sandbox probes. Set the installed tool path for the commands below:
-
-```sh
-export PATH=/home/wyr/.local/lib/coral-diagnostic-tools/unpacked/usr/bin:/home/wyr/.local/lib/coral-engineer-tools/bin:/home/wyr/.local/lib/coral-engineer-tools/node-direct/bin:/home/wyr/.local/lib/coral-engineer-tools/srt/node_modules/.bin:/home/wyr/.local/bin:/usr/local/bin:/usr/bin:/bin
-export UV_OFFLINE=1 PYTHONPATH=/home/wyr/CORAL CORAL_SRT_SMOKE=1
+```bash
+git show 64aa372:docs/greedylore-autoresearch-e2e-audit-20261026.md
 ```
 
-- The affected core and task suite ran `pytest` against `tests/test_hooks.py`, `tests/test_cli_island_scope.py`, `tests/test_trusted_writes.py`, `tests/test_sandbox_srt_integration.py`, and task tests `test_preflight.py`, `test_diagnostics.py`, `test_staged_environment.py`, `test_submission.py`, `test_analysis_cli.py`, `test_sandbox_boundaries.py`: **234 passed, 2 failed in 23.63s**. The first command omitted the SRT directories from `PATH`, so the two failures were `FileNotFoundError: srt`. With the full path above, `.venv/bin/python -m pytest -q tests/test_sandbox_srt_integration.py` returned **2 passed in 1.43s**; namespace skips were not counted as successful probes.
-The initial affected-suite command, including its incomplete PATH, was:
+| 日期／来源文件（`docs/` 下） | 当时的主要证据 | 验证边界 |
+| --- | --- | --- |
+| 10-26，`greedylore-autoresearch-e2e-audit-20261026.md`，被测 `8532a37` | 864 passed、2 skipped；6 个 staged 场景及 2 个兼容多节点场景；另有清理后产物接入 Memory 的增量／幂等检查 | 训练、GPU、模型输出为替身；缺 bubblewrap 的两项跳过不作为隔离成功 |
+| 10-27，`greedylore-v4-recovery-plan-20261027.md` | 短 TMPDIR、IPC 快速失败、来源 SHA、checkpoint JSON 配置规范化及嵌套诊断路径修复；定向检查与真实 CPU/Gloo、局部 CUDA／模型探针分别记录 | 多次分阶段检查不是同一全量回归；局部探针不等于真实首节点完整科学评估；记录末尾仍有未完成的运行验收／清理 |
+| 10-29，本文件原版，范围 `e0c3302..8d206cb` | 传输、资源视图、预检、受理回执；6 个 staged 场景通过，补充 97 项检查通过；真实 UDS、SRT/bwrap 与 CPU/Gloo 探针 | 首次受影响套件 234 passed、2 failed，缺 SRT PATH；补齐后 SRT 专项 2 passed。兼容副本的 115+1 项使用历史 legacy 资产，不等于主工作区全量通过 |
+| 10-29，`greedylore-luna-behavior-validation-20261029.md` | fresh Luna 自编诊断与 Engineering 总结；生产者退休后独立消费者读取公开证据并核对哈希 | 首轮暴露跨 Run scratch 污染、未归档自由文本引用及哈希规则误读；重复和辅助澄清均保留，不记为首次盲测成功 |
+| 10-29，`greedylore-luna-runtime-fixes-validation-20261029.md` | Run 专属 scratch、持久引用校验及清理后消费；199 项唯一相关检查；20 个 Engineer／18 个 Analyzer 已存在证据逐一核验 | GPU／科学输入合成；Analyzer 使用桥接启动器和未启用 authorizer 的测试 publisher；两条原始评估引用缺失，清理后的 checkpoint 不可由公开消费者重算 |
 
-```sh
-PATH=/home/wyr/.local/lib/coral-diagnostic-tools/unpacked/usr/bin:/usr/local/bin:/usr/bin:/bin UV_OFFLINE=1 PYTHONPATH=/home/wyr/CORAL CORAL_SRT_SMOKE=1 .venv/bin/python -m pytest -q tests/test_hooks.py tests/test_cli_island_scope.py tests/test_trusted_writes.py tests/test_sandbox_srt_integration.py tasks/greedylore_autoresearch/tests/test_preflight.py tasks/greedylore_autoresearch/tests/test_diagnostics.py tasks/greedylore_autoresearch/tests/test_staged_environment.py tasks/greedylore_autoresearch/tests/test_submission.py tasks/greedylore_autoresearch/tests/test_analysis_cli.py tasks/greedylore_autoresearch/tests/test_sandbox_boundaries.py
-```
+10-29 初始可靠性范围的独立代码审查记录为 0 Critical、0 Important 和 1 个已修正文档问题；审查者没有重跑广泛测试。后续 scratch 与引用修复有独立归档，不能将前一范围的审查自动套用于后续所有提交。
 
-- A current-task source snapshot under `/tmp/coral-task3-compat`, with only the two historical legacy role assets supplied there, ran `test_workflow_state.py`, `test_engineer_diagnostics.py`, `test_runtime_resources.py`, `test_handoff_assets.py`, and `test_contract_static.py`: **115 passed in 8.04s**. A further test using the authenticated handler and actual Analysis publication verified `engineering finish --wait`: **1 passed in 0.35s**. The missing-resource regression demonstrated that frozen publication proceeds while execution validation still rejects the missing declaration.
-The compatibility command, with the full tool path and environment above, was:
+## 2. 保留的证据位置
 
-```sh
-.venv/bin/python -m pytest -q /tmp/coral-task3-compat/tasks/greedylore_autoresearch/tests/test_workflow_state.py /tmp/coral-task3-compat/tasks/greedylore_autoresearch/tests/test_engineer_diagnostics.py /tmp/coral-task3-compat/tasks/greedylore_autoresearch/tests/test_runtime_resources.py /tmp/coral-task3-compat/tasks/greedylore_autoresearch/tests/test_handoff_assets.py /tmp/coral-task3-compat/tasks/greedylore_autoresearch/tests/test_contract_static.py
-.venv/bin/python -m pytest -q /tmp/coral-task3-compat/tasks/greedylore_autoresearch/tests/test_workflow_state.py::test_engineering_finish_wait_completes_real_publication
-```
+本地持久归档在 `/home/wyr/coral-validation-artifacts/`：
 
-- `CORAL_STAGED_SIMULATION_DIR=/tmp/coral-runtime-reliability-staged-final .venv/bin/python -m pytest -q tasks/greedylore_autoresearch/tests/test_staged_workflow_simulation.py` returned **6 passed in 194.44s**. These six scenarios use real CLI, trusted identities, controller, recovery, sealing and publication with synthetic training, GPU, model and resource boundaries.
-- The following complementary current-HEAD run returned **97 passed in 6.29s**, without skips or warnings:
+- `greedylore-luna-behavior-20261029.tar.gz`：初轮行为、失败、干净重复、消费者与辅助哈希复核。原报告记录 SHA-256 为 `45b293051091a980ed4e9f006f50491e0f0bbfa6bfa8b4d2f47fe4341fdb28ee`。
+- `greedylore-luna-runtime-fixes-20261029.tar.gz` 及相邻 `.sha256`：修复后的 fixture、生产者记录、退休后证据、首次与修正消费者报告。
+- `greedylore-runtime-fixes-reviews-20261029.tar.gz` 及相邻 `.sha256`：修复审查材料。
 
-```sh
-.venv/bin/python -m pytest -q tests/test_eval_wait.py tests/test_cli_test_eval_alias.py tasks/greedylore_autoresearch/tests/test_final_evaluation.py tasks/greedylore_autoresearch/tests/test_staged_research.py tasks/greedylore_autoresearch/tests/test_staged_scheduling.py tasks/greedylore_autoresearch/tests/test_runtime_artifacts.py tasks/greedylore_autoresearch/tests/test_artifact_paths.py tasks/greedylore_autoresearch/tests/test_research_wait.py tasks/greedylore_autoresearch/tests/test_diagnostic_roundtrip.py
-```
+原 10-26 审计目录为 `/tmp/coral-e2e-audit-20261026-8532a37/`；10-29 staged 输出为 `/tmp/coral-runtime-reliability-staged-final/`。这些是历史临时位置，可能已被清理，不视为跨机器持久接口。其他探针位置与精确命令保留在 Git 原报告中；本次整理未重跑历史实验或逐一重验归档内容。
 
-Ruff checked all **18 changed source files** and **16 changed test files** in `e0c3302..8d206cb`, with `--ignore S101` for test assertions; both groups passed, and `git diff --check e0c3302..8d206cb` was clean. The file groups were selected with `git diff --name-only --diff-filter=AM e0c3302..HEAD`, splitting `.py` files by test path.
+## 3. 如何解释这些检查
 
-The two legacy role deletions predated this work and remain untouched and unstaged in the main checkout. Historical assets were supplied only to the temporary compatibility snapshot; these results do not assert a green full main-checkout suite.
+脚本化模拟可覆盖真实 CLI、可信进程身份、冻结、恢复、发布、哈希与清理，同时替换昂贵执行边界。实际模型行为测试另外验证角色能否使用接口，但桥接启动器、合成发布身份及缺失历史输入仍限制结论。CPU/Gloo 状态 roundtrip 不自动证明完整训练中断与连续执行的轨迹等价；任一层检查都不能代替真实 GPU/NCCL 质量和性能测量。
 
-## Independent operator simulations
+初轮 Luna 暴露的问题已形成 Run 专属 scratch、持久引用校验和哈希规则说明；这不追溯改变初轮失败或宣称所有自由文本文件自动归档。修复后独立消费者首次混用哈希规则并把两个 fixture 当成同一谱系，澄清后的复核及其缺失输入限制仍一并保留。
 
-These earlier simulations had synthetic model boundaries. The subsequent [fresh Luna behavior test](greedylore-luna-behavior-validation-20261029.md) separately records actual model-authored diagnostics, publication and downstream reference checks, including failures and coverage limits.
+## 4. 后续实现的验证入口
 
-Each simulation used disposable synthetic fixtures and no active run or real GPU/model work:
+- `6fe3573`：减少常规 reconcile 对已完成历史证据的重复检查；对应 [test_workflow_hot_path.py](../tasks/greedylore_autoresearch/tests/test_workflow_hot_path.py)，发布／Parent／清理的完整校验仍保留。
+- `64aa372`：声明式 GreedyLoRE／ARC-TopK v5 Seed；对应 [test_arctopk_seed.py](../tasks/greedylore_autoresearch/tests/test_arctopk_seed.py)、[test_root_bootstrap.py](../tasks/greedylore_autoresearch/tests/test_root_bootstrap.py)、[staged 模拟](../tasks/greedylore_autoresearch/tests/test_staged_workflow_simulation.py) 及任务 README 的验证范围。此处列出可查入口，不新增通过数量或 GPU 效果结论。
 
-1. A real CLI, UDS transport and controller exercised a 1.24 MB staged journal, bounded summary and same-request recovery. Fixture identity resolution was synthetic, so that exercise alone did not verify production registry authentication.
-2. Actual sandbox probes read declared data through original and alias paths, rejected an undeclared link, exposed public checkpoint metadata and only the selected readonly tensor view, and verified pruning/cleanup status. A real SRT probe checked the managed shared-memory boundary.
-3. Real UDS with registered temporary process identities exercised preflight success, a missing-resource failure and recovery for the same SHA. Actual bubblewrap and two-rank CPU Gloo verified localhost and the IPv4 launcher; fixture state and Attempt/journal counts remained unchanged.
-4. Real CLI subprocesses, UDS and registered peer PIDs verified the full SHA receipt after the pending Attempt was durable, before completion. Validator rejection and moving HEAD produced no receipt, Attempt or slot growth. Engineering timing returned a receipt and parseable final JSON; finish returned `finalizing`, then identical-body `--wait` completed real fixture publication. Replaying created no second version; a changed body was rejected.
-
-## Decisions and limits
-
-- Work in the user's main feature checkout was explicitly authorized for this integration. This avoided detached work, while explicit file staging and ownership protected unrelated changes.
-- The two existing legacy deletions were preserved as user state. This retains a known limitation for main-checkout legacy initialization tests; preflight reports missing assets for the selected protocol, and the temporary compatibility fixture supplies historical assets only for its tests.
-- The user requested a commit after each completed stage. Local stage commits were made; push and active-run deployment require separate work.
-- The IPv4 helper uses single-node static torchrun at `127.0.0.1`, selecting an automatic port via `AF_INET bind(0)` or accepting `--port`. Installed Torch c10d advertised `getfqdn()` with dynamic rendezvous; a private framework patch or custom process manager would be disproportionate. The automatic port is released before torchrun binds, leaving a short race; a conflicting bind needs a fresh request or an explicitly managed port.
-- Preflight statically inspects committed entry sources; it does not prove dependency loading, method semantics or scientific equivalence. The current task configuration installs the package editable from retained task assets. Extracted-wheel smoke verified helper and name-service assets, not a complete standalone-wheel workflow.
-- The configured C4 link target was missing on the host during this work. The host must restore the authorized data before rollout; execution and preflight fail closed if it remains unavailable. Public catalog unavailability does not prevent already-frozen publication and cleanup.
-
-## Active-source check
-
-The read-only before/after SHA-256 comparison found all five selected files unchanged: `coral/grader/trusted_writes.py`, `coral/hooks/post_commit.py`, and task `staged_research.py`, `diagnostic_sandbox.py`, and `artifact_paths.py`. This establishes only those selected source bytes; it does not assert that every process or runtime artifact was inspected. Scientific contracts, evaluation budgets and historical evidence were not changed by this implementation.
+当前主工作区保留两份 legacy 角色文件的既有删除；依赖旧资产的测试可能受影响。阅读旧 Contract 的能力与当前能否初始化相应协议应分别核实。以后新增验证记录只记实际执行的版本、命令、结果与范围；例行文字修改无需复制历史通过数量或新建一份日期报告。
