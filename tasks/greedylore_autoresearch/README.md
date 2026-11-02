@@ -219,3 +219,78 @@ Every run writes `prompt_audit/*.json` alongside its `report.json`. Producer cap
 The diagnostic-enabled Analyzer has an additional final-input test at the namespace/process boundary, checking the 10-success/20-total diagnostic limits and 600-second execution limit, separate 3600-second queue wait, fixed roots, writable scratch and JSON Schema. That test substitutes namespace/process execution, so it does not establish OS isolation or GPU execution.
 
 These checks establish application input delivery. Live Codex instruction loading, conversation persistence, model compliance and scientific effectiveness require separate live acceptance tests.
+
+## Declared GreedyLoRE and ARC-TopK seeds
+
+Both seeds use the existing CORAL training/evaluation protocol and the seed's
+Torch 2.4 environment. ARC contributes its compression algorithm; model
+architectures, data streams, optimizers and fixed v4 training/timing budgets stay
+in this task. This is not a reproduction of ARC's upstream training recipes.
+
+From the CORAL checkout, prepare a new run with the existing CORAL environment:
+
+```bash
+.venv/bin/python tasks/greedylore_autoresearch/scripts/prepare_seed_run.py \
+  --seed arctopk --output /absolute/path/to/a/new/arc-run
+# Retain the GreedyLoRE path with explicit seed metadata:
+.venv/bin/python tasks/greedylore_autoresearch/scripts/prepare_seed_run.py \
+  --seed greedylore --output /absolute/path/to/a/new/greedy-run
+```
+
+Preparation uses `task_arctopk.yaml` or `task_greedylore.yaml`, copies the shared
+seed including the imported ARC hook, freezes the selected v5 contract in the
+run's private directory, creates Root N000 and queues its fixed Attempt. It does
+not start workers or acquire GPUs. Normal project creation prepares the grader
+environment. The JSON response supplies a quoted `cd <run> && <python> -m
+coral.cli resume` command to start normal execution. The run directory's standard
+`.coral_dir` breadcrumb lets CORAL find it outside `results/`. Use
+`prepare_seed_run.py --resume --output <existing-run>` to validate/reuse the saved
+run without resetting Root or Attempts; `--seed` does not change a resumed run.
+The original `task.yaml` still selects the historical v4 GreedyLoRE contract.
+
+The v5 declaration records a seed id, Root description, upstream repository and
+commit, and imported-file hashes. Bootstrap checks those against the seed source
+manifest. Root generation, recovery and Engineering validation read the run's
+private contract, never current task defaults. `root_bootstrap.json` keeps its
+existing v1 shape; its `source_commit` is the adapted local run snapshot S0,
+not an ARC upstream SHA. `source_manifest.json` separately records the Greedy
+snapshot, ARC import at `c09d5588ddb0be3be77f33d4034220f0c1970e74`, original blob
+hash, adapted-file hash and adaptation reasons. The three upstream `.agents`
+reference files are delivered under `seed/docs/greedylore-skills/`, with original
+hashes and explicit relocations, so ignored skill directories do not lose them.
+Saved v1-v4 contracts remain readable and retain their original hashes.
+
+ARC's initial setting is `group_topk`, projection width `r=4`, row retention
+ratio `0.2`, EF14, language dense prefix 1000 and vision prefix 4000; timing
+retains prefix 100. These are candidate Root settings, not a demonstrated best
+configuration. `error_decay` is an upstream reserved field fixed at 1.0 and has
+no adjustable algorithmic effect. ARC compresses vectors, matrices and convolution
+gradients; it does not inherit GreedyLoRE's classifier exclusion. Its local
+projection generator preserves training RNG, and existing checkpoints retain
+residuals, Generator state, iteration and checked DDP bucket identity. Vision
+keeps the actual compressor state in diagnostic snapshots.
+
+The host translates only supported method fields through one restricted
+conversion. Training/optimizer fields and invalid method values are rejected.
+Language, vision and timing construct hooks through the same factory. GreedyLoRE
+vision retains its existing CLI plus `method_policy.py` defaults (rank 64,
+prefix 4000, refresh 1200); language/timing retain rank 32. ARC receives explicit
+`r`, ratio, EF and prefix arguments in all three paths. Dense disables the method.
+ARC projections occur every compressed step with fresh randomness, so its timing
+period is null, with no invented refresh events. Passive bucket observation
+measures the same hook as training; the standard null-period evidence covers
+only the measured window.
+
+The separate `taskdata/arctopk/dense_references/` and
+`taskdata/greedylore/dense_references/` namespaces start empty. Generate actual
+same-contract/hardware references before interpreting formal scores; historical
+dense measurements are not relabeled or copied.
+
+Verification uses the existing Python environments, CPU/Gloo tensor aggregation,
+checkpoint round trips, real CLI/config/Root workflows and staged simulations.
+Gloo and trusted workflow simulations require local TCP/Unix socket permission.
+The CPU checkpoint checks establish saved-field round trips and successful subsequent
+backward execution with bucket checks; they do not establish interrupted versus
+uninterrupted full-training trajectory equivalence. Expensive training, timing
+measurements and model roles in staged simulations
+are synthetic; these checks make no GPU quality or performance claim.

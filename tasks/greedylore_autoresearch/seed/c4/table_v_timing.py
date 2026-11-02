@@ -273,38 +273,12 @@ def bucket_recording_hook(
 
 
 def register_timing_comm_hook(model, process_group, args):
-    from comm_hooks.utils import get_uncompress_names, register_comm_hook_for_ddp_model
+    from comm_hooks.utils import create_comm_hook, register_comm_hook_for_ddp_model
 
     if not args.strict_blocking_communication and not args.record_bucket_layout:
         register_comm_hook_for_ddp_model(model, process_group, args)
         return None
-    if args.compressor == 'none':
-        from comm_hooks.default_hooks import allreduce_hook
-        inner_state, inner_hook = process_group, allreduce_hook
-    elif args.compressor == 'top_subspace':
-        from comm_hooks.subspace_hook import SubspaceState, subspace_hook
-        inner_state = SubspaceState(
-            process_group=process_group,
-            matrix_approximation_rank=args.compress_rank,
-            min_compression_rate=args.min_compression_rate,
-            update_proj_gap=args.update_proj_gap,
-            use_error_feedback=args.use_error_feedback,
-            start_compress_iter=args.start_compress_iter,
-            uncompressed_names=get_uncompress_names(model),
-            random_seed=args.seed,
-            identity_proj=False,
-            scale=args.scale,
-            random=False,
-            sigma_type=args.sigma_type,
-            beta_ef=args.beta_ef,
-            error_inherit=args.error_inherit,
-        )
-        inner_state.param_to_name = {
-            parameter: name for name, parameter in model.named_parameters()
-        }
-        inner_hook = subspace_hook
-    else:
-        raise ValueError('Strict blocking timing supports none and top_subspace')
+    inner_state, inner_hook = create_comm_hook(model, process_group, args)
     if args.strict_blocking_communication:
         timing_state = StrictBlockingHookState(inner_state, inner_hook)
         timing_hook = strict_blocking_hook
@@ -392,8 +366,8 @@ def parse_args():
         parser.error('Invalid timing budget')
     if args.ddp_bucket_cap_mb is not None and args.ddp_bucket_cap_mb <= 0:
         parser.error('--ddp_bucket_cap_mb must be positive')
-    if args.compressor not in ['none', 'powersgd', 'top_subspace']:
-        parser.error('Use none, powersgd, or top_subspace')
+    if args.compressor not in ['none', 'powersgd', 'top_subspace', 'group_topk']:
+        parser.error('Use none, powersgd, top_subspace, or group_topk')
     if args.compressor != 'none' and args.start_compress_iter > args.warmup_iterations:
         parser.error('Compression must be enabled throughout the measurement window')
     return args

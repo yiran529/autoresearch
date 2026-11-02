@@ -1,24 +1,24 @@
 {
   "adaptations": {
     "c4/run_llama_pretraining.py": {
-      "reason": "offline tokenizer and formal quality evidence; opt-in staged periodic checkpoints, exact deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches; preserve configured DataLoader workers and ordered replay settings for fixed-contract comparison; apply frozen candidate-owned per-workload compression policy",
-      "seed_sha256": "def6f2400f2d6c1101e1d0808482cf2cd9fb63010bd319deae1619a92333be5f"
+      "reason": "Offline tokenizer and formal quality evidence; opt-in staged checkpoints, deterministic C4 replay, pause/resume and local metrics; paired final diagnostic batches; retain configured ordered DataLoader workers; apply candidate-owned workload compression policy and permit CPU-only CLI parsing.",
+      "seed_sha256": "e2157f9ed7ee446e595d5709e48e2d39e1d10aedd95d29e9fb8b276bed4453ca"
     },
     "c4/table_v_timing.py": {
-      "reason": "formal timing identity and hardware evidence schema Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.; apply frozen candidate-owned per-workload compression policy; tolerate archive snapshots without Git and accept host-supplied source identity",
-      "seed_sha256": "743f92e9c40dbe7cd6183e0542d1ebd45425a704be898fbf8db35b71ee0c4b43"
+      "reason": "Formal timing identity and hardware evidence; record actual periodic refresh events; apply candidate-owned workload policy; accept host source identity in exported snapshots; construct the same dense, GreedyLoRE or ARC hook as training before passive/strict timing wrappers.",
+      "seed_sha256": "1dedbdf8cfc055fae3eda010bd770e8342248e7935551642f667de1ac38ae7c9"
     },
     "comm_hooks/subspace_hook.py": {
       "reason": " Record actual periodic refresh events for host-validated bounded-cycle timing, without changing compressor arithmetic.",
       "seed_sha256": "d91d67ba24e144b40bf37e787249e030b71e342c7c49584bcb9b5e08c49fef46"
     },
     "comm_hooks/utils.py": {
-      "reason": "return hook state and record/check checkpoint bucket layouts for final diagnostics and staged checkpoint roots; timing registration unchanged",
-      "seed_sha256": "0dc924cfdcdb5d910a03934758318dd335c3b14fd1f907b7ed3875be37bfecac"
+      "reason": "Extract the shared (state, hook) constructor for language, vision and timing; adapt imported ARC registration to the existing seed APIs; preserve training registration and PrecondAdam behavior; record/check checkpoint bucket layouts and map candidate parameters to names.",
+      "seed_sha256": "44b47fe7b601c8da59715402926e2f101174e5530877e5077cee29376f082142"
     },
     "pytorch-cifar/train_ddp.py": {
-      "reason": "versioned final-evaluation runner with candidate-owned compression mapping, offline evaluation and external diagnostic checkpoints; fixed stratified training/validation split without opening official test in search",
-      "seed_sha256": "9eca4d2498cd83a7d3ab3584217b6b823c4dc9ed8e8ddcba96a51ad26a035870"
+      "reason": "Versioned offline final-evaluation runner with fixed stratified training/validation split, candidate workload policy and shared hook construction; parse ARC method fields; preserve actual compressor state and DDP bucket identity in external diagnostic checkpoints; report method-specific exclusions truthfully.",
+      "seed_sha256": "614ba9cd0810699f6be28c09565e217a50cc5b4c911d68a73fa7a535204c50b6"
     },
     "tests/test_c4_model_setup.py": {
       "reason": "quality entrypoint regression coverage",
@@ -35,15 +35,15 @@
       "sha256": "925db89fbf0c8cf2cd651a491fe82e7d5865ef36100f8c53d37bf954ea29eebc"
     },
     ".agents/skills/experiment-results-reporting/SKILL.md": {
-      "seed_path": ".agents/skills/experiment-results-reporting/SKILL.md",
+      "seed_path": "docs/greedylore-skills/experiment-results-reporting/SKILL.md",
       "sha256": "273c61b7470a24d7f17e253a541fe576bfa9fbe6031dd0c993ee36f4b3e89689"
     },
     ".agents/skills/experiment-results-reporting/references/concise-template.md": {
-      "seed_path": ".agents/skills/experiment-results-reporting/references/concise-template.md",
+      "seed_path": "docs/greedylore-skills/experiment-results-reporting/references/concise-template.md",
       "sha256": "cf92251954353070c0288d65eb90c339db51bb3d35f63b76fe7380244b443e19"
     },
     ".agents/skills/greedy-lore-experiment-workflow/SKILL.md": {
-      "seed_path": ".agents/skills/greedy-lore-experiment-workflow/SKILL.md",
+      "seed_path": "docs/greedylore-skills/greedy-lore-experiment-workflow/SKILL.md",
       "sha256": "2ee72f1594f970b82f8295e0e82bab90a85da4ec68c35d1de6fc45b16fbd9539"
     },
     ".gitignore": {
@@ -507,16 +507,34 @@
       "sha256": "cf9f13fedc1a51a2c5383806737f07e0a5cdebcc3df4348134050b1ac163b6b8"
     }
   },
+  "imports": {
+    "arctopk": {
+      "adaptations": {
+        "comm_hooks/group_topk_hook_no_reshape.py": "Use existing HookState/default allreduce interfaces; isolated per-device projection generator preserves training RNG; passive timing is nonperiodic; validate parameters and handle convolution shapes not divisible by upstream two-channel grouping. Existing model/data/optimizer protocol retained. Remove upstream trailing whitespace without changing the AST."
+      },
+      "files": {
+        "comm_hooks/group_topk_hook_no_reshape.py": "5b266bf5a7130757964a0dc7d0e5e402538fe7d03882720e8e410f32237b0929"
+      },
+      "source_commit": "c09d5588ddb0be3be77f33d4034220f0c1970e74",
+      "source_repository": "ARC-TopK-release"
+    }
+  },
   "locked_coral_commit": "0123dfb939b35228cf2c1fde224cd0561e727408",
   "relocations": {
+    ".agents/skills/experiment-results-reporting/SKILL.md": "docs/greedylore-skills/experiment-results-reporting/SKILL.md",
+    ".agents/skills/experiment-results-reporting/references/concise-template.md": "docs/greedylore-skills/experiment-results-reporting/references/concise-template.md",
+    ".agents/skills/greedy-lore-experiment-workflow/SKILL.md": "docs/greedylore-skills/greedy-lore-experiment-workflow/SKILL.md",
     "AGENTS.md": "docs/greedylore-agent-guidance.md"
   },
   "schema_version": 1,
   "source_commit": "d2c38bc2062e06fdfd73185c508e7cc652933de6",
   "source_repository": "/home/wyr/greedy_lore",
   "task_files": {
+    "comm_hooks/group_topk_hook_no_reshape.py": {
+      "sha256": "10c1acc4eae26c3bda97dfafca485eb6c2e344d9905cefdc67ad38257794cbd3"
+    },
     "compression_config.py": {
-      "sha256": "066b7739477d45cc24a0481584f389669c596eed3f3ef744387daf1e51ba7ff8"
+      "sha256": "6db2f939503161c376d090c06e27810d918af602ea197ce7c5eee131ff3435b1"
     },
     "diagnostic_checkpoint.py": {
       "sha256": "8b84413841e6b4f38fc4e9c0c3a39103f3a064036a333820aa8cd08fbe33f333"

@@ -39,7 +39,12 @@ def parse_args(argv=None):
     parser.add_argument('--seed', type=int, default=1243)
     parser.add_argument('--lr', type=float, default=.02)
     parser.add_argument('--weight-decay', type=float, default=5e-4)
-    parser.add_argument('--compressor', choices=['none', 'top_subspace'], default='none')
+    parser.add_argument('--compressor', choices=['none', 'top_subspace', 'group_topk'], default='none')
+    parser.add_argument('--r', type=int, default=4)
+    parser.add_argument('--compress-ratio', type=float, default=.2)
+    parser.add_argument('--error-decay', type=float, choices=[1.0], default=1.0)
+    parser.add_argument('--scale', type=float, default=1.)
+    parser.add_argument('--sigma-type', type=int, default=0)
     parser.add_argument('--compress-rank', dest='compress_rank', type=int, default=64)
     parser.add_argument('--start-compress-iter', dest='start_compress_iter', type=int)
     parser.add_argument('--update-proj-gap', dest='update_proj_gap', type=int)
@@ -98,6 +103,7 @@ def evaluation_indices(size, rank, world_size):
 class CommunicationState:
     def __init__(self, subspace=None):
         self.subspace = subspace
+        self.inner_state = subspace
         self.dense_bits = 0
         self.payload_bits = 0
         self.steps = 0
@@ -132,24 +138,21 @@ def counted_hook(state, bucket):
 
 
 def attach_hook(model, args):
-    subspace = None
-    if args.compressor == 'top_subspace':
-        subspace = SubspaceState(
-            dist.group.WORLD, matrix_approximation_rank=args.compress_rank,
-            start_compress_iter=args.start_compress_iter, update_proj_gap=args.update_proj_gap,
-            min_compression_rate=args.min_compression_rate, use_error_feedback=args.use_error_feedback,
-            uncompressed_names=['linear'], random_seed=args.seed,
-            beta_ef=args.beta_ef, error_inherit=args.error_inherit,
-        )
-        subspace.param_to_name = {p: name for name, p in model.named_parameters()}
+    from comm_hooks.utils import create_comm_hook
+    inner_state, inner_hook = create_comm_hook(model, dist.group.WORLD, args)
+    subspace = inner_state if args.compressor == 'top_subspace' else None
     state = CommunicationState(subspace)
+    state.inner_state = inner_state if args.compressor != 'none' else None
     if args.communication_bit_estimates:
+        if args.compressor == 'group_topk':
+            raise ValueError('ARC has no GreedyLoRE bit estimator; use --no-communication-bit-estimates')
         model.register_comm_hook(state, counted_hook)
-    elif subspace is not None:
-        # Candidate states need not expose stock GreedyLoRE estimator fields.
-        model.register_comm_hook(subspace, subspace_hook)
     else:
-        model.register_comm_hook(state, counted_hook)
+        if args.checkpoint_root:
+            from diagnostic_checkpoint import register_checkpoint_hook
+            register_checkpoint_hook(model, inner_state, inner_hook)
+        else:
+            model.register_comm_hook(inner_state, inner_hook)
     return state
 
 
@@ -273,7 +276,7 @@ def main(args=None):
                   parameter_count=sum(p.numel() for p in model.parameters()),
                   compression_stage='DDP gradients before Muon momentum/orthogonalization',
                   scheduler='cosine to zero, epoch steps, no LR warmup',
-                  uncompressed_names=['linear'],
+                  uncompressed_names=(['linear'] if args.compressor == 'top_subspace' else []),
                   workload=workload, resume_policy='restart_from_scratch',
                   checkpoint_policy=('diagnostic periodic and final snapshots; no exact vision resume'
                                      if args.checkpoint_root else 'none; retries restart from scratch'))
@@ -297,7 +300,7 @@ def main(args=None):
     def save_diagnostic():
         return save_final_checkpoint(
             Path(args.checkpoint_root) / f'step-{update_step:08d}',
-            model, optimizer, scheduler, hook.subspace, config=config,
+            model, optimizer, scheduler, hook.inner_state, config=config,
             update_step=update_step, batch=last_batch,
         )
     for epoch in range(args.epochs):

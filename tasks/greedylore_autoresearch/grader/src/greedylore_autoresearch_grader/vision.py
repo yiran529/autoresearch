@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .process import ProcessSpec
+from .compression import compression_arguments
 
 
 def build_vision_command(
@@ -33,10 +34,11 @@ def build_vision_command(
         '--muon_epsilon', '1e-8', '--muon_scalar_lr', str(profile['scalar_learning_rate']),
         '--muon_scalar_beta1', '0.9', '--muon_scalar_beta2', '0.999',
         '--muon_scalar_eps', '1e-8', '--muon_scalar_weight_decay', str(profile['weight_decay']),
-        '--muon_adjust_lr', 'spectral_norm', '--compressor', str(name),
+        '--muon_adjust_lr', 'spectral_norm',
         '--contract-hash', str(profile['contract_hash']), '--wandb-mode', 'disabled',
         '--no-download', '--no-communication-bit-estimates',
     ]
+    command += compression_arguments(compressor, compressor.get('vision_start_step', 4000), vision=True)
     if profile.get('evaluation_split') == 'validation':
         command += ['--evaluation-split', 'validation', '--validation-per-class', str(profile['validation_per_class']),
                     '--split-seed', str(profile['split_seed'])]

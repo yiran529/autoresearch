@@ -124,8 +124,8 @@ def main():
                          patch.object(runner, 'make_datasets', return_value=(dataset, dataset)),
                          patch.object(runner, 'DDP', side_effect=lambda model, **kw: torch.nn.parallel.DistributedDataParallel(model)),
                          patch.object(runner.torch.cuda, 'get_device_name', return_value='cpu-test'),
-                         patch.object(runner, 'SubspaceState', side_effect=lambda *a, **kw: CandidateState()),
-                         patch.object(runner, 'subspace_hook', custom_hook),
+                         patch('comm_hooks.subspace_hook.SubspaceState', side_effect=lambda *a, **kw: CandidateState()),
+                         patch('comm_hooks.subspace_hook.subspace_hook', custom_hook),
                          patch.object(runner, 'apply_compression_policy', candidate_policy),
                          patch.object(runner.dist, 'destroy_process_group')]:
                 stack.enter_context(item)

@@ -131,17 +131,17 @@ def get_uncompress_names(ddp_model):
     model_name = ddp_model.module.__class__.__name__.lower()
     if "llama" in model_name:
         return ["lm_head", "embed_tokens"]
+    elif "resnet" in model_name:
+        return ["linear"]
     elif "roberta" in model_name:
         return ["classifier", "embedding"]
+    return []
 
-def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None):
+def create_comm_hook(model, process_group, args):
+    selected_hook = None
     def register(state, hook):
-        if (getattr(args, 'diagnostic_checkpoint', None)
-                or getattr(args, 'checkpoint_root', None)):
-            from diagnostic_checkpoint import register_checkpoint_hook
-            register_checkpoint_hook(model, state, hook)
-        else:
-            model.register_comm_hook(state, hook)
+        nonlocal selected_hook
+        selected_hook = hook
 
     hook_state = None
     if args.compressor == 'powersgd' :
@@ -259,6 +259,14 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
             random_seed=args.seed,
         )
         register(hook_state, sparse_hook_sync)
+    elif args.compressor == 'group_topk':
+        from comm_hooks.group_topk_hook_no_reshape import GroupTopKState, group_topk_hook
+        hook_state = GroupTopKState(
+            process_group=process_group, r=args.r, compress_ratio=args.compress_ratio,
+            use_error_feedback=args.use_error_feedback, start_compress_iter=args.start_compress_iter,
+            seed=args.seed, error_decay=args.error_decay,
+        )
+        register(hook_state, group_topk_hook)
     elif args.compressor == 'noop':
         from comm_hooks.debugging_hooks import noop_hook
         register(None, noop_hook)
@@ -269,24 +277,36 @@ def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None)
         raise ValueError(f"Compressor {args.compressor} not supported.")
     
     # For selective compression
-    if hasattr(hook_state, 'param_to_name'):
+    if hasattr(hook_state, 'param_to_name') or hasattr(hook_state, '__dict__'):
         hook_state.param_to_name = {param: name for name, param in model.named_parameters()}
     # for param, name in hook_state.param_to_name.items():
     #     if dist.get_rank() == 0:
     #         logger.info(f"Parameter name: {name}, shape: {param.shape}")
 
-    # For PrecondAdam
-    if hook_state is not None and args.optimizer == 'precond_adam':
+    return hook_state if args.compressor != 'none' else process_group, selected_hook
+
+
+def register_comm_hook_for_ddp_model(model, process_group, args, optimizer=None):
+    hook_state, hook = create_comm_hook(model, process_group, args)
+    if getattr(args, 'diagnostic_checkpoint', None) or getattr(args, 'checkpoint_root', None):
+        from diagnostic_checkpoint import register_checkpoint_hook
+        register_checkpoint_hook(model, hook_state, hook)
+    else:
+        model.register_comm_hook(hook_state, hook)
+    if args.compressor != 'none' and hook_state is not None and args.optimizer == 'precond_adam':
         from accelerate.optimizer import AcceleratedOptimizer
         if isinstance(optimizer, AcceleratedOptimizer):
             optimizer = optimizer.optimizer
-        assert isinstance(optimizer, PrecondAdam), f"Get Optimizer type {type(optimizer)}, Optimizer should be PrecondAdam when using precond_adam."
+        assert isinstance(optimizer, PrecondAdam)
         hook_state.init_momentum_field(optimizer.state, args.beta1)
         optimizer.hook_state = hook_state
+    # Historical dense callers receive no compressor checkpoint state.
+    return None if args.compressor == 'none' else hook_state
 
-    return hook_state
 
 def add_comm_hook_args(parser):
+    parser.add_argument("--r", type=int, default=4)
+    parser.add_argument("--error_decay", type=float, choices=[1.0], default=1.0, help="Upstream reserved field; fixed at 1.0")
     ### Commpressor arguments
     parser.add_argument(
         "--compressor",

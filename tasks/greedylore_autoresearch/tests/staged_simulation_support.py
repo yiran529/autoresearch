@@ -89,7 +89,7 @@ def quality_process(spec, **kwargs):
         contract = EvalContract.load(os.environ['CORAL_SIM_CONTRACT'])
         payload.pop('final_eval_loss')
         payload.update(epoch=40,evaluation_split='validation',train_samples=45000,validation_samples=5000,split_sha256='a'*64,final_validation_loss=1.3,final_validation_accuracy=(70.0 if os.environ['STAGED_SCENARIO']=='vision_quality_failed' else 74.94),
-                       training_recipe=expected_vision_recipe(contract.quality[name]), compressor='top_subspace')
+                       training_recipe=expected_vision_recipe(contract.quality[name]), compressor=value('--compressor'))
     (output / 'all_results.json').write_text(json.dumps(payload))
     Path(value('--training_metrics')).write_text(json.dumps({'update_step': target, 'simulated': True}) + '\n')
     spec.log_dir.mkdir(parents=True)
@@ -107,7 +107,7 @@ def timing_formal(grader, contract, mode, refs):
     record = Path(grader.private_dir).parent / f'public/notes/nodes/{node}/research.json'
     frozen = json.loads(record.read_text())['frozen'] if record.exists() else False
     sim.event('timing_execution', mode=mode, code=str(grader.codebase_path), frozen=frozen)
-    plan = plan_timing(grader.tasks[0].metadata.get('timing_declaration', {'period_steps': contract.raw['compressor']['update_gap']}),
+    plan = plan_timing(grader.tasks[0].metadata.get('timing_declaration', {'period_steps': contract.raw['compressor'].get('timing_period_steps', contract.raw['compressor'].get('update_gap'))}),
         minimum=contract.raw['efficiency']['measured_iterations'], maximum=800)
     return score_results('engineering', {}, {name: {'mean': .1, 'relative_spread': .01}
         for name in refs['efficiency']['cells']}, refs, contract_hash=contract.contract_hash,
@@ -134,7 +134,7 @@ def driver(output, scenario):
     codex.write_text(f'#!{sys.executable}\nfrom prompt_audit_support import main\nmain()\n')
     codex.chmod(0o755)
     os.environ['PATH'] = str(binary) + os.pathsep + os.environ['PATH']
-    config, paths = sim.prepare(contract_version=4)
+    config, paths = sim.prepare(contract_version=4, seed_identity=os.environ.get('CORAL_SIM_SEED'))
     os.environ['CORAL_SIM_CONTRACT'] = str(paths.coral_dir / 'private/eval_contract.yaml')
     saved = yaml.safe_load((paths.coral_dir / 'config.yaml').read_text())
     saved['grader']['args'].update(staged_research=True, dynamic_artifact_root=str(output / 'tensors'),
@@ -450,6 +450,10 @@ def driver(output, scenario):
                 required_actions.add('timing')
             report['blocking_research_cli'] = required_actions <= {
                 e['action'] for e in sim.events() if e['event'] == 'research_cli_returned'}
+            from autoresearch.bootstrap import run_seed
+            identity = run_seed(paths.coral_dir)
+            root_spec = yaml.safe_load((paths.coral_dir / 'public/notes/nodes/N000/spec.md').read_text())
+            report.update(seed_identity=(identity or {}).get('id', 'greedylore'), root_hypothesis=root_spec['hypothesis'])
             (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         finally:
             server.stop()

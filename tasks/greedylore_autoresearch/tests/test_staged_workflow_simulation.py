@@ -19,7 +19,8 @@ def test_staged_workflow_simulation(tmp_path, scenario):
     import staged_simulation_support
 
     output = os.environ.get('CORAL_STAGED_SIMULATION_DIR')
-    destination = (Path(output) if output else tmp_path) / scenario
+    label = f"{os.environ['CORAL_SIM_SEED']}-{scenario}" if os.environ.get('CORAL_SIM_SEED') else scenario
+    destination = (Path(output) if output else tmp_path) / label
     root = Path(tempfile.mkdtemp(prefix='cstage-'))
     env = os.environ.copy()
     env['PYTHONPATH'] = os.pathsep.join(sys.path)
@@ -37,13 +38,13 @@ def test_staged_workflow_simulation(tmp_path, scenario):
         audit_root = Path(output)
         aggregate_path = audit_root / 'report.json'
         aggregate = json.loads(aggregate_path.read_text()) if aggregate_path.exists() else {'simulated': True, 'scenarios': {}}
-        aggregate['scenarios'][scenario] = report
+        aggregate['scenarios'][label] = report
         aggregate_path.write_text(json.dumps(aggregate, indent=2) + '\n')
         with (audit_root / 'timeline.jsonl').open('a') as stream:
             for line in (root / 'timeline.jsonl').read_text().splitlines():
-                stream.write(json.dumps({**json.loads(line), 'scenario': scenario}) + '\n')
+                stream.write(json.dumps({**json.loads(line), 'scenario': label}) + '\n')
         with (audit_root / 'driver.log').open('a') as stream:
-            stream.write(f'{scenario}:\n{log.read_text()}\n')
+            stream.write(f'{label}:\n{log.read_text()}\n')
     assert report['simulated'] is True
     assert report['authenticated_cli'] and report['other_owner_rejected']
     assert report['staged_prompt_delivery']
@@ -61,3 +62,12 @@ def test_staged_workflow_simulation(tmp_path, scenario):
     assert report['vision_runs'] == (0 if scenario=='no_eligible' else 1)
     assert report['freeze_before_final']
     assert report['blocking_research_cli']
+
+
+def test_arc_staged_workflow_simulation(tmp_path, monkeypatch):
+    monkeypatch.setenv('CORAL_SIM_SEED', 'arctopk')
+    test_staged_workflow_simulation(tmp_path, 'success')
+    destination = (Path(os.environ['CORAL_STAGED_SIMULATION_DIR']) if os.environ.get('CORAL_STAGED_SIMULATION_DIR') else tmp_path) / 'arctopk-success'
+    report = json.loads((destination / 'report.json').read_text())
+    assert report['seed_identity'] == 'arctopk'
+    assert report['root_hypothesis'] == 'Provided ARC-TopK r4/EF14 baseline.'

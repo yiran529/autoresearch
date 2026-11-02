@@ -9,6 +9,7 @@ from typing import Any
 
 from .contract import EfficiencyPlan
 from .process import ProcessSpec
+from .compression import compression_arguments
 
 _ENV_ALLOWLIST = (
     "CUDA_VISIBLE_DEVICES", "NCCL_P2P_DISABLE", "NCCL_SHM_DISABLE",
@@ -56,17 +57,11 @@ def build_timing_command(
         "--seed", str(cell["seed"]), "--optimizer", "adamw",
         "--lr", str(cell["learning_rate"]), "--beta1", "0.9",
         "--beta2", "0.999", "--eps", "1e-8", "--weight_decay", "0",
-        "--grad_clipping", "1", "--compressor", str(compressor["name"]),
-        "--compress_rank", str(compressor["rank"]),
-        "--start_compress_iter", str(cell["compression_start_step"]),
-        "--update_proj_gap", str(compressor["update_gap"]),
-        "--use_error_feedback", f"ef{compressor['ef_rank']}",
-        "--min_compression_rate", str(compressor["min_compression_rate"]),
-        "--beta_ef", str(compressor["beta_ef"]),
-        "--error_inherit", format(compressor["error_inherit"], "g"),
+        "--grad_clipping", "1",
         "--contract_hash", str(cell["contract_hash"]),
         "--repetition", str(repetition), "--output_dir", str(output),
     ]
+    command += compression_arguments(compressor, cell["compression_start_step"])
     if hardware:
         command += [
             "--gpu_uuids", ",".join(hardware["gpu_uuids"]),

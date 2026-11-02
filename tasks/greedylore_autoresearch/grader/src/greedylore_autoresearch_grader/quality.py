@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .process import ProcessSpec
+from .compression import compression_arguments
 
 _MODEL_CONFIG = {
     "llama60m": "c4/configs/llama_60m_table_iv.json",
@@ -65,17 +66,10 @@ def build_quality_command(
                     "--beta1", "0.9", "--beta2", "0.999", "--eps", "1e-8"]
     command += [
         "--weight_decay", "0", "--grad_clipping", "1",
-        "--compressor", str(compressor["name"]),
-        "--compress_rank", str(compressor["rank"]),
-        "--start_compress_iter", str(compressor["quality_start_step"]),
-        "--update_proj_gap", str(compressor["update_gap"]),
-        "--use_error_feedback", f"ef{compressor['ef_rank']}",
-        "--min_compression_rate", _value(compressor["min_compression_rate"]),
-        "--beta_ef", _value(compressor["beta_ef"]),
-        "--error_inherit", format(compressor["error_inherit"], "g"),
         "--contract_hash", str(profile["contract_hash"]),
         "--output_dir", str(output),
     ]
+    command += compression_arguments(compressor, compressor["quality_start_step"])
     # Old fixed-SHA candidates predate the diagnostic save API. Do not make an
     # otherwise valid historical evaluation fail on an unknown CLI argument.
     if checkpoint_root is not None:

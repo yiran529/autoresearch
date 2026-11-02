@@ -26,6 +26,8 @@ def _schema(value: Any) -> Any:
 
 
 def _check_keys(value: Any, schema: Any, path: str = "contract") -> None:
+    if path == "contract.seed.imported_files":
+        return  # Paths and digests are validated by validate_seed.
     if isinstance(schema, dict):
         if not isinstance(value, dict):
             raise ContractError(f"{path} must be a mapping")
@@ -80,8 +82,15 @@ def _finite_positive(value: Any, field: str) -> float:
 
 
 def _validate_values(raw: dict[str, Any]) -> None:
-    if type(raw['schema_version']) is not int or raw['schema_version'] not in (1, 2, 3, 4):
+    if type(raw['schema_version']) is not int or raw['schema_version'] not in (1, 2, 3, 4, 5):
         raise ContractError('unsupported contract schema_version')
+    if raw['schema_version'] == 5:
+        from .compression import compression_arguments, validate_seed
+        try:
+            validate_seed(raw['seed'], raw['compressor'])
+            compression_arguments(raw['compressor'], raw['compressor']['quality_start_step'])
+        except ValueError as exc:
+            raise ContractError(str(exc)) from exc
     _positive_int(raw["hardware"]["gpu_count"], "hardware.gpu_count")
     _positive_int(raw["data"]["dataloader_workers"], "data.dataloader_workers")
     _positive_int(raw["training"]["seed"], "training.seed")
@@ -141,6 +150,8 @@ _TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "taskdata" / "eval_contra
 try:
     _SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.read_text()))
     _LEGACY_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v1.yaml').read_text()))
+    _V4_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v4.yaml').read_text()))
+    _V5_SCHEMA = _schema(yaml.safe_load((_TEMPLATE_PATH.parent / 'arctopk/eval_contract.yaml').read_text()))
     _V3_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v3.yaml').read_text()))
     _V2_SCHEMA = _schema(yaml.safe_load(_TEMPLATE_PATH.with_name('eval_contract_v2.yaml').read_text()))
 except OSError:
@@ -206,7 +217,7 @@ class EvalContract:
             vision = dict(self.raw['vision'])
             workloads[vision['name']] = {**vision, 'contract_hash': self.contract_hash,
                 'seed': self.raw['training']['seed'], 'gpu_count': self.hardware.gpu_count,
-                'compressor': {'name': self.raw['compressor']['name']}}
+                'compressor': (self.raw['compressor'] if self.raw['schema_version'] >= 5 else {'name': self.raw['compressor']['name']})}
         return _freeze(workloads)
 
     @property
@@ -244,7 +255,10 @@ class EvalContract:
             raise ContractError("contract must be a mapping")
         if _SCHEMA is None:
             raise ContractError("fixed contract schema is unavailable")
-        _check_keys(loaded, {1: _LEGACY_SCHEMA, 2: _V2_SCHEMA, 3: _V3_SCHEMA}.get(loaded.get('schema_version'), _SCHEMA))
+        selected_schema = {1: _LEGACY_SCHEMA, 2: _V2_SCHEMA, 3: _V3_SCHEMA, 4: _V4_SCHEMA, 5: _V5_SCHEMA}.get(loaded.get('schema_version'), _SCHEMA)
+        if loaded.get('schema_version') == 5 and loaded.get('compressor', {}).get('name') != 'group_topk':
+            selected_schema = {**selected_schema, 'compressor': _V4_SCHEMA['compressor']}
+        _check_keys(loaded, selected_schema)
         raw = copy.deepcopy(loaded)
         _validate_values(raw)
         for key in ("c4_path", "tokenizer_path"):

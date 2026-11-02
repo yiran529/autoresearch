@@ -1,0 +1,102 @@
+task:
+  name: ARC-TopK AutoResearch V1
+  description: ARC-TopK-derived seed under the fixed CORAL protocol; not an upstream
+    training recipe reproduction.
+grader:
+  entrypoint: greedylore_autoresearch_grader.grader:Grader
+  setup:
+  - uv pip install -e ./grader
+  - uv pip install -e ./autoresearch
+  timeout: 0
+  direction: maximize
+  args:
+    staged_research: true
+    research_checkpoint_interval_steps: 1000
+    timing_startup_timeout_seconds: 600
+    research_uv_cache_dir: /home/wyr/.cache/uv
+    dynamic_artifact_root: /dev/shm/wyr_tmp
+    dynamic_artifact_min_free_bytes: 1073741824
+    research_infra_retry_limit: 2
+    research_timing_success_limit: 5
+    research_timing_total_limit: 15
+    pretraining_allow_other_users: false
+    gpu_lock_dir: null
+    gpu_poll_interval_seconds: 5
+    gpu_wait_timeout_seconds: 86400
+    timing_monitor_interval_seconds: 1
+    trusted_workflow_handler: autoresearch.state:handle_workflow
+    trusted_workflow_worker: autoresearch.lifecycle:run_worker
+    trusted_workflow_authorizer: autoresearch.state:authorize_attempt
+    trusted_dispatch_filter: autoresearch.state:filter_dispatch
+    trusted_artifact_authorizer: autoresearch.state:authorize_artifact
+    trusted_memory_authorizer: autoresearch.state:authorize_memory_start
+    trusted_memory_worker: autoresearch.memory:run_worker
+    trusted_diagnostic_handler: autoresearch.diagnostics:handle_diagnostic
+    analyzer_diagnostics: true
+    engineer_diagnostics: true
+    p_explore: 0.2
+    research_planning_lease_seconds: 1800
+    max_active_nodes: 2
+    analyzer_allow_unix_sockets: false
+    diagnostic_runtime_roots: []
+    diagnostic_resources:
+    - id: c4
+      path: /home/wyr/greedy_lore/c4/c4_en/en
+      target_roots:
+      - /dev/shm/wyr_tmp/c4-half
+      view: /resources/c4
+    - id: tokenizer
+      path: /home/wyr/.cache/huggingface/hub/models--t5-base
+      target_roots: []
+      view: /resources/tokenizer
+    - id: cifar100
+      path: /home/wyr/ARC-TopK-release/data
+      target_roots: []
+      view: /resources/cifar100
+    diagnostic_path: /usr/local/bin:/usr/bin:/bin
+    max_engineering_runs_per_node: 1
+    trusted_submission_validator: autoresearch.submission:validate_submission
+    trusted_artifact_validator: autoresearch.artifacts:validate_artifact
+  parallel:
+    max_workers: 1
+    max_waiting_workers: 2
+  private:
+  - taskdata/arctopk/eval_contract.yaml
+  - taskdata/arctopk/dense_references
+agents:
+  runtime: codex
+  heartbeat_enabled: false
+  timeout: 10800
+  grader_pending_max_age: 176400
+  dynamic:
+    enabled: true
+  assignments:
+  - role: research
+    runtime_options:
+      role_file: ./roles/researcher.md
+      staged_role_file: ./roles/researcher.md
+  - role: engineering
+    runtime_options:
+      role_file: ./roles/engineer.md
+  sandbox:
+    enabled: true
+    provider: srt
+    network: allowlist
+    extra_settings:
+      network:
+        allowAllUnixSockets: true
+    allowed_domains:
+    - api.openai.com
+    - chatgpt.com
+    - '*.openai.com'
+    - '*.chatgpt.com'
+workspace:
+  results_dir: ./results
+  repo_path: ./tasks/greedylore_autoresearch/seed
+  setup:
+  - uv sync --frozen
+  - uv pip install --python .venv/bin/python -e /home/wyr/CORAL/tasks/greedylore_autoresearch/autoresearch
+run:
+  verbose: false
+  ui: false
+  session: local

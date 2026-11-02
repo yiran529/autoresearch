@@ -73,14 +73,32 @@ def _validate_manifest(repo: Path, manifest: dict[str, Any]) -> None:
             raise BootstrapError(f"source manifest mismatch: {relative}")
 
 
-def _root_spec(seed_commit: str) -> dict[str, Any]:
+def run_seed(coral_dir: str | Path) -> dict[str, Any] | None:
+    """Read identity only from the run's private contract, never task defaults."""
+    path = Path(coral_dir) / 'private/eval_contract.yaml'
+    if not path.exists():
+        return None  # Historical workflow fixtures/runs predate seed declarations.
+    raw = yaml.safe_load(path.read_text())
+    if not isinstance(raw, dict):
+        raise BootstrapError('invalid frozen evaluation contract')
+    if raw.get('schema_version', 1) < 5:
+        return None
+    from greedylore_autoresearch_grader.compression import validate_seed
+    try:
+        validate_seed(raw['seed'], raw['compressor'])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BootstrapError('invalid frozen seed declaration') from exc
+    return raw['seed']
+
+
+def _root_spec(seed_commit: str, seed: Mapping[str, Any] | None = None) -> dict[str, Any]:
     return {
         "node_id": "N000",
         "node_type": "seed",
         "parent_node": None,
         "parent_commit": None,
         "base_commit": seed_commit,
-        "hypothesis": "Provided GreedyLoRE r32/EF14 baseline.",
+        "hypothesis": seed["root_hypothesis"] if seed else "Provided GreedyLoRE r32/EF14 baseline.",
         "selection_rationale": "Use the provided implementation as the fixed Root.",
         "delta": "None; Root records the provided implementation.",
         "risk": "The baseline may not satisfy every quality or efficiency target.",
@@ -89,7 +107,7 @@ def _root_spec(seed_commit: str) -> dict[str, Any]:
     }
 
 
-def _publish_root(manifest: dict[str, Any], seed_commit: str) -> None:
+def _publish_root(manifest: dict[str, Any], seed_commit: str, seed=None) -> None:
     publisher = manifest.get("publish")
     if publisher is None:
         return
@@ -97,7 +115,7 @@ def _publish_root(manifest: dict[str, Any], seed_commit: str) -> None:
         raise BootstrapError("publish must be callable")
     result = publisher(
         "spec",
-        yaml.safe_dump(_root_spec(seed_commit), sort_keys=False),
+        yaml.safe_dump(_root_spec(seed_commit, seed), sort_keys=False),
         {"node_id": "N000", "mode": None, "version": None},
     )
     if not isinstance(result, dict) or result.get("path") != "nodes/N000/spec.md":
@@ -107,11 +125,21 @@ def _publish_root(manifest: dict[str, Any], seed_commit: str) -> None:
 def bootstrap_root(
     repo: str | Path,
     source_manifest: str | Path | Mapping[str, Any],
+    *, seed: Mapping[str, Any] | None = None, timing_period_steps: int | None = None,
 ) -> Path:
     """Create canonical A0 and publish N000; interrupted publication is retryable."""
     root = Path(repo).resolve()
     manifest = _load_manifest(source_manifest)
     _validate_manifest(root, manifest)
+    if seed is not None:
+        provenance = manifest.get('imports', {}).get(seed['id'])
+        if provenance is None:
+            provenance = {'source_commit': manifest.get('source_commit'), 'files': {
+                path: manifest.get('files', {}).get(path, {}).get('sha256')
+                for path in seed['imported_files']}}
+        if (provenance.get('source_commit') != seed['upstream_commit']
+                or provenance.get('files') != dict(seed['imported_files'])):
+            raise BootstrapError('seed identity conflicts with imported source provenance')
     submission_path = root / "submission.yaml"
     head = _git(root, "rev-parse", "HEAD")
 
@@ -129,7 +157,7 @@ def bootstrap_root(
             != ["submission.yaml"]
         ):
             raise BootstrapError("existing Root bootstrap conflicts with the run seed")
-        _publish_root(manifest, seed_commit)
+        _publish_root(manifest, seed_commit, seed)
         return submission_path
 
     seed_commit = head
@@ -142,7 +170,7 @@ def bootstrap_root(
         "base_commit": seed_commit,
         "quality_anchor": None,
         "analysis_refs": {"parent_research": None, "parent_engineering": None},
-        "change_summary": "Bootstrap the provided GreedyLoRE implementation as Root.",
+        "change_summary": (f"Bootstrap Root: {seed['root_hypothesis']}" if seed else "Bootstrap the provided GreedyLoRE implementation as Root."),
         "selection_rationale": "Use the provided implementation as the fixed research-tree root.",
         "semantic_self_check": {
             "status": "not_run",
@@ -150,12 +178,14 @@ def bootstrap_root(
             "limitations": "Root evaluation is performed by the formal grader.",
         },
     }
+    if seed is not None:
+        declaration['timing'] = {'period_steps': timing_period_steps}
     atomic_write_text(submission_path, yaml.safe_dump(declaration, sort_keys=False))
     _git(root, "add", "submission.yaml")
     _git(root, "commit", "-m", "chore: bootstrap autoresearch root")
     if _git(root, "diff", "--name-only", seed_commit, "HEAD").splitlines() != ["submission.yaml"]:
         raise BootstrapError("Root bootstrap changed files other than submission.yaml")
-    _publish_root(manifest, seed_commit)
+    _publish_root(manifest, seed_commit, seed)
     return submission_path
 
 
@@ -206,7 +236,7 @@ def bootstrap_root_analysis(
 
     node_root = coral_dir / "public" / "notes" / "nodes" / "N000"
     spec_path = node_root / "spec.md"
-    expected_spec = _root_spec(policy["source_commit"])
+    expected_spec = _root_spec(policy["source_commit"], run_seed(coral_dir))
     if spec_path.is_file():
         try:
             current_spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))

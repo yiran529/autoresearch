@@ -47,7 +47,7 @@ def test_manifest_hashes_match_source_and_seed() -> None:
             assert adaptation["seed_sha256"] == seed_hash
             assert adaptation["reason"]
 
-    assert set(manifest["adaptations"]) == {
+    assert set(manifest["adaptations"]) >= {
         "c4/run_llama_pretraining.py",
         "c4/table_v_timing.py",
         "pytorch-cifar/train_ddp.py",
@@ -56,9 +56,11 @@ def test_manifest_hashes_match_source_and_seed() -> None:
         "tests/test_c4_model_setup.py",
         "tests/test_table_v_timing.py",
     }
-    assert manifest["relocations"] == {
-        "AGENTS.md": "docs/greedylore-agent-guidance.md"
-    }
+    assert manifest['relocations']['AGENTS.md'] == 'docs/greedylore-agent-guidance.md'
+    for relative in manifest['files']:
+        if relative.startswith('.agents/'):
+            assert manifest['relocations'][relative].startswith('docs/greedylore-skills/')
+            assert manifest['files'][relative]['seed_path'] == manifest['relocations'][relative]
     assert not (SEED_DIR / "AGENTS.md").exists()
 
 

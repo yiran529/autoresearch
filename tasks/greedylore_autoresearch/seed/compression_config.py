@@ -5,7 +5,7 @@ COMPRESSION_FIELDS = frozenset({
     'compressor', 'start_compress_iter', 'use_error_feedback', 'compress_rank',
     'min_compression_rate', 'update_proj_gap', 'quantization_bits', 'bucket_size',
     'scale_method', 'sparse_type', 'compress_ratio', 'scale', 'sigma_type',
-    'beta_ef', 'error_inherit',
+    'beta_ef', 'error_inherit', 'r', 'error_decay',
 })
 
 

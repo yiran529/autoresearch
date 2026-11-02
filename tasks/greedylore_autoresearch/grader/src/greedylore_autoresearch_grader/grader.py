@@ -343,7 +343,7 @@ class Grader(TaskGrader):
         from .timing_policy import plan_timing, reference_for_window, validate_cycle_evidence
 
         declaration = self.tasks[0].metadata.get("timing_declaration", {
-            "period_steps": contract.raw["compressor"]["update_gap"],
+            "period_steps": contract.raw["compressor"].get("timing_period_steps", contract.raw["compressor"].get("update_gap")),
         })
         timing_protocol = plan_timing(
             declaration, minimum=contract.raw["efficiency"]["measured_iterations"],

@@ -14,7 +14,7 @@ def timing_context(host, canonical):
     options = settings(host.store.coral_dir)
     contract = yaml.safe_load((host.store.coral_dir / 'private/eval_contract.yaml').read_text())
     efficiency = contract['efficiency']
-    plan = plan_timing(canonical.get('timing_declaration', {'period_steps': contract['compressor']['update_gap']}),
+    plan = plan_timing(canonical.get('timing_declaration', {'period_steps': contract['compressor'].get('timing_period_steps', contract['compressor'].get('update_gap'))}),
         minimum=efficiency['measured_iterations'], maximum=efficiency.get('max_measured_iterations', 800),
         override=options.get('timing_measured_iterations'))
     return {'contract_hash': canonical.get('contract_hash'), 'plan': plan,

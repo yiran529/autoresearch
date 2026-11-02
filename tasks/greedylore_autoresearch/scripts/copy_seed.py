@@ -61,9 +61,10 @@ def copy_seed(
         seed_relative = (
             AGENT_GUIDANCE_DESTINATION
             if relative == "AGENTS.md"
-            else Path(relative)
+            else Path('docs/greedylore-skills') / relative.removeprefix('.agents/skills/')
+            if relative.startswith('.agents/skills/') else Path(relative)
         )
-        if relative == "AGENTS.md":
+        if relative == "AGENTS.md" or relative.startswith(".agents/skills/"):
             relocations[relative] = seed_relative.as_posix()
 
         source_path = source / relative

@@ -515,15 +515,16 @@ def offline_grader_env(coral_dir, *_args, **_kwargs):
     return path
 
 
-def prepare(*, contract_version=1):
-    from autoresearch.bootstrap import bootstrap_root, bootstrap_root_analysis
+def prepare(*, contract_version=1, seed_identity=None):
+    from autoresearch.bootstrap import bootstrap_root, bootstrap_root_analysis, run_seed
 
     from coral.config import CoralConfig
     from coral.grader.daemon import process_pending_once
     from coral.grader.trusted_writes import TrustedWriteService, _atomic_json
     from coral.workspace.project import create_project
 
-    config = yaml.safe_load((TASK / "task.yaml").read_text())
+    task_file = f'task_{seed_identity}.yaml' if seed_identity else 'task.yaml'
+    config = yaml.safe_load((TASK / task_file).read_text())
     config["task"]["name"] = "SIMULATED GreedyLoRE workflow"
     config["workspace"] = {
         "repo_path": str(TASK / "seed"),
@@ -535,7 +536,7 @@ def prepare(*, contract_version=1):
         entrypoint="simulation_support:SyntheticGrader",
         setup=[],
         timeout=30,
-        private=["taskdata/eval_contract.yaml"],
+        private=[f"taskdata/{seed_identity}/eval_contract.yaml" if seed_identity else "taskdata/eval_contract.yaml"],
     )
     # This driver explicitly covers the retained pre-staged compatibility protocol.
     config["grader"]["args"]["diagnostic_resources"] = []
@@ -561,10 +562,12 @@ def prepare(*, contract_version=1):
     cfg.task_dir = TASK
     with patch("coral.workspace.grader_env.setup_grader_env", offline_grader_env):
         paths = create_project(cfg, config_dir=TASK)
-    if contract_version in (1, 2, 3):
+    if not seed_identity and contract_version in (1, 2, 3):
         (paths.coral_dir / "private/eval_contract.yaml").write_text((TASK / f"taskdata/eval_contract_v{contract_version}.yaml").read_text())
     seed = git(paths.repo_dir, "rev-parse", "HEAD")
-    bootstrap_root(paths.repo_dir, paths.repo_dir / "source_manifest.json")
+    frozen = yaml.safe_load((paths.coral_dir / 'private/eval_contract.yaml').read_text())
+    bootstrap_root(paths.repo_dir, paths.repo_dir / "source_manifest.json", seed=run_seed(paths.coral_dir),
+                   timing_period_steps=frozen['compressor'].get('timing_period_steps', frozen['compressor'].get('update_gap')))
     a0 = git(paths.repo_dir, "rev-parse", "HEAD")
     _atomic_json(
         paths.coral_dir / "private/root_bootstrap.json",

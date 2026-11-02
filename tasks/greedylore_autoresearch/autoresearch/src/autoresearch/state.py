@@ -640,12 +640,12 @@ class WorkflowStore:
     def _engineering_design_source(self, node_id: str, research_sha: str) -> dict[str, Any]:
         # Root is a fixed baseline, not a developed candidate with iterations.
         if node_id == 'N000':
-            from .bootstrap import _root_spec
+            from .bootstrap import _root_spec, run_seed
 
             try:
                 policy = json.loads((self.coral_dir / 'private/root_bootstrap.json').read_text())
                 spec = yaml.safe_load((self.notes_root / 'nodes/N000/spec.md').read_text())
-                expected = _root_spec(policy['source_commit'])
+                expected = _root_spec(policy['source_commit'], run_seed(self.coral_dir))
             except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
                 raise WorkflowError('fixed Root baseline handover is required') from exc
             if spec != expected:
