@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 from contextlib import nullcontext
+from pathlib import Path
 
 import yaml
 
@@ -138,6 +139,44 @@ class ResearchRecord:
             row.setdefault('timings', []).append(copy.deepcopy(entry))
         return self._change(request_id, 'timing', [iteration, entry], update)
 
+    def _compact_observation(self, observation):
+        """Omit duplicate checkpoint details only after verifying a public copy."""
+        result = copy.deepcopy(observation)
+        checkpoint = result.get('diagnostic_checkpoint')
+        evidence = result.get('evidence_path')
+        if (not isinstance(checkpoint, dict) or not isinstance(evidence, str)
+                or not {'config', 'model_layout'} & checkpoint.keys()):
+            return result
+        relative = Path(evidence)
+        if relative.is_absolute() or '..' in relative.parts or relative.parts[:1] != ('eval_logs',):
+            return result
+        public = self.store.coral_dir / 'public'
+        try:
+            directory = safe_path(public / relative / 'checkpoints')
+            for path in sorted(directory.glob('*/manifest.json')):
+                try:
+                    path = safe_path(path)
+                    if not path.is_file() or path.stat().st_size > 1024 * 1024:
+                        continue
+                    content = path.read_bytes()
+                    # Preserve JSON types too: Python considers True == 1.
+                    if json.dumps(json.loads(content), sort_keys=True) != json.dumps(
+                            checkpoint, sort_keys=True):
+                        continue
+                except (OSError, ValueError):
+                    continue
+                result['diagnostic_checkpoint'] = {
+                    key: value for key, value in checkpoint.items()
+                    if key not in {'model_layout', 'config'}
+                }
+                result['diagnostic_checkpoint'].update(
+                    manifest_ref=path.relative_to(public).as_posix(),
+                    manifest_sha256=hashlib.sha256(content).hexdigest())
+                break
+        except (OSError, ValueError):
+            pass  # Legacy/missing manifests keep the original complete observation.
+        return result
+
     def final_observe(self, component, entry, request_id):
         """Only the host appends final evidence; the candidate remains frozen."""
         def update(value):
@@ -146,7 +185,9 @@ class ResearchRecord:
             row = self._row(value, value['selected_iteration'])
             if entry['sha'] != row['code_sha']:
                 raise ValueError('final evidence SHA mismatch')
-            value['final_evaluation'].setdefault(component, []).append(copy.deepcopy(entry))
+            recorded = copy.deepcopy(entry)
+            recorded['result'] = self._compact_observation(entry['result'])
+            value['final_evaluation'].setdefault(component, []).append(recorded)
         return self._change(request_id, 'final_observe', [component, entry], update, _allow_frozen=True)
 
     @staticmethod
@@ -199,7 +240,7 @@ class ResearchRecord:
             row = self._row(value, iteration)
             if row['status'] != 'running':
                 raise ValueError('observation requires a running trajectory')
-            row['observations'].append(observation)
+            row['observations'].append(self._compact_observation(observation))
             row['status'] = status
             row['runs'][-1]['status'] = status
 

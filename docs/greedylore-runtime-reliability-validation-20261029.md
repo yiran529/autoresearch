@@ -63,3 +63,9 @@ git show 64aa372:docs/greedylore-autoresearch-e2e-audit-20261026.md
   --output /tmp/coral-prompt-replay \
   --baseline 9ee9ef033fda6348a84b7cb016b069099f521696
 ```
+
+2026-11-03，研究记录重复明细与写命令回包精简：Development／Final 新观察仅在公共归档 manifest 与原 checkpoint 的 JSON 内容及类型一致时，外置 `config`／`model_layout`，保留引用与文件哈希；缺失、差异、路径不安全时保留原文。`design`／`decision` 默认短回执，`--full-output` 保留完整回包。研究记录、CLI、staged research／scheduling／timing、origin 与 runtime artifacts 回归 **143 passed in 6.31s**，包含 `true` 与 `1` 不得合并的先失败后通过用例；staged 全流程模拟 **7 passed in 239.85s**，使用脚本化角色及合成评估，不调用模型或 GPU。源码 Ruff 通过，测试文件忽略既有断言规则 S101 后通过。
+
+只读实际 N001／N002 artifacts 回放位于 `/home/wyr/coral-prompt-audit-20261103/record-compaction/`。N001 的 4 份 checkpoint 明细可完整往返还原，研究记录由 276,424 降至 70,431 字符（74.5%）；N002 无对应重复明细，维持 42,597 字符。模拟 decision／design 回执分别 198／154 字符。原 Run 文件未改动；这些是序列化字符量，不代表整场 token 减幅。GPT-6.1 Sol（high）审查发现 JSON 类型比较边界，修复后复核无剩余阻塞。当前实现未同步到活跃 Run，历史研究记录不迁移。
+
+另以 GPT-6 Luna（high）执行一次离线角色任务模拟：仅提供精简后 N001 记录、短回执、命令文档与引用入口，不提供原记录或标准答案；模型实际读取后，主 agent 用原记录核对。候选版本、开发／Final 指标、4 份 manifest 哈希、恢复限制、参数布局及回执边界均正确取得；初答未完整概述两个 Final checkpoint 配置，在不给标准答案的追问后从原入口补齐，关键字段与原记录一致；不能将其报告为首次回答无遗漏。未发现精简导致证据不可获取；单次明确任务清单模拟不代表自然研究过程必然主动读取必要证据。报告及验收保存在上述目录的 `luna-simulation.md`、`luna-simulation-verdict.md`。

@@ -185,3 +185,57 @@ def test_status_summary_flag_sends_projection_request(monkeypatch, capsys):
     assert 'jobs' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         cli.main(['research', 'recover', '--node', 'N001', '--summary'])
+
+
+@pytest.mark.parametrize('action', ['design', 'decision'])
+def test_record_write_receipt_and_full_output_preserve_idempotent_host_call(tmp_path, monkeypatch, capsys, action):
+    from autoresearch import cli
+    from test_research_record import design, initialize, record
+
+    r = record(tmp_path)
+    initialize(r)
+    r.begin(1, 'b' * 40, 'run1')
+    r.observe(1, {'status': 'completed', 'trace': list(range(5000))}, 'observe1')
+    payload = design('second') if action == 'design' else {'iteration': 1, 'action': 'revise', 'reason': 'new evidence'}
+    path = tmp_path / 'request.json'
+    path.write_text(json.dumps(payload))
+    calls = []
+
+    def request(root, operation, data):
+        calls.append(data)
+        assert operation == 'research_action'
+        if action == 'design':
+            return r.append_design(data['data'], data['request_id'])
+        return r.decide(**data['data'], request_id=data['request_id'])
+
+    monkeypatch.setattr(cli, '_coral_dir', lambda: r.store.coral_dir)
+    monkeypatch.setattr(cli, 'request_trusted', request)
+    argv = ['research', action, '--node', 'N001', '--file', str(path), '--request-id', 'write1']
+    cli.main(argv)
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt['recorded'] is True
+    assert receipt['operation'] == action and receipt['request_id'] == 'write1'
+    assert receipt['record_path'] == 'notes/nodes/N001/research.json'
+    assert 'iterations' not in receipt and len(json.dumps(receipt)) < 1000
+    if action == 'decision':
+        assert receipt['iteration'] == 1 and receipt['decision'] == 'revise'
+    else:
+        assert 'iteration' not in receipt  # the current tail is not the replayed request's iteration
+    # Append another candidate before replay to expose misleading tail-based receipts.
+    if action == 'design':
+        r.begin(2, 'b' * 40, 'next-run')
+        r.observe(2, {'status': 'failed'}, 'next-observe')
+        r.append_design(design('third'), 'third')
+    cli.main(argv)
+    assert json.loads(capsys.readouterr().out) == receipt
+    cli.main([*argv, '--full-output'])
+    assert json.loads(capsys.readouterr().out) == r.read()
+    assert all(call['data'] == payload for call in calls)
+
+
+def test_full_output_rejected_for_execution_actions_before_any_request(monkeypatch):
+    from autoresearch import cli
+    monkeypatch.setattr(cli, 'request_trusted', lambda *a: pytest.fail('must not submit'))
+    with pytest.raises(SystemExit) as error:
+        cli.main(['research', 'train', '--node', 'N001', '--full-output'])
+    assert error.value.code == 2

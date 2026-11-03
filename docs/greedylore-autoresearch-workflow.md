@@ -30,7 +30,7 @@
 
 Researcher 先通过 `autoresearch node planning acquire --wait` 获得选题锁，阅读登记方法、相关 Analysis、Wisdom 与工程经验，再注册 `{origin, design, planning_token, overlap_review}`。锁租约默认 1800 秒，可续期或释放；注册原子地释放锁，不持锁等 GPU。宿主保证排他选题，不用字符串相似度代替研究者对方法重叠的判断。
 
-`origin` 固定问题、核心假设、Parent/base commit、证据、选点理由和工程经验的复用或推迟依据；首份 `design` 写明方法、机制及竞争解释、预测和检验。宿主生成初始 Spec 和 version-3 `research.json`，Researcher 不另写一份重复的最终报告。一个 Node 使用一个代码 Parent；核心假设改变另建 Node，固定自适应策略的正常动作变化不算修改设计。
+`origin` 固定问题、核心假设、Parent/base commit、证据、选点理由和工程经验的复用或推迟依据；首份 `design` 写明方法、机制及竞争解释、预测和检验。宿主生成初始 Spec 和 version-3 `research.json`，Researcher 不另写一份重复的最终报告。`design`／`decision` 的 CLI 默认输出简短写入回执；`--full-output` 可返回完整档案，回执不代表训练执行。一个 Node 使用一个代码 Parent；核心假设改变另建 Node，固定自适应策略的正常动作变化不算修改设计。
 
 ## 3. Development experiments
 

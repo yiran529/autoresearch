@@ -168,6 +168,8 @@ def _parser() -> argparse.ArgumentParser:
     research.add_argument('--node', required=True)
     research.add_argument('--file', type=Path, help='JSON action data; status/recover/wait need no file')
     research.add_argument('--request-id', default=None, help='reuse after timeout for idempotency')
+    research.add_argument('--full-output', action='store_true',
+                          help='print the full research record for design/decision instead of a receipt')
     research.add_argument('--summary', action='store_true', help='show a bounded status summary')
     research.add_argument('--no-wait', action='store_true', help='submit only; defaults to waiting for execution results')
 
@@ -262,6 +264,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise SystemExit(1)
         return
     if args.command == 'research':
+        if args.full_output and args.action not in {'design', 'decision'}:
+            parser.error('--full-output is only valid for design/decision')
         if args.summary and (args.action != 'status' or args.file):
             parser.error('--summary is only valid for status without --file')
         if args.action == 'wait' and (not args.request_id or args.file or args.no_wait):
@@ -289,7 +293,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise
         if args.action == 'register':
             _checkout_base(result['origin']['base_commit'])
-        print(json.dumps(result, indent=2), flush=True)
+        output = result
+        if args.action in {'design', 'decision'} and not args.full_output:
+            output = {'node_id': args.node, 'operation': args.action, 'request_id': request_id,
+                      'recorded': True, 'record_path': f'notes/nodes/{args.node}/research.json'}
+            if args.action == 'decision':
+                output.update(iteration=data['iteration'], decision=data['action'])
+            # A replay returns today's document. Its tail is not necessarily the
+            # iteration created by this design request; do not infer an ID.
+        print(json.dumps(output, indent=2), flush=True)
         if waiting and (result.get('status') in {'failed', 'cancelled'}
                         or result.get('result', {}).get('status') in {'failed', 'infra_failed', 'cancelled'}):
             raise SystemExit(1)

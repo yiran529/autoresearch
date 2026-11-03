@@ -66,6 +66,8 @@ v5 Contract 的 `seed` 声明包含 ID、Root 描述、上游仓库／commit 和
 
 job 指一次训练、测时或诊断任务；journal 是宿主保存其请求、状态与结果的执行账本。它们与可计分的正式提交 Attempt 不一一对应，例如暂停训练或运行诊断都不等于完成正式评估。`research finish` 冻结候选后完成最终评估并发布相应正式结果，开发质量通过不等于最终评分成功。Root 的固定候选直接走正式评估。Engineering 只重新测效率，质量继承自固定 Research 代码版本，标为 `inherited (provisional)`，表示没有重新实测质量。
 
+新写入的 Development observation 和 Final observation 可将内嵌 `diagnostic_checkpoint` 的 `model_layout`、`config` 去重：仅当该次 `evidence_path/checkpoints/*/manifest.json` 中存在内容完全一致、安全可读且不超过 1 MiB 的完整 manifest 时，省去这两个字段，并保存公开相对路径 `manifest_ref` 和原始文件哈希 `manifest_sha256`。其余 checkpoint 字段、质量指标和研究判断保留；原始 manifest、执行结果及恢复 journal 不改。缺失、不匹配或不安全的引用保留完整内嵌内容。公开档案和宿主私有档案写入同一份精简记录；已写入的历史观察和已冻结档案不迁移，请求幂等性仍按原始载荷校验。
+
 正式 Attempt 位于 `<run>/.coral/public/attempts/<SHA>.json`，保存状态、评分、反馈、候选归属及 `metadata.grader_runs` 等运行历史。普通 grader 的同 SHA 基础设施重试追加执行记录与日志目录，不抹去原失败。分阶段 job 的关联及恢复以请求 journal 和 `research.json` 为准；预算看宿主记录，不能按日志目录数量推算。
 
 定位测量时，先看节点目录中的 `research.json`／`evaluation.md` 及 Attempt 的证据引用。下面表格中的相对路径以 `<run>/.coral/public/eval_logs/<SHA>/<执行ID>/` 为父目录：`<run>` 是运行目录，`<SHA>` 是候选代码版本，`<执行ID>` 区分这份代码的具体执行或重试。在 Codex Agent 的 worktree 内，通常可通过 `.codex/eval_logs/<SHA>/<执行ID>/` 访问同一份公开证据。
