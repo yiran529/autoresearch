@@ -18,7 +18,7 @@
 
 准备命令复制共享 seed，选择对应 task 和 v5 Contract，固定来源并创建 `N000` 与其待执行 Attempt；它不启动 worker 或申请 GPU。返回结果提供正式 `coral.cli resume` 命令。`prepare_seed_run.py --resume --output <existing-run>` 核验并复用已保存 Run，不重置 Root、Attempt 或预算，额外的 `--seed` 也不会改变已有 Run 的 Seed。
 
-正式研究启动前，用 `--diagnostic-python /absolute/path/to/public/.venv/bin/python` 补齐本机公共诊断运行环境；可与准备或 `--resume` 一起使用。该选项在真实 CPU 诊断沙箱中加载 ML 依赖，成功后才保存运行库挂载、诊断 PATH 和 Analyzer 的本地 socket 权限，不接触 Root 评测或预算。活动 Run 应先停止；具体隔离边界见[运行时说明](greedylore-runtime-reliability-design-20261029.md)。
+正式研究启动前，按启动 skill 的[诊断环境检查](../.agents/skills/starting-coral-autoresearch/SKILL.md#诊断环境检查)验证本 Run 的配置；机器路径保存在 Run 中，已验证配置优先复用并核实。需要补齐时，可用 `--diagnostic-python /absolute/path/to/public/.venv/bin/python`，与准备或 `--resume` 一起使用。该选项在真实 CPU 诊断沙箱中加载 ML 依赖，成功后才保存运行库挂载、诊断 PATH 和 Analyzer 的本地 socket 权限，不接触 Root 评测或预算。它不验证完整托管链路；首次正式启动或环境变化时，通过正常角色入口验证最小诊断的接收、执行与归档，遵循原有诊断预算并保存证据；同环境恢复可核验后复用。Root-only 不因此启动诊断角色。活动 Run 修改环境前先停止；具体隔离边界见[运行时说明](greedylore-runtime-reliability-design-20261029.md)。
 
 两份 v5 Contract 的 Dense reference 命名空间分别位于 `taskdata/arctopk/`、`taskdata/greedylore/`，当前随仓库交付的目录为空。解释正式成绩前需要实际建立同 Contract、同硬件协议的 Dense 参考。Root 从固定候选执行三项质量任务及正式 timing，不进行普通节点的选题、开发或候选选择；Root Analysis 与条件 Engineering 完成后才开放后续研究。
 

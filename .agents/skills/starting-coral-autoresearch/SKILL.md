@@ -36,6 +36,17 @@ Node 并行度、正式评测并行度、实际 GPU 作业并行度分别核对�
 
 优先使用仓库提供的准备、评测和恢复入口。[prepare_seed_run.py](../../../tasks/greedylore_autoresearch/scripts/prepare_seed_run.py) 只准备 Root 和待执行 Attempt；准备成功不表示训练或 Agent 已经启动。
 
+### 诊断环境检查
+
+首次启动完整研究（包括从 Root-only 转入），或更换部署代码、解释器、运行库、挂载、PATH／socket 配置时，按以下步骤验证。机器路径保存在本 Run 的 `.coral/config.yaml`；优先参考已验证 Run 的配置，核实本机路径和依赖后再采用。
+
+1. 核对 `grader.args.diagnostic_runtime_roots`、`diagnostic_path` 和 `analyzer_allow_unix_sockets`。公共 ML venv 及其实际 Python 安装目录必须在诊断沙箱中可见，保留解释器的符号链接目标；私有 grader venv 不作为公共诊断环境。Analyzer 的内层 socket 权限与 Researcher／Engineer 的 SRT 权限分别检查。
+2. 在实际诊断命名空间内检查 Python 和所需 ML 依赖。复用 [diagnostic_runtime.py](../../../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/diagnostic_runtime.py) 的 CPU probe；需要补齐配置时可使用准备入口的 `--diagnostic-python <public-venv>/bin/python`，活动 Run 先按 `updating-live-runs` 停止。更换环境时一并检查旧挂载与 PATH。主机导入成功或正式 Root 评测成功不能代替诊断沙箱验证。
+3. 在首个获准启动的诊断角色中，通过其正常入口执行最小托管诊断，核对请求被宿主接收、调度执行、成功退出，以及返回的 `record_ref`、日志与结果归档。核实本次启用角色各自的控制通道；CPU probe 不证明 Analyzer socket 或完整托管链路可用。优先让首个实际诊断同时承担此验证，执行遵循原有 GPU 调度与诊断预算。
+4. 在 Run 的持久操作记录中保存部署版本、解释器与环境配置、检查命令及输出、退出状态和托管诊断引用，并给出准确恢复入口。只有链路验证通过后才报告诊断环境可用；这些记录不作为正式质量或性能结论。
+
+同一环境恢复时，核对部署与上述配置、解释器及依赖、挂载路径仍与成功记录一致，并轻量复查 CPU probe；能够核验时复用已有托管诊断证据，不额外消耗诊断额度。环境变化或缺少可核验证据时，重新完成上述检查。Root-only 仅检查本次评测所需环境，诊断链路验证留到转入完整研究时，不为检查启动 Analyzer／Engineer。
+
 ## 建立或接续 Root
 
 新 Root 按固定合同建立匹配的 Dense 参考并执行评测。接续已有 Root 前，逐项检查已完成、失败和仍在执行的组件。
