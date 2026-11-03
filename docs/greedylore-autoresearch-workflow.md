@@ -4,6 +4,8 @@
 
 ## 1. 选择 Seed 与建立 Root
 
+启动或接续运行时使用 [starting-coral-autoresearch](../.agents/skills/starting-coral-autoresearch/SKILL.md)：先确认启动范围、各角色模型与推理强度、Node 并行度和任务并行度，已明确的选择直接沿用。该操作指南不改变各 Run 保存的 Contract、评测预算或准入条件。
+
 在 CORAL 仓库中准备声明式 v5 Run：
 
 ```bash
