@@ -40,7 +40,12 @@ def test_normal_analyzer_receives_recorded_context_not_current_config(tmp_path):
     result = _analyze('N001', 'research', context=context, runner=runner,
                       publisher=_publisher(context.notes_root))
     assert 'Evaluation context (recorded for this Attempt)' in runner.prompts[0]
-    assert '1.1' in runner.prompts[0] and '3.5' in runner.prompts[0]
+    assert 'max_relative_eval_loss' not in runner.prompts[0]
+    frozen = next((runner.scratch[0] / 'evidence').rglob('evaluation_context.json'))
+    assert str(frozen) in runner.prompts[0]
+    recorded = json.loads(frozen.read_text())
+    assert recorded['quality']['max_relative_eval_loss'] == 1.10
+    assert recorded['dense_quality']['llama60m_adamw']['final_eval_loss'] == 3.5
     assert '999' not in runner.prompts[0]
     assert 'evaluation_context.json' in result.analysis_path.read_text()
 

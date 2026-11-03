@@ -50,3 +50,16 @@ git show 64aa372:docs/greedylore-autoresearch-e2e-audit-20261026.md
 当前主工作区保留两份 legacy 角色文件的既有删除；依赖旧资产的测试可能受影响。阅读旧 Contract 的能力与当前能否初始化相应协议应分别核实。以后新增验证记录只记实际执行的版本、命令、结果与范围；例行文字修改无需复制历史通过数量或新建一份日期报告。
 
 2026-11-03，角色模型设置传递：只读 Analyzer 与 Memory 的实际命令构造先复现未传 `--model`，补齐参数后，`test_analysis_cli.py`、`test_analysis_recovery.py`、`test_memory.py`、`test_analyzer_context.py` 合计 **65 passed in 0.95s**。测试替换模型进程边界，不调用真实模型服务；另行检查的 `test_parallel_analysis.py` 有 7 项因上述既有 legacy 文件缺失而失败，未恢复用户删除的资产。
+
+2026-11-03，开场动态上下文外置：以 `9ee9ef0` 为修改前基准，通过 [离线回放脚本](../tasks/greedylore_autoresearch/tests/replay_prompt_artifacts.py) 读取 ARC-TopK Run 的 N000/N001/N002 已发布 Analysis，核对 91/306/181 条证据记录、源文件哈希及完整 manifest 往返一致。Analyzer 角色正文加动态 manifest／评估配置部分分别从 380,321／610,227／406,530 字符减至 16,240／16,837／16,589 字符（减少 95.7%／97.2%／95.9%）；加上首次读取的完整索引后分别为 28,071／55,477／38,225 字符。这是已发布产物的载荷回放，含分析后追加引用，不是历史开场消息精确重建；不含 checkpoint 说明、runner 后缀、后续证据读取或模型行为，不能据此推断整场 token 或科学质量改善。原 Run 只读，保存结果位于 `/home/wyr/coral-prompt-audit-20261103/verified-replay/`。
+
+相关 Analyzer、Memory、公共上下文、checkpoint、引用路径与 CLI 回归 **137 passed、5 skipped**；CPU/Gloo 用例在允许 localhost 的环境通过，5 项真实 namespace 检查因环境无 bubblewrap 跳过，不能视为隔离验收成功。当前 staged 全流程模拟 **7 项通过**（6 个常规场景及 ARC-TopK success），使用脚本化 agent 和合成评估，验证实际启动输入、独立 Analysis、发布及清理，不调用真实模型或 GPU。旧协议全流程模拟的 2 项在启动前因既有 `workflow_rules_legacy.md` 缺失而失败；没有恢复已删除的 legacy 资产。GPT-6.1 Sol（high）独立检查改动及回放，核对 manifest 与索引无遗漏，并复核修正后的必读范围及按字段读取指引，无剩余阻塞项。实现未部署到活跃 Run。
+
+复现载荷回放（输出目录需为新目录）：
+
+```bash
+.venv/bin/python tasks/greedylore_autoresearch/tests/replay_prompt_artifacts.py \
+  --run /home/wyr/coral-experiments/arctopk-root-20261102 \
+  --output /tmp/coral-prompt-replay \
+  --baseline 9ee9ef033fda6348a84b7cb016b069099f521696
+```

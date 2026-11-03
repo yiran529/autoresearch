@@ -21,5 +21,11 @@ def render_context(evidence, snapshot: Path) -> str:
             raise ArtifactValidationError('invalid recorded evaluation context') from exc
         if not valid:
             raise ArtifactValidationError('evaluation context conflicts with Attempt contract')
-        parts.extend([f'Source: {path}', json.dumps(value, indent=2, sort_keys=True)])
+        parts.append(f'- Recorded configuration: `{path}`')
+    if paths:
+        parts.append('Read the corresponding configurations before judging quality/cost or comparing Attempts; '
+                     'they retain workloads, gates, budgets and dense references. '
+                     'Inspect relevant JSON fields with Python/jq instead of dumping entire documents; '
+                     'follow nested raw records when needed for the judgment. '
+                     'Do not substitute current configuration or infer comparability from a shared contract hash.')
     return '\n'.join(parts)

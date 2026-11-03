@@ -49,13 +49,15 @@ def test_other_nodes_and_global_knowledge_are_frozen_without_live_mounts(tmp_pat
         assert context.notes_root not in roots and context.checkout_root not in roots
         assert not (frozen / 'notes/nodes/N001').exists()
         observed['prompt'] = prompt
+        observed['index'] = (evidence / 'evidence_index.md').read_text()
+        assert str(evidence / 'evidence_index.md') in prompt
         return response(scratch, PREFIX + '/notes/wisdom.md')
 
     result = _analyze('N001', 'research', context=context, runner=runner,
                       publisher=_publisher(context.notes_root))
     refs = [r.path for r in result.evidence.evidence_records]
     assert PREFIX + '/notes/wisdom.md' in refs
-    assert 'analysis-context-N001-research-v1' in observed['prompt']
+    assert 'analysis-context-N001-research-v1' in observed['index']
 
 
 def test_live_updates_do_not_change_input_or_invalidate_published_analysis(tmp_path):

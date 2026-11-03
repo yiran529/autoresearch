@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -84,7 +83,8 @@ def main() -> None:
         from autoresearch.memory import list_analysis_refs
 
         refs = list(list_analysis_refs(roots[0]))
-        record.update(role='memory', analysis_refs=refs,
+        record.update(role='memory', task_inputs=json.loads((roots[0] / 'memory_task.json').read_text()),
+                      analysis_refs=refs,
                       analysis_hashes={ref: hashlib.sha256((roots[0] / ref).read_bytes()).hexdigest()
                                        for ref in refs})
         _capture(record)
@@ -98,9 +98,7 @@ def main() -> None:
     evidence_root = next(p for p in roots if (p / 'spec.md').is_file())
     code_root = next(p for p in roots if p.name == 'code')
     spec = yaml.safe_load((evidence_root / 'spec.md').read_text())
-    match = re.search(r'\{\s*"fixed_evidence"\s*:', prompt)
-    envelope, _ = json.JSONDecoder().raw_decode(prompt[match.start():])
-    manifest = envelope['fixed_evidence']['manifest']
+    manifest = json.loads((evidence_root / 'evidence_manifest.json').read_text())['manifest']
     if manifest['mode'] != 'research':
         raise RuntimeError('unexpected independent Engineering Analyzer')
     node = spec['node_id']

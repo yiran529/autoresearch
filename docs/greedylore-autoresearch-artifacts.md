@@ -84,11 +84,15 @@ job 指一次训练、测时或诊断任务；journal 是宿主保存其请求�
 
 新 Research/Engineering Analysis 各有不可变完整 `.json` 和确定性生成的 `.md` 阅读视图，位于节点的 `notes/nodes/<Node>/` 目录。JSON 保存证据 manifest（文件清单及哈希）、Evaluation 快照及哈希；Markdown 提供结论和导航。宿主先写 JSON，再完成或修复 Markdown，验证二者一致后才算发布成功；模型 `output.json` 存在不表示发布完成。旧版把 JSON 内容保存在 `.md` 文件中（JSON-in-MD），仍可读取，不自动转换历史报告。
 
+Analyzer 开场保留候选简表、选定 SHA、Contract、证据数量与缺失数量。完整输入 manifest 外置为会话只读 `evidence/evidence_manifest.json`，逐文件状态与路径在 `evidence/evidence_index.md`；二者由同一份固定证据生成，供导航与身份核对，不作为新增实验来源。先读索引，再检查 Spec、Evaluation、已提供的 research.json、全部候选及 Final 组件。历史资料按问题读取；引用仍指向原始固定证据路径。逐份 `evaluation_context.json` 保持完整并提供文件入口，比较或判断质量／成本前必须读取对应配置；宿主不自动推断可比性。Checkpoint 的共同恢复说明只输出一次，各项可用性、路径、步数与 world size 单独保留。
+
 `handover.json` 由宿主从 Analysis 生成，绑定来源文档与哈希，供后续选题导航。Engineering 作者提交的简短总结由宿主补入固定证据并封存，不另调用 Engineering Analyzer。修订使用新版本，不能覆盖已被引用的结论。
 
 引用来源包括固定 Git 文件、冻结输入证据及已完成的本任务受管诊断文本／脚本／日志。临时 `experiments/`、`results/`、`/workspace/...` 工作路径需先对应到持久归档；缺失证据应明确说明。文档哈希与 evidence manifest 哈希使用的 JSON 序列化规则不同，复核应使用 [共享规则](../tasks/greedylore_autoresearch/roles/workflow_rules.md) 和实现，不能互相套用。
 
 每个 Node 完成后异步排队 Memory，单 worker 发布三份文档：研究 Summary、工程 Summary、Wisdom；不是“累计三个节点才更新”。宿主维护三者的 `processed_analyses`，全部发布成功才确认本次整理。已封存的输出可用于中断恢复而不再调用模型。覆盖记录表示已纳入的 Analysis 版本，不保证每次读取全部历史；旧 Run 缺少 Wisdom 时可补入既有覆盖。
+
+Memory 的会话暂存 notes 根包含 `memory_task.json`，完整保存触发节点、触发引用、必读引用、累计覆盖及输出目标。开场保留触发信息和数量；必读引用不超过 8 项时同时内联，更长时从该文件读取。所有 `required_refs` 始终必读，包括旧 Run 的历史补读要求；`covered_refs` 仅代表累计覆盖，不要求每次全量重读。外置不改变原有封存输出恢复与发布协议。
 
 ## 5. 诊断与补充证据
 

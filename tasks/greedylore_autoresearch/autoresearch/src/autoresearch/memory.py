@@ -388,11 +388,11 @@ def _consolidate_node(context, gate, runner, publisher):
     role_prompt = with_shared_research_goal(
         prompt_path.read_text(encoding='utf-8'), prompt_path.parents[1],
     )
-    prompt = role_prompt + '\n\n' + json.dumps({
+    task_inputs = {
         'trigger_node': gate.pending_nodes[0] if gate.pending_nodes else None,
         'trigger_refs': sorted(gate.trigger_refs), 'required_refs': sorted(required_read),
         'covered_refs': sorted(covered), **_TARGETS,
-    }, sort_keys=True)
+    }
     node_id = gate.pending_nodes[0] if gate.pending_nodes else None
     sealed = context.coral_dir / 'private/memory_outputs' / f'{node_id}.json' if node_id else None
     document = None
@@ -410,6 +410,18 @@ def _consolidate_node(context, gate, runner, publisher):
             staged_nodes = {ref.split('/')[1] for ref in required_read}
             read_roots = _stage_public_inputs(context, scratch, node_ids=staged_nodes,
                                              evidence_refs=required_read, analysis_refs=covered)
+            task_path = read_roots[0] / 'memory_task.json'
+            task_path.write_text(json.dumps(task_inputs, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+            inline = {key: value for key, value in task_inputs.items()
+                      if key not in {'covered_refs', 'required_refs'}}
+            inline.update(task_file=str(task_path), covered_count=len(covered),
+                          required_count=len(required_read))
+            if len(required_read) <= 8:
+                inline['required_refs'] = sorted(required_read)
+            prompt = (role_prompt + '\n\nRead the task file below, then every Analysis in its required_refs '
+                      'before curation, including any legacy bootstrap requirements. The file also retains '
+                      'the full covered_refs as provenance, not a rereading requirement; consult other history as relevant. References are relative '
+                      'to the staged notes root containing that file.\n\n' + json.dumps(inline, sort_keys=True))
             from .diagnostic_session import settings
 
             model_settings = settings(context.coral_dir)

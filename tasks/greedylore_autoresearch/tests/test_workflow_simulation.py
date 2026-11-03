@@ -325,7 +325,9 @@ def _check_delivered_prompts(root, scenario):
         expected_evidence.update({entry['path']: entry['sha256']
                                   for entry in manifest['evidence_records']
                                   if entry['status'] == 'present'})
-        assert capture['evidence_hashes'] == expected_evidence
+        assert {path: digest for path, digest in capture['evidence_hashes'].items()
+                if path not in {'evidence_manifest.json', 'evidence_index.md'}} == expected_evidence
+        assert {'evidence_manifest.json', 'evidence_index.md'} <= set(capture['evidence_files'])
         assert str(task / 'references') in {r['path'] for r in capture['read_roots']}
         if capture['node_id'] != 'N000':
             assert 'notes/nodes/N000/research_analysis_v1.md' in capture['evidence_files']
@@ -341,7 +343,7 @@ def _check_delivered_prompts(root, scenario):
         for ref, digest in capture['analysis_hashes'].items():
             source = root / 'run/.coral/public/notes' / ref
             assert digest == hashlib.sha256(source.read_bytes()).hexdigest()
-        trigger = json.JSONDecoder().raw_decode(capture['stdin'][len(memory_prompt):].lstrip())[0]
+        trigger = capture['task_inputs']
         assert trigger['trigger_refs']
         assert set(trigger['trigger_refs']) <= set(capture['analysis_refs'])
         assert set(trigger['required_refs']) == set(trigger['trigger_refs'])

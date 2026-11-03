@@ -66,15 +66,18 @@ def discover_checkpoints(evidence, context):
             roots.append(root)
             descriptions.append(
                 f'{root.name}: read-only path {root}; final update step {value["update_step"]}; '
-                f'world size {world}. Includes model, per-rank optimizer/scheduler, compressor '
-                'and RNG state, and a saved training batch. Use diagnostic_checkpoint.load_checkpoint '
-                'from the matching fixed-SHA code snapshot; construct matching objects before loading. '
-                'For DDP continuation register via register_checkpoint_hook before loading '
-                '(the training registration helper does this when diagnostic_checkpoint is enabled). '
-                'Inspect manifest.json for config and limitations. Restore on the matching world '
-                'size and DDP bucket layout. Staged checkpoints record deterministic data replay; '
-                'legacy checkpoints do not record the original dataloader position. '
-                'CPU inspection of a CUDA checkpoint requires restore_rng=False.')
+                f'world size {world}. Inspect manifest.json for per-checkpoint config and limitations.')
+    if roots:
+        descriptions.append(
+            'Common restoration conditions: includes model, per-rank optimizer/scheduler, compressor '
+            'and RNG state, and a saved training batch. Use diagnostic_checkpoint.load_checkpoint '
+            'from the matching fixed-SHA code snapshot; construct matching objects before loading. '
+            'For DDP continuation register via register_checkpoint_hook before loading '
+            '(the training registration helper does this when diagnostic_checkpoint is enabled). '
+            'Inspect manifest.json for config and limitations. Restore on the matching world '
+            'size and DDP bucket layout. Staged checkpoints record deterministic data replay; '
+            'legacy checkpoints do not record the original dataloader position. '
+            'CPU inspection of a CUDA checkpoint requires restore_rng=False.')
     text = '\n\n## Available final checkpoints\n' + ('\n'.join(descriptions) if descriptions else
         'Unavailable for this Attempt. No historical checkpoint is reconstructed automatically.')
     return roots, text

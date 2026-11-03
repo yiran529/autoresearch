@@ -601,6 +601,21 @@ def _prepare_evidence_snapshot(
         target = root / record.path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+    # Navigation is derived from the frozen manifest, never new scientific evidence.
+    (root / "evidence_manifest.json").write_text(
+        json.dumps(evidence.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    index = ["# Fixed evidence index", "",
+             "Paths below are relative to this evidence root and retain their citation identity.",
+             "This index and evidence_manifest.json are navigation, not experimental evidence.",
+             "Read spec.md, evaluation.md and the current Node research.json when supplied; inspect all candidates and Final components.",
+             "The manifest retains complete Attempt metadata, hashes and missing-file records.", ""]
+    for group in sorted({record.path.split('/')[0] for record in evidence.evidence_records}):
+        index.extend([f"## {group}", ""])
+        index.extend(f"- {record.status}: `{record.path}`" for record in evidence.evidence_records
+                     if record.path.split('/')[0] == group)
+        index.append("")
+    (root / "evidence_index.md").write_text("\n".join(index), encoding="utf-8")
     return root
 
 
@@ -635,7 +650,7 @@ def _prepare_code_snapshot(
     return root
 
 
-def _prompt(evidence: EvidenceBundle) -> str:
+def _prompt(evidence: EvidenceBundle, snapshot: Path = Path("evidence")) -> str:
     prompt_path = _task_root() / "prompts" / f"{evidence.mode}_analysis.md"
     role_prompt = (
         prompt_path.read_text(encoding="utf-8")
@@ -649,18 +664,24 @@ def _prompt(evidence: EvidenceBundle) -> str:
                      + evidence.research_sha + "):\n"
                      + "\n".join(
                          f"- {item.commit_sha}: {item.status}; score: {item.score}; "
-                         f"budget: {item.budget_class}; archived: {item.archived}; runs: {', '.join(item.run_ids) or 'none'}; "
-                         f"evidence: {', '.join(item.eval_refs) or 'none'}"
+                         f"budget: {item.budget_class}; archived: {item.archived}"
                          for item in evidence.research_attempts
                      )
                      + "\nCompare all candidates and their limitations; retain the selected anchor.\n")
+    missing = sum(record.status != "present" for record in evidence.evidence_records)
     return (
-        role_prompt + inventory + "\n\nProduce only the JSON document required by the supplied schema. "
+        role_prompt + inventory + "\n\n## Fixed evidence navigation\n\n"
+        f"Node: {evidence.node_id}; selected Research SHA: {evidence.research_sha}.\n"
+        f"Contract: {evidence.contract_hash}.\n"
+        f"Evidence files: {len(evidence.evidence_records)}; missing/unavailable: {missing}.\n"
+        f"Read `{snapshot / 'evidence_index.md'}` first for the complete inventory, including missing evidence. "
+        f"Read `{snapshot / 'spec.md'}` and `{snapshot / 'evaluation.md'}` for the frozen question and results; "
+        "inspect the supplied research.json, all candidates and every Final component before concluding.\n"
+        f"Full manifest, Attempt run IDs/references and per-file hashes: `{snapshot / 'evidence_manifest.json'}`. "
+        "Use the manifest when resolving evidence identity or Attempt details; inspect historical context as relevant.\n"
+        "Produce only the JSON document required by the supplied schema. "
         "Inspect code only in the supplied code snapshots named by fixed commit SHA. "
-        "Every claim must cite the fixed evidence paths. "
-        + json.dumps(
-            {"role": "analyzer", "fixed_evidence": evidence.to_dict()}, indent=2, sort_keys=True
-        )
+        "Every claim must cite the fixed evidence paths, not the generated navigation files."
     )
 
 
@@ -743,7 +764,7 @@ def analyze(
 
             checkpoint_roots, checkpoint_text = discover_checkpoints(evidence, ctx)
             analyzer_roots.extend(checkpoint_roots)
-            session_prompt = (_prompt(evidence) + render_context(evidence, analyzer_snapshot)
+            session_prompt = (_prompt(evidence, analyzer_snapshot) + render_context(evidence, analyzer_snapshot)
                               + checkpoint_text)
             if validation_feedback:
                 session_prompt += ('\n## Previous publication validation error\n'
