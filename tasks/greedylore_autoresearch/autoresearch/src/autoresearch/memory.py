@@ -410,7 +410,13 @@ def _consolidate_node(context, gate, runner, publisher):
             staged_nodes = {ref.split('/')[1] for ref in required_read}
             read_roots = _stage_public_inputs(context, scratch, node_ids=staged_nodes,
                                              evidence_refs=required_read, analysis_refs=covered)
-            output = runner(prompt, read_roots, schema_path, scratch)
+            from .diagnostic_session import settings
+
+            model_settings = settings(context.coral_dir)
+            output = runner(prompt, read_roots, schema_path, scratch,
+                **({'model': model_settings.get('memory_model'),
+                    'reasoning_effort': model_settings.get('memory_reasoning_effort')}
+                   if runner is run_fresh_codex else {}))
             authored = json.loads(Path(output).read_text(encoding='utf-8'))
         if not isinstance(authored, dict) or set(authored) != set(_TARGETS):
             raise ValueError('Memory worker output requires research_summary, engineering_summary and wisdom')

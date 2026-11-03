@@ -375,6 +375,8 @@ def run_fresh_codex(
     scratch: Path,
     *,
     timeout: float = 18000,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> Path:
     """Run one non-persistent Codex session and return its final JSON document."""
     scratch.mkdir(parents=True, exist_ok=True)
@@ -404,6 +406,10 @@ def run_fresh_codex(
         str(output),
         "-",
     ]
+    if model:
+        command.extend(['--model', model])
+    if reasoning_effort:
+        command.extend(['-c', 'model_reasoning_effort=' + json.dumps(reasoning_effort)])
     from coral.grader.trusted_worker import run_workflow_model
 
     completed = run_workflow_model(
@@ -710,7 +716,8 @@ def analyze(
 
         diagnostic_evidence = evidence
         evidence = with_public_context(evidence, ctx, version)
-        enabled = settings(ctx.coral_dir).get("analyzer_diagnostics", False)
+        session_settings = settings(ctx.coral_dir)
+        enabled = session_settings.get("analyzer_diagnostics", False)
         timeout = analyzer_timeout(ctx.coral_dir)
         if (enabled and diagnostic_runner is None and runner is run_fresh_codex
                 and isolation_available()):
@@ -774,7 +781,10 @@ def analyze(
                     analyzer_roots,
                     _schema("analysis"),
                     analyzer_scratch,
-                    **({"timeout": timeout} if runner is run_fresh_codex else {}),
+                    **({"timeout": timeout,
+                        "model": session_settings.get('analyzer_model'),
+                        "reasoning_effort": session_settings.get('analyzer_reasoning_effort')}
+                       if runner is run_fresh_codex else {}),
                 )
             from .validation import validate_authored_references
 

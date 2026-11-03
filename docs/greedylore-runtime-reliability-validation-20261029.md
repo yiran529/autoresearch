@@ -44,3 +44,5 @@ git show 64aa372:docs/greedylore-autoresearch-e2e-audit-20261026.md
 - 2026-11-03，视觉入口校验修正：扩展 [ARC CPU/Gloo 用例](../tasks/greedylore_autoresearch/tests/arctopk_cpu_cases.py)，经过实际 `main()` 先复现 `unsupported vision compressor`，再验证两 rank、6 updates、跨压缩起始步的 Muon 训练，以及最终 checkpoint 中的 ARC 状态。仅替换 GPU 初始化、模型规模及数据来源等测试边界，使用真实 DDP、压缩 hook 和 checkpoint 实现；相关 ARC、视觉、manifest、策略、Root 与命令回归 **51 passed in 23.58s**。这不代表正式 GPU 评测成功；原 Run 的失败 A0 未替换或重试。
 
 当前主工作区保留两份 legacy 角色文件的既有删除；依赖旧资产的测试可能受影响。阅读旧 Contract 的能力与当前能否初始化相应协议应分别核实。以后新增验证记录只记实际执行的版本、命令、结果与范围；例行文字修改无需复制历史通过数量或新建一份日期报告。
+
+2026-11-03，角色模型设置传递：只读 Analyzer 与 Memory 的实际命令构造先复现未传 `--model`，补齐参数后，`test_analysis_cli.py`、`test_analysis_recovery.py`、`test_memory.py`、`test_analyzer_context.py` 合计 **65 passed in 0.95s**。测试替换模型进程边界，不调用真实模型服务；另行检查的 `test_parallel_analysis.py` 有 7 项因上述既有 legacy 文件缺失而失败，未恢复用户删除的资产。

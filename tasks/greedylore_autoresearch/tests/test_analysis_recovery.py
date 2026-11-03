@@ -185,10 +185,13 @@ def test_fallback_analyzer_uses_the_same_configured_timeout(tmp_path, monkeypatc
     context = _context(tmp_path)
     monkeypatch.setattr(diagnostic_session, 'settings', lambda _: {
         'analyzer_diagnostics': False, 'analyzer_timeout_seconds': 17,
+        'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'high',
     })
 
     def process(command, **kwargs):
         assert kwargs['timeout'] == 17
+        assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
+        assert 'model_reasoning_effort="high"' in command
         output = Path(command[command.index('--output-last-message') + 1])
         output.write_text(json.dumps(_analysis_payload(None)))
         return SimpleNamespace(returncode=0, stderr='')

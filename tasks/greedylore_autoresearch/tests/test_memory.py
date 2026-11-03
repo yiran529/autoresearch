@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -153,6 +154,32 @@ def test_memory_worker_publishes_three_documents_per_node(tmp_path):
     assert result.status == "published"
     assert [kind for kind, _ in published] == ["research_summary", "engineering_summary", "wisdom"] * 3
     assert len(calls) == 3
+
+
+def test_memory_model_settings_reach_actual_codex_command(tmp_path, monkeypatch):
+    coral_dir = tmp_path / '.coral'
+    notes = coral_dir / 'public/notes'
+    refs = [_analysis(notes, 'N001', 'research', 1)]
+    (coral_dir / 'config.yaml').write_text(yaml.safe_dump({'grader': {'args': {
+        'analyzer_model': 'gpt-6.1-sol', 'analyzer_reasoning_effort': 'high',
+        'memory_model': 'gpt-6.1-sol', 'memory_reasoning_effort': 'medium',
+    }}}))
+    calls = []
+
+    def process(command, **kwargs):
+        calls.append(command)
+        assert command[command.index('--model') + 1] == 'gpt-6.1-sol'
+        assert 'model_reasoning_effort="medium"' in command
+        output = Path(command[command.index('--output-last-message') + 1])
+        output.write_text(json.dumps({
+            'research_summary': _summary(refs), 'engineering_summary': _summary(refs),
+            'wisdom': '# Wisdom\nNo reusable finding yet.',
+        }))
+        return SimpleNamespace(returncode=0, stderr='')
+
+    monkeypatch.setattr('coral.grader.trusted_worker.run_workflow_model', process)
+    result = consolidate_memory(if_due=True, context=MemoryContext(coral_dir))
+    assert result.status == 'published' and len(calls) == 1
 
 
 def test_memory_runner_receives_only_staged_public_inputs(tmp_path):

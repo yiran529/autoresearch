@@ -58,6 +58,8 @@ Parent 必须已经完成 Research Analysis 和 Engineering，或按宿主规则
 
 `WorkflowStore.reconcile()` 生成 assignment roster，CORAL Manager 据此启动、恢复或退休生产 Agent；可信 dispatch filter 在正式执行前再次核验准入。各 Node 的 Research Analysis 可并行，Memory 使用独立的串行队列。常规调度信任宿主记录的完成状态并检查 canonical 报告存在性，复用本次 reconcile 的准入结果；发布、Parent 选择、显式完成检查和 checkpoint 删除仍做完整证据校验。报告内容改动在这些边界检测，缺失或符号链接报告则继续占用名额。
 
+Researcher／Engineer 的模型与推理强度由 `agents` 及各角色 assignment 配置；Analyzer 使用 `grader.args.analyzer_model`／`analyzer_reasoning_effort`，带诊断与只读入口均传递这些设置。Memory（Summary／Wisdom）单独使用 `memory_model`／`memory_reasoning_effort`，不继承 Analyzer 的强度。未配置时保留 CLI 默认行为。模型设置在会话启动时生效，修改活动 Run 后需停止并恢复相关会话；已发布 Analysis 不会因模型配置变化自动重写。
+
 主要实现：[state.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/state.py)、[lifecycle.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/lifecycle.py)、[dynamic.py](../coral/agent/dynamic.py)、[manager.py](../coral/agent/manager.py)。
 
 ## 4. 执行、评估与可信发布
