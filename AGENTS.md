@@ -32,14 +32,27 @@ your workflow counts, it does — read on.
 
 ## 2. Scope discipline
 
+**Human approval is required before expanding scope.** When modifying this
+repository, stay within the user's authorized objective and constraints. Make
+only changes directly needed for that outcome, including relevant verification
+and documentation; touching another file alone is not scope expansion. Before
+adding work outside that scope, explain the concrete proposed change, why it is
+needed, and its impact, then wait for explicit human approval. Adjacent bugs,
+cleanup opportunities, future extensibility, and an agent's judgment that a
+change would be useful do not authorize extra work. Continue independent work
+already authorized, and honor approval already given. Do not implement an
+expansion first and ask afterward. This applies to refactors, new abstractions,
+dependencies, policy or default changes, artifact cleanup, deployment, and reruns
+as well as feature additions.
+
 - **Bundle agent output with substantive work.** Don't open standalone PRs
   for things like:
   - a single typo fix,
   - one isolated `ruff`-style nit,
   - reformatting a file the agent happened to touch,
   - changing a comment without changing behavior.
-  Roll these into a larger PR that actually does something, or batch many
-  of them into one explicit cleanup PR with a clear scope statement.
+  Within the approved scope, roll these into a larger PR that actually does
+  something, or batch them into an explicitly authorized cleanup PR.
 - **One concern per PR.** If your agent generated a refactor and a bug fix
   in the same run, split them.
 - **Don't reformat the world.** Repo-wide formatting / import-sorting /

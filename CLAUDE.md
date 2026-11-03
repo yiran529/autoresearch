@@ -207,6 +207,21 @@ uv run ruff format .
 
 Project-local skills live under `.claude/skills/`. Claude Code loads them on demand by description match — describe the task and the matching skill triggers automatically.
 
+### Scope discipline
+
+**Human approval is required before expanding scope.** When modifying this
+repository, stay within the user's authorized objective and constraints. Make
+only changes directly needed for that outcome, including relevant verification
+and documentation; touching another file alone is not scope expansion. Before
+adding work outside that scope, explain the concrete proposed change, why it is
+needed, and its impact, then wait for explicit human approval. Adjacent bugs,
+cleanup opportunities, future extensibility, and an agent's judgment that a
+change would be useful do not authorize extra work. Continue independent work
+already authorized, and honor approval already given. Do not implement an
+expansion first and ask afterward. This applies to refactors, new abstractions,
+dependencies, policy or default changes, artifact cleanup, deployment, and reruns
+as well as feature additions.
+
 ### AutoResearch documentation
 
 For every change to AutoResearch behavior, seeds, evaluation, scheduling,
