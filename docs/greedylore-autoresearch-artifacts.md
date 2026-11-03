@@ -6,10 +6,10 @@
 
 | 身份 | 含义 |
 | --- | --- |
-| Run | 一个持续研究工作区，保存配置、Contract、代码和状态；停止／恢复进程可沿用同一 Run |
+| Run | 一个持续研究工作区，保存配置、Contract（固定评估协议）、代码和状态；停止／恢复进程可沿用同一 Run |
 | Node，如 `N001` | 一个核心假设及其开发、最终评估、Analysis 和 Engineering；`N000` 是固定 Root |
 | 设计轮次／轨迹 | Node 内的一份冻结设计及对应训练；暂停和原样续跑仍属同一轨迹 |
-| 候选 SHA／Attempt | SHA 固定代码，Attempt 保存正式提交及其评估历史；一个开发 Node 可有多个候选，最终只选一个 Research SHA |
+| 候选 SHA／Attempt | SHA 是固定代码版本的 Git 提交标识，Attempt 保存正式提交及其评估历史；一个开发 Node 可有多个候选，最终只选一个 Research SHA |
 | 执行／请求 ID | 区分一次训练、timing、诊断或 grader 调用；分阶段任务使用显式请求 ID，普通 grader run 通常生成 UUID |
 | Analysis 版本 | 如 `research_analysis_v1`，与训练轮次、测速 repetition、执行 ID 分别编号 |
 
@@ -58,31 +58,31 @@
 
 Agent 通过运行时共享目录访问公开文件，如 `.codex/notes/`。返回的 `eval_logs/...`、`notes/...` 引用通常相对于本 Run 的 `.coral/public/`，不表示 worktree 中又存了一份结果。代码应通过 Run 的 Git 历史和固定 SHA 查找，不依赖已退休 Agent 的 `source_worktree` 路径。
 
-v5 Contract 的 `seed` 声明包含 ID、Root 描述、上游仓库／commit 和导入文件哈希。候选内的 `source_manifest.json` 区分 GreedyLoRE 原始快照、ARC 导入源、适配后哈希与原因。`root_bootstrap.json` 保持既有 v1 结构，其中 `source_commit` 是适配后的本地 S0，不能当成 ARC 上游 SHA。Seed ID 与训练随机种子也是不同概念。独立 Seed 的 Dense 目录及旧 Contract 兼容规则见工作流文档。
+v5 Contract 的 `seed` 声明包含 ID、Root 描述、上游仓库／commit 和导入文件哈希。候选内的 `source_manifest.json` 区分 GreedyLoRE 原始快照、ARC 导入源、适配后哈希与原因。`root_bootstrap.json` 保持既有 v1 结构，其中 `source_commit` 是适配后的本地初始代码快照 S0，不能当成 ARC 上游 SHA。Seed ID 与训练随机种子也是不同概念。独立 Seed 的 Dense 目录及旧 Contract 兼容规则见工作流文档。
 
 ## 3. 研究档案与正式结果
 
-新注册生成 version-3 `research.json`。`origin` 保存研究起点及来源；`iterations[]` 保存各轮 `design`、固定 `code_sha`、执行、观察、timing 和决策；`selected_iteration` 与选择理由记录开发结果，`final_evaluation` 追加冻结后的最终组件证据。旧设计、负结果和修正理由不覆盖。Agent 经托管命令请求变更，不能直接编辑公开档案。
+节点研究档案位于 `<run>/.coral/public/notes/nodes/<Node>/research.json`，新注册采用 version-3 格式（档案格式版本）。`origin` 保存研究起点及来源；`iterations[]` 保存各轮设计 `design`、固定代码版本 `code_sha`、执行、观察、测时和决策；`selected_iteration` 记录最终选中的轮次，`selection_rationale` 记录选择理由，`final_evaluation` 追加冻结后的各项最终评估证据。旧设计、负结果和修正理由不覆盖。Agent 经托管命令请求宿主更新档案，不能直接编辑公开文件。
 
-分阶段 Research 的训练、timing、diagnostic job 有独立 journal 和证据，不应假设“每个 job 都是一份可计分 Attempt”，也不应把某个候选的开发质量完成当成最终正式评分成功。`research finish` 冻结候选后完成最终评估并发布相应正式结果。Root 的固定候选直接走正式评估。Engineering 只重新测效率，质量来自固定 Research anchor，标为 `inherited (provisional)`。
+job 指一次训练、测时或诊断任务；journal 是宿主保存其请求、状态与结果的执行账本。它们与可计分的正式提交 Attempt 不一一对应，例如暂停训练或运行诊断都不等于完成正式评估。`research finish` 冻结候选后完成最终评估并发布相应正式结果，开发质量通过不等于最终评分成功。Root 的固定候选直接走正式评估。Engineering 只重新测效率，质量继承自固定 Research 代码版本，标为 `inherited (provisional)`，表示没有重新实测质量。
 
-正式 Attempt 位于 `attempts/<SHA>.json`，保存状态、评分、反馈、候选归属及 `metadata.grader_runs` 等运行历史。普通 grader 的同 SHA 基础设施重试追加执行记录与日志目录，不抹去原失败。分阶段 job 的关联及恢复以请求 journal 和 `research.json` 为准；不能从目录数反推消耗预算。
+正式 Attempt 位于 `<run>/.coral/public/attempts/<SHA>.json`，保存状态、评分、反馈、候选归属及 `metadata.grader_runs` 等运行历史。普通 grader 的同 SHA 基础设施重试追加执行记录与日志目录，不抹去原失败。分阶段 job 的关联及恢复以请求 journal 和 `research.json` 为准；预算看宿主记录，不能按日志目录数量推算。
 
-定位测量时，先看 `research.json`／`evaluation.md` 的引用和 Attempt，再进入相应执行目录。常见内容包括：
+定位测量时，先看节点目录中的 `research.json`／`evaluation.md` 及 Attempt 的证据引用。下面表格中的相对路径以 `<run>/.coral/public/eval_logs/<SHA>/<执行ID>/` 为父目录：`<run>` 是运行目录，`<SHA>` 是候选代码版本，`<执行ID>` 区分这份代码的具体执行或重试。在 Codex Agent 的 worktree 内，通常可通过 `.codex/eval_logs/<SHA>/<执行ID>/` 访问同一份公开证据。
 
 | 内容 | 作用 |
 | --- | --- |
-| `quality/<workload>/all_results.json` | 语言最终 validation loss、步数及配方；vision 保存对应 validation 指标 |
-| `efficiency/r1-350m_adamw_bf16/` 等 | BF16/FP32 timing 原始结果及配置；第二轮按反向顺序执行 |
-| `*.process/` 中的 `process.json`、stdout/stderr | 命令、退出状态、超时与原始输出 |
+| `quality/<workload>/all_results.json` | `<workload>` 为评估任务名，如 `llama130m_muon`；保存语言最终 validation loss、步数及训练配置，vision 保存对应 validation 指标 |
+| `efficiency/r1-350m_adamw_bf16/` 等 | 350M 模型、AdamW、BF16 下的测时原始结果及配置；`r1` 是第一轮，第二轮 `r2` 按相反精度顺序执行 |
+| `*.process/` 中的 `process.json`、stdout/stderr | 实际命令、退出状态及超时情况；stdout/stderr 分别是标准输出／错误输出日志。部分 staged 执行还在执行目录根部保存 `process.json` |
 | `evaluation_context.json`（相应评估路径提供时） | 该次固定评估的任务配置、门槛及匹配 Dense 信息 |
-| GPU 资源事件、来源身份及 checkpoint manifest | 资源、候选身份和恢复／保留信息 |
+| GPU 资源事件、来源身份及 checkpoint manifest | 记录使用的 GPU、实际代码版本，以及 checkpoint 文件清单和哈希；具体文件位置按该次执行返回的证据路径查找 |
 
 实际目录名由该次执行返回的证据路径确定；旧 v1–v3 timing 仍可能含 `130m_adamw_*`。staged 执行 ID 可来自请求 ID 并带阶段后缀，不必是 UUID。某个 `all_results.json` 已存在、stderr 非空或单个组件 completed，都不足以判断整个评估成败，应结合终态、失败类别、Contract、完整配方与硬件可比性。Timing 是异步 DDP 端到端 step time，不是独立通信耗时，bucket 字节也不等于实际网络流量。
 
 ## 4. Analysis、Handover 与全局记忆
 
-新 Research/Engineering Analysis 各有不可变完整 `.json` 和确定性生成的 `.md` 阅读视图。JSON 保存证据 manifest、Evaluation 快照及哈希；Markdown 提供结论和导航。宿主先写 JSON，再完成或修复 Markdown，验证二者一致后才算发布成功；模型 `output.json` 存在不表示发布完成。旧版 JSON-in-MD 仍可读取，不自动转换历史报告。
+新 Research/Engineering Analysis 各有不可变完整 `.json` 和确定性生成的 `.md` 阅读视图，位于节点的 `notes/nodes/<Node>/` 目录。JSON 保存证据 manifest（文件清单及哈希）、Evaluation 快照及哈希；Markdown 提供结论和导航。宿主先写 JSON，再完成或修复 Markdown，验证二者一致后才算发布成功；模型 `output.json` 存在不表示发布完成。旧版把 JSON 内容保存在 `.md` 文件中（JSON-in-MD），仍可读取，不自动转换历史报告。
 
 `handover.json` 由宿主从 Analysis 生成，绑定来源文档与哈希，供后续选题导航。Engineering 作者提交的简短总结由宿主补入固定证据并封存，不另调用 Engineering Analyzer。修订使用新版本，不能覆盖已被引用的结论。
 
@@ -92,7 +92,7 @@ v5 Contract 的 `seed` 声明包含 ID、Root 描述、上游仓库／commit 和
 
 ## 5. 诊断与补充证据
 
-受管 Analyzer 的典型归档为：
+受管 Analyzer 的典型归档如下，路径相对于 `<run>/.coral/`：
 
 ```text
 public/diagnostics/<Node>-research-v<version>/
