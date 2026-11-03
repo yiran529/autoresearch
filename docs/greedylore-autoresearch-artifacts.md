@@ -126,6 +126,8 @@ Analyzer 的进程会话日志与某次诊断的 stdout/stderr 是两层记录�
 
 恢复需要完整 Run 的配置、私有状态与基线、公开证据和 Git 对象，单独复制 `notes/` 不足以恢复工作流；动态 tensor 还受外部存储寿命约束。对外分享应选择公开产物，不分发凭据或私有会话目录。共享状态的 Git 快照排除 tensor 和运行缓存，仍保留 manifest、指标、日志与分析；历史大对象不会由当前忽略规则自动回收。
 
+用户明确废弃错误产物并要求重做时，先停止所属控制进程及作业，再清除正式报告、输出缓存、派生 Node、工作树和对应动态 tensor，重建导航及交接。保留 Root 基线身份与操作审计；删除产物不恢复额度：Engineer worker 的 `prior_budget`、Research 私有档案的 `prior_trajectories` 以及 staged journal 的 `prior_budget` 分别继承已消耗的工程评测、轨迹、timing 和诊断计数。这些仅由操作方在可信状态中写入，正常请求不能指定；重新注册后的公开研究档案显示既往轨迹消耗。
+
 ## 实现入口
 
 研究档案与执行：[research_record.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/research_record.py)、[staged_execution.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/staged_execution.py)。产物发布与导航：[artifacts.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/artifacts.py)、[navigation.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/navigation.py)、[validation.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/validation.py)。存储与清理：[runtime_artifacts.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/runtime_artifacts.py)、[checkpoint_retention.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/checkpoint_retention.py)、[node_cleanup.py](../tasks/greedylore_autoresearch/autoresearch/src/autoresearch/node_cleanup.py)。

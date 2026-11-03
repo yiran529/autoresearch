@@ -99,12 +99,20 @@ def main():
     parser.add_argument("--seed", choices=["greedylore", "arctopk"], default="arctopk")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--diagnostic-python", type=Path,
+        help="Prepare and CPU-check a public ML venv for diagnostics; stop a live run first",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Validate and reuse the saved run without resetting its Root or Attempts",
     )
     args = parser.parse_args()
     paths = recover_run(args.output) if args.resume else prepare_run(args.seed, args.output)
+    if args.diagnostic_python is not None:
+        from autoresearch.diagnostic_runtime import prepare_diagnostics
+
+        prepare_diagnostics(paths.coral_dir, args.diagnostic_python)
     print(
         json.dumps(
             {

@@ -7,6 +7,17 @@ import math
 from pathlib import Path
 
 
+def prior_budget_counts(value, prefix=''):
+    """Fail closed on corrupted host-owned carryover; bool is not a run count."""
+    value = {} if value is None else value
+    if not isinstance(value, dict):
+        raise ValueError('invalid prior budget')
+    successful, total = value.get(prefix + 'successful', 0), value.get(prefix + 'total', 0)
+    if (type(successful) is not int or type(total) is not int
+            or not 0 <= successful <= total):
+        raise ValueError('invalid prior budget counts')
+    return successful, total
+
 def run_budget(attempts) -> tuple[int, int, int]:
     successful = total = pending = 0
     for attempt in attempts:

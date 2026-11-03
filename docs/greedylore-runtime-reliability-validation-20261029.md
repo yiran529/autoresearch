@@ -38,6 +38,8 @@ git show 64aa372:docs/greedylore-autoresearch-e2e-audit-20261026.md
 
 ## 4. 后续实现的验证入口
 
+- 2026-11-03，公共诊断运行环境与废弃产物后的预算继承：`test_diagnostic_runtime.py`、`test_discarded_budget.py`、`test_research_record.py`、`test_staged_timing.py`、`test_staged_research.py`、`test_diagnostic_roundtrip.py`、`test_arctopk_seed.py`、`test_staged_workflow_simulation.py` 合计 **129 passed in 254.61s**，另有工程预算实际准入边界的定向检查通过。真实 CPU 命名空间加载公共 ML 依赖，本地 socket 往返及 GreedyLoRE／ARC staged 模拟通过；昂贵训练和模型输出使用测试替身，不代表 GPU 机制实验或正式评测已完成。`gpt-5.6-sol` high review 发现继承预算缺少校验，已补齐非负整数及成功次数不超过总次数的拒绝检查。
+
 - `6fe3573`：减少常规 reconcile 对已完成历史证据的重复检查；对应 [test_workflow_hot_path.py](../tasks/greedylore_autoresearch/tests/test_workflow_hot_path.py)，发布／Parent／清理的完整校验仍保留。
 - `64aa372`：声明式 GreedyLoRE／ARC-TopK v5 Seed；对应 [test_arctopk_seed.py](../tasks/greedylore_autoresearch/tests/test_arctopk_seed.py)、[test_root_bootstrap.py](../tasks/greedylore_autoresearch/tests/test_root_bootstrap.py)、[staged 模拟](../tasks/greedylore_autoresearch/tests/test_staged_workflow_simulation.py) 及任务 README 的验证范围。此处列出可查入口，不新增通过数量或 GPU 效果结论。
 - 2026-11-02，`9ede28a` 后的 launcher 参数修正：首次实际 Root 准备在训练前暴露 `torchrun` 对 ARC `--r` 的参数缩写歧义；三个真实单进程 CPU launcher 用例先复现失败，加入脚本前的 `--` 后，与 Seed、Root、契约、命令、策略、manifest、最终契约和 timing 的相关检查合计 **121 passed in 20.71s**。用例只运行参数探针，不加载模型或占用 GPU；不证明后续正式质量或性能。失败校准日志保留在 `/home/wyr/coral-experiments/arctopk-root-20261102/.coral/private/dense_reference_attempts/attempt-001-launcher-argparse/`，固定 A0 与 Contract 未重建。

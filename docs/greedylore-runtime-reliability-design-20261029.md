@@ -43,6 +43,10 @@ checkpoint 的公开 manifest 保存固定身份及哈希，私有账本记录�
 
 ## 5. 诊断环境与预检
 
+`prepare_seed_run.py --resume --output <run> --diagnostic-python <public-venv>/bin/python` 显式配置与 Seed 无关的诊断运行环境。运行库同时挂载公共 venv 及其 Python 安装目录，保留 uv 的目录别名链接；不挂载私有 grader venv。准备会在实际实验命名空间内加载 PyTorch、分布式模块、Transformers 和 TorchVision，检查失败不保存配置。此 CPU 检查不证明 GPU/NCCL 或 Analyzer 内层控制 socket 已连通，恢复后还须核对真实托管诊断的执行记录。
+
+Analyzer 的内层会话通过独立的 `analyzer_allow_unix_sockets` 传递本地 IPC 权限；Researcher/Engineer 的 SRT `allowAllUnixSockets` 不能替代它。外层仍只挂载本任务选定输入，诊断命令的运行环境继续单独净化。
+
 `autoresearch preflight --sha <full-commit-sha>` 核验提交元数据、Contract、assignment、协议资产、声明资源和已提交入口的静态语法／来源，并做 CPU 诊断命名空间检查；不创建 Attempt、GPU lease 或诊断预算扣费。环境准备还会在 GPU 启动前检查真实 CPU 多进程 tensor IPC。
 
 静态检查不在可信控制进程中导入候选代码，也不证明动态依赖、算法语义或科学等价性。旧协议缺少 legacy 文件时明确失败，不悄悄恢复用户删除的资产或切换协议。恢复训练继续检查固定 SHA、配置、world size 和方法／bucket 状态，不能用重置 EF 等办法绕过不兼容。
