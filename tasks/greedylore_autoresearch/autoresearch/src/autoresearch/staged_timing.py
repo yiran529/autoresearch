@@ -5,7 +5,6 @@ import math
 
 import yaml
 
-from .research import prior_budget_counts
 from .runtime_artifacts import settings
 
 
@@ -81,9 +80,8 @@ def check_budget(host, state, sha):
         raise ValueError('research timing budget limits must be positive integers')
     jobs = [job for job in state['jobs'].values() if job['kind'] == 'timing' and not job.get('reused_from')]
     legacy = sum(bool(observation.get('timing')) for row in host.record.read()['iterations'] for observation in row['observations'])
-    prior_successful, prior_total = prior_budget_counts(state.get('prior_budget'), 'timing_')
-    successful = prior_successful + legacy + sum(job.get('result', {}).get('status') == 'completed' for job in jobs)
-    if successful >= limits[0] or prior_total + legacy + len(jobs) >= limits[1]:
+    successful = legacy + sum(job.get('result', {}).get('status') == 'completed' for job in jobs)
+    if successful >= limits[0] or legacy + len(jobs) >= limits[1]:
         raise ValueError('research timing budget exhausted')
     if any(job.get('sha') == sha and job.get('result', {}).get('status') == 'failed' for job in jobs):
         raise ValueError('candidate timing failed; fix it through a new design/SHA')

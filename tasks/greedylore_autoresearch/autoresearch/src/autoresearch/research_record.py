@@ -55,11 +55,6 @@ class ResearchRecord:
             state = json.loads(self.private.read_text()) if self.private.exists() else {
                 'document': initial, 'requests': {}}
             document = state['document']
-            if document is None and initial is not None and state.get('prior_trajectories'):
-                prior = state['prior_trajectories']
-                if type(prior) is not int or not 0 < prior < 3:
-                    raise ValueError('research trajectory budget exhausted or invalid')
-                document = state['document'] = {**copy.deepcopy(initial), 'prior_trajectories': prior}
             if request_id in state['requests']:
                 if state['requests'][request_id] != digest:
                     raise ValueError('research request ID conflicts with previous payload')
@@ -165,7 +160,7 @@ class ResearchRecord:
 
         def update(value):
             self._require_idle()
-            if len(value['iterations']) + value.get('prior_trajectories', 0) >= 3:
+            if len(value['iterations']) >= 3:
                 raise ValueError('research budget is at most 3 trajectories')
             if value['iterations'][-1]['status'] not in {'completed', 'failed', 'stopped'}:
                 raise ValueError('previous trajectory is not terminal')

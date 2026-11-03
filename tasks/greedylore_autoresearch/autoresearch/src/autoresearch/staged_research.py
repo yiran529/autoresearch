@@ -18,7 +18,6 @@ import yaml
 
 from coral.grader.trusted_writes import _atomic_json, trusted_writes_lock
 
-from .research import prior_budget_counts
 from .research_record import ResearchRecord
 from .runtime_artifacts import RuntimeArtifacts, safe_path, settings
 
@@ -46,7 +45,7 @@ class StagedResearch:
         state['diagnostic_limits'] = {'successful': DIAGNOSTIC_SUCCESS_LIMIT, 'total': DIAGNOSTIC_TOTAL_LIMIT}
         from .staged_status import progress
         from .staged_status import summary as summarize
-        document = (self.record.read() if self.record.private.exists() else None) or {}
+        document = self.record.read() if self.record.private.exists() else {}
         state['progress'] = progress(self, state, document)
         return RuntimeArtifacts(self.store.coral_dir).project_response(summarize(state) if summary else state)
 
@@ -146,9 +145,8 @@ class StagedResearch:
                     raise ValueError('invalid diagnostic command or timeout')
                 diagnostics = [j for j in state['jobs'].values() if j['kind'] == 'diagnostic']
                 from .diagnostics import DIAGNOSTIC_SUCCESS_LIMIT, DIAGNOSTIC_TOTAL_LIMIT
-                prior_successful, prior_total = prior_budget_counts(state.get('prior_budget'), 'diagnostic_')
-                if (prior_total + len(diagnostics) >= DIAGNOSTIC_TOTAL_LIMIT
-                        or prior_successful + sum(j['status'] == 'completed' for j in diagnostics) >= DIAGNOSTIC_SUCCESS_LIMIT):
+                if (len(diagnostics) >= DIAGNOSTIC_TOTAL_LIMIT
+                        or sum(j['status'] == 'completed' for j in diagnostics) >= DIAGNOSTIC_SUCCESS_LIMIT):
                     raise ValueError('Researcher diagnostic budget exhausted '
                                      f'({DIAGNOSTIC_SUCCESS_LIMIT} completed / {DIAGNOSTIC_TOTAL_LIMIT} total)')
             if kind == 'finish' and document['frozen']:

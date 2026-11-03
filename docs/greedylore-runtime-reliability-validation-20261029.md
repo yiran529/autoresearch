@@ -38,7 +38,9 @@ git show 64aa372:docs/greedylore-autoresearch-e2e-audit-20261026.md
 
 ## 4. 后续实现的验证入口
 
-- 2026-11-03，公共诊断运行环境与废弃产物后的预算继承：`test_diagnostic_runtime.py`、`test_discarded_budget.py`、`test_research_record.py`、`test_staged_timing.py`、`test_staged_research.py`、`test_diagnostic_roundtrip.py`、`test_arctopk_seed.py`、`test_staged_workflow_simulation.py` 合计 **129 passed in 254.61s**，另有工程预算实际准入边界的定向检查通过。真实 CPU 命名空间加载公共 ML 依赖，本地 socket 往返及 GreedyLoRE／ARC staged 模拟通过；昂贵训练和模型输出使用测试替身，不代表 GPU 机制实验或正式评测已完成。`gpt-5.6-sol` high review 发现继承预算缺少校验，已补齐非负整数及成功次数不超过总次数的拒绝检查。
+- 2026-11-03，`638a6fe` 的公共诊断环境与预算继承实现曾通过 **129 项检查，254.61s**，包含真实 CPU 依赖加载、本地 socket 往返和 staged 模拟；昂贵训练及模型输出使用测试替身。用户随后明确整轮作废重跑应重置额度，因此预算继承实现和对应 `test_discarded_budget.py` 已撤销；保留 [诊断环境测试](../tasks/greedylore_autoresearch/tests/test_diagnostic_runtime.py)，原有轨迹、工程评测、timing 与诊断预算按正常账本计数。历史通过数不表示撤销后的版本已重新执行同一套检查。
+
+  撤销后重新执行诊断环境、研究轨迹、staged timing、staged research 与真实诊断往返检查，**87 passed in 7.25s**；另以真实 `authorize_attempt` 验证原有工程评测上限的 7 个准入边界（4 次成功／10 次总执行）。五个预算模块逐字节恢复到 `638a6fe` 前的版本，没有新增重置或继承接口。活动 Run 的角色产物与账本由一次性操作方清理后重新启动，Root／Dense 的 105 个文件哈希保持一致；这不表示新一轮研究已经完成。
 
 - `6fe3573`：减少常规 reconcile 对已完成历史证据的重复检查；对应 [test_workflow_hot_path.py](../tasks/greedylore_autoresearch/tests/test_workflow_hot_path.py)，发布／Parent／清理的完整校验仍保留。
 - `64aa372`：声明式 GreedyLoRE／ARC-TopK v5 Seed；对应 [test_arctopk_seed.py](../tasks/greedylore_autoresearch/tests/test_arctopk_seed.py)、[test_root_bootstrap.py](../tasks/greedylore_autoresearch/tests/test_root_bootstrap.py)、[staged 模拟](../tasks/greedylore_autoresearch/tests/test_staged_workflow_simulation.py) 及任务 README 的验证范围。此处列出可查入口，不新增通过数量或 GPU 效果结论。

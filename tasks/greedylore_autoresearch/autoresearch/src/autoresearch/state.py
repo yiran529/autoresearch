@@ -26,7 +26,6 @@ from .engineer_scratch import ensure_scratch_identity, scratch_dir
 from .nodes import create_node
 from .research import (
     frozen_research_attempt,
-    prior_budget_counts,
     quality_eligible,
     research_attempts,
     run_budget,
@@ -42,10 +41,9 @@ class WorkflowError(ValueError):
     """An ownership transition or persisted workflow state is invalid."""
 
 
-def _engineering_budget(attempts, *, prior=None) -> tuple[int, int, int]:
+def _engineering_budget(attempts) -> tuple[int, int, int]:
     """Count successful runs, reserved/used runs and pending success slots."""
-    successful, total = prior_budget_counts(prior)
-    pending = 0
+    successful = total = pending = 0
     for attempt in attempts:
         # Submission/retry reserves its run before dispatch; persistently count that
         # reservation so queued work and restarts cannot oversubscribe either cap.
@@ -971,8 +969,7 @@ class WorkflowStore:
         ]
         if not attempts:
             raise WorkflowError(f"Node {node_id} requires an Engineering Attempt")
-        successful, total, _ = _engineering_budget(
-            attempts, prior=self._load_unlocked()['engineering_workers'][agent_id].get('prior_budget'))
+        successful, total, _ = _engineering_budget(attempts)
         budget_exhausted = successful >= ENGINEERING_SUCCESS_LIMIT or total >= FORMAL_TOTAL_LIMIT
         if any(attempt.status == "pending" or (
             attempt.status in {"crashed", "timeout"}
@@ -1049,8 +1046,7 @@ def authorize_attempt(canonical: dict[str, Any], context: dict[str, Any]) -> dic
                     and a.metadata.get("mode") == mode and a.budget_class != "tune"]
         existing = any(a.commit_hash == context.get("commit_hash") for a in attempts)
         if not existing or context.get("retry"):
-            successful, total, pending = (_engineering_budget(attempts,
-                prior=state['engineering_workers'][context['agent_id']].get('prior_budget')) if mode == "engineering"
+            successful, total, pending = (_engineering_budget(attempts) if mode == "engineering"
                                           else run_budget(attempts))
             success_limit = ENGINEERING_SUCCESS_LIMIT if mode == 'engineering' else 3
             if successful + pending >= success_limit or total >= FORMAL_TOTAL_LIMIT:
