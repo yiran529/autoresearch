@@ -27,6 +27,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset, TensorDataset
 from torchvision import transforms
 
+VISION_COMPRESSORS = ('none', 'top_subspace', 'group_topk')
+
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -39,7 +41,7 @@ def parse_args(argv=None):
     parser.add_argument('--seed', type=int, default=1243)
     parser.add_argument('--lr', type=float, default=.02)
     parser.add_argument('--weight-decay', type=float, default=5e-4)
-    parser.add_argument('--compressor', choices=['none', 'top_subspace', 'group_topk'], default='none')
+    parser.add_argument('--compressor', choices=VISION_COMPRESSORS, default='none')
     parser.add_argument('--r', type=int, default=4)
     parser.add_argument('--compress-ratio', type=float, default=.2)
     parser.add_argument('--error-decay', type=float, choices=[1.0], default=1.0)
@@ -223,7 +225,7 @@ def main(args=None):
     args = parse_args() if args is None else args
     workload = os.environ.get('CORAL_WORKLOAD', '')
     args = apply_compression_policy(args, workload)
-    if args.compressor not in {'none', 'top_subspace'}:
+    if args.compressor not in VISION_COMPRESSORS:
         raise ValueError('unsupported vision compressor')
     if args.start_compress_iter < 0 or args.update_proj_gap < 1 or args.compress_rank < 1:
         raise ValueError('invalid vision compression parameters')

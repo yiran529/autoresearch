@@ -17,8 +17,8 @@
       "seed_sha256": "44b47fe7b601c8da59715402926e2f101174e5530877e5077cee29376f082142"
     },
     "pytorch-cifar/train_ddp.py": {
-      "reason": "Versioned offline final-evaluation runner with fixed stratified training/validation split, candidate workload policy and shared hook construction; parse ARC method fields; preserve actual compressor state and DDP bucket identity in external diagnostic checkpoints; report method-specific exclusions truthfully.",
-      "seed_sha256": "614ba9cd0810699f6be28c09565e217a50cc5b4c911d68a73fa7a535204c50b6"
+      "reason": "Versioned offline final-evaluation runner with fixed stratified training/validation split, candidate workload policy and shared hook construction; parse ARC method fields; preserve actual compressor state and DDP bucket identity in external diagnostic checkpoints; report method-specific exclusions truthfully. Share the supported vision compressor list between CLI and post-policy main validation so ARC reaches training.",
+      "seed_sha256": "67d488b8eafbc991f64f6d01d305e87aa235b7f6e58b4524edd447096059a1cd"
     },
     "tests/test_c4_model_setup.py": {
       "reason": "quality entrypoint regression coverage",

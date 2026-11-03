@@ -5,7 +5,9 @@ import argparse
 import importlib.util
 import json
 import sys
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
@@ -218,6 +220,51 @@ def worker(rank):
     )
     assert restored["hook_state"]["class"].endswith(".GroupTopKState")
     assert hook.inner_state.iter == 1 and hook.inner_state.error_dict
+
+    # Exercise main(), not only parsing and hook registration: its stale
+    # compressor guard previously rejected ARC before distributed setup.
+    args = vision.parse_args([
+        "--dataset", "cifar100", "--output-dir", str(ROOT / "vision-main"),
+        "--compressor", "group_topk", "--start-compress-iter", "1",
+        "--epochs", "2", "--batch-size", "2", "--workers", "0",
+        "--stop-after-steps", "6", "--no-download", "--wandb-mode", "disabled",
+        "--no-communication-bit-estimates", "--contract-hash", "arc-cpu-main",
+        "--checkpoint-root", str(ROOT / "vision-main-checkpoints"),
+        "--checkpoint-interval-steps", "2",
+        "--training-metrics", str(ROOT / "vision-main-train.jsonl"),
+    ])
+    generator = torch.Generator().manual_seed(1243)
+    dataset = torch.utils.data.TensorDataset(
+        torch.randn(12, 3, 5, 5, generator=generator), torch.arange(12) % 2,
+    )
+    with ExitStack() as stack:
+        for boundary in [
+            patch.object(vision, "initialize_distributed",
+                         return_value=(rank, rank, 2, torch.device("cpu"))),
+            patch.object(vision, "build_model", side_effect=lambda _: ResNetToy()),
+            patch.object(vision, "make_datasets", return_value=(dataset, dataset)),
+            patch.object(vision, "DDP", side_effect=lambda model, **kw: DDP(model)),
+            patch.object(vision.torch.cuda, "get_device_name", return_value="cpu-test"),
+            patch.object(vision.dist, "destroy_process_group"),
+        ]:
+            stack.enter_context(boundary)
+        vision.main(args)
+    dist.barrier()
+    result = json.loads((ROOT / "vision-main/all_results.json").read_text())
+    assert (result["status"], result["compressor"], result["update_step"]) == (
+        "completed", "group_topk", 6,
+    )
+    assert result["diagnostic_checkpoint"]["status"] == "complete"
+    assert result["diagnostic_checkpoint"]["world_size"] == 2
+    saved = torch.load(ROOT / f"vision-main-checkpoints/step-00000006/rank-{rank}.pt",
+                       weights_only=True)
+    assert saved["hook"]["class"].endswith(".GroupTopKState")
+    assert saved["hook"]["state"]["iter"] == 6
+    assert saved["hook"]["state"]["error_dict"]
+    config = json.loads((ROOT / "vision-main/config.json").read_text())
+    assert config["uncompressed_names"] == []
+    rows = [json.loads(line) for line in (ROOT / "vision-main-train.jsonl").read_text().splitlines()]
+    assert [row["update_step"] for row in rows] == [1, 2, 3, 4, 5, 6]
     dist.destroy_process_group()
 
 
