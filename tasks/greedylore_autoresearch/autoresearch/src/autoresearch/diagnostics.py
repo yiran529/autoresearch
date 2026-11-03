@@ -214,7 +214,9 @@ class DiagnosticTask:
             _atomic_json(self.path, state)
             record_dir = self.records / request_id
             record_dir.mkdir(parents=True, exist_ok=True)
-            _atomic_json(record_dir / 'record.json', {**record, **interrupted}, mode=0o644)
+            # The private crash-recovery placeholder is not a public outcome:
+            # a reader can inspect this record while execution is still active.
+            _atomic_json(record_dir / 'record.json', {**record, 'status': 'pending'}, mode=0o644)
 
             def cancelled():
                 if authorize:

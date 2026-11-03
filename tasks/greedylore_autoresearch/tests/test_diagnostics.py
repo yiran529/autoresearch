@@ -3,6 +3,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 from autoresearch import diagnostics
@@ -69,6 +70,68 @@ def test_duplicate_requests_execute_once(task):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: task.run(request(), os.getpid(), once), range(2)))
     assert results[0] == results[1]
+
+
+@pytest.mark.parametrize('final_status', ['completed', 'failed'])
+def test_public_record_stays_pending_until_execution_finishes(task, final_status):
+    entered, release = Event(), Event()
+    calls = []
+    record_path = task.records / 'request-1' / 'record.json'
+    stderr = task.records / 'request-1' / 'stderr.log'
+
+    def blocked(item, payload, cancelled):
+        calls.append(payload['request_id'])
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError('test did not release diagnostic')
+        if final_status == 'failed':
+            stderr.write_text("KeyError: 'module.lm_head.weight'\n")
+            raise KeyError('module.lm_head.weight')
+        return execute(item, payload, cancelled)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(task.run, request(), os.getpid(), blocked)
+        try:
+            assert entered.wait(5)
+            pending = json.loads(record_path.read_text())
+            assert pending['status'] == 'pending'
+            assert 'started' not in pending
+            assert 'finished_at' not in pending
+            assert 'reason' not in pending
+            reconnected = pool.submit(task.run, request(), os.getpid(), blocked)
+        finally:
+            release.set()
+        result = first.result(timeout=5)
+        assert reconnected.result(timeout=5) == result
+
+    record = json.loads(record_path.read_text())
+    assert record['status'] == result['status'] == final_status
+    assert record['finished_at'] >= pending['requested_at']
+    assert record['started'] is True
+    assert calls == ['request-1']
+    assert task.read()['executions'] == 1
+    if final_status == 'failed':
+        assert 'module.lm_head.weight' in result['reason']
+        assert "KeyError: 'module.lm_head.weight'" in stderr.read_text()
+
+
+def test_worker_interruption_keeps_existing_recovery_without_reexecution(task):
+    def interrupted(*_args):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        task.run(request(), os.getpid(), interrupted)
+    task.close()
+    reopened = diagnostics.DiagnosticTask(task.coral_dir, task.task_id)
+    reopened.bind(os.getpid())
+
+    def unexpected(*_args):
+        pytest.fail('an interrupted request must not execute again')
+
+    result = reopened.run(request(), os.getpid(), unexpected)
+    assert result['status'] == 'interrupted'
+    assert 'worker interrupted' in result['reason']
+    assert reopened.read()['executions'] == 1
 
 
 @pytest.mark.parametrize('failure_status', ['failed', 'timed_out', 'interrupted'])
